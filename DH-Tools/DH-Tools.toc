@@ -1,0 +1,62 @@
+## Interface: 11509
+## Title: DH-Tools
+## Notes: Death Happens master addon - toggle individual modules (Mob Marker, and more to come) from one addon.
+## Author: Loopi
+## Version: 2.0.4
+## SavedVariablesPerCharacter: DHToolsDB
+## SavedVariablesPerCharacter: DHQuestsDB
+## SavedVariables: DHBavinDB
+## SavedVariables: DHToolsAccountDB
+## SavedVariables: DHAirDB
+## X-Curse-Project-Name: DH-Tools
+## X-Category: Guild
+## X-License: All Rights Reserved
+
+Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
+Libs\LibDBIcon-1.0\LibDBIcon-1.0.lua
+Libs\LibUIDropDownMenu\LibUIDropDownMenu.lua
+
+Core.lua
+Config.lua
+Minimap.lua
+Modules\MobMarker.lua
+Modules\DHQuests\Core.lua
+Modules\DHQuests\ClassQuestIDs.lua
+Modules\DHQuests\Scan.lua
+Modules\DHQuests\Sync.lua
+Modules\DHQuests\Board.lua
+Modules\DHBavin\Core.lua
+Modules\DHBavin\Sync.lua
+Modules\DHBavin\ItemPoints.lua
+Modules\DHBavin\PointsEditor.lua
+Modules\DHBavin\PriorityEditor.lua
+Modules\DHBavin\Tooltip.lua
+Modules\DHBavin\BagMail.lua
+Modules\DHDanger\Core.lua
+Modules\DHDanger\Sync.lua
+# Curated allowlist (GENERATED - claude\DH-Danger\import-curation.ps1).
+# Loaded AFTER Core.lua on purpose: it writes to the addon-wide namespace
+# (ns.addonNS), and Core reads it lazily, so this order is safe and keeps
+# the hand-written file first. Zone-entry warning only for now - the live
+# proximity alerts still fire off the player's own manual list.
+Modules\DHDanger\Curation.lua
+Modules\DHAir\Core.lua
+Modules\DHAir\Destinations.lua
+Modules\DHAir\Queue.lua
+Modules\DHAir\Roster.lua
+Modules\DHAir\Invite.lua
+Modules\DHAir\Sync.lua
+Modules\DHAir\Leadership.lua
+Modules\DHAir\Summon.lua
+Modules\DHAir\Config.lua
+Modules\DHAir\Board.lua
+Modules\DHAir\DestinationEditor.lua
+Modules\DHAir\Commands.lua
+Modules\DHMacros\Core.lua
+# Macro catalog (GENERATED - claude\DH-Macros\import-macros.ps1, source
+# claude\DH-Macros\curation\DH-Macros-Library.csv). Edit the CSV, not
+# this file.
+Modules\DHMacros\MacroLibrary.lua
+Modules\DHMacros\Board.lua
