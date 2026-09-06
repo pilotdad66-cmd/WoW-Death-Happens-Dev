@@ -252,7 +252,7 @@ _G.DHTools = {
 -- folder and load as part of the "DH-Tools" addon, not a standalone
 -- "DH-Air" one - ADDON_NAME here matches what a real ADDON_LOADED event
 -- now carries (see Core.lua's own comment on this).
-local ADDON_ROOT = "C:\\AIProjects\\WoW\\src\\DH-Tools\\Modules\\DHAir\\"
+local ADDON_ROOT = "C:\\AIProjects-NOSYNC\\WoW\\src\\DH-Tools\\Modules\\DHAir\\"
 local ADDON_NAME = "DH-Tools"
 local DHAir = {}
 

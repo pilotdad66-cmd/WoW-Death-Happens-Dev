@@ -161,7 +161,7 @@ _G.DHTools = {
 -- Load the real DHQuests files (Board.lua excluded - see header)
 --------------------------------------------------------------------------
 
-local ADDON_ROOT = "C:\\AIProjects\\WoW\\src\\DH-Tools\\Modules\\DHQuests\\"
+local ADDON_ROOT = "C:\\AIProjects-NOSYNC\\WoW\\src\\DH-Tools\\Modules\\DHQuests\\"
 local FILES = { "Core.lua", "ClassQuestIDs.lua", "Scan.lua", "Sync.lua" }
 
 for _, filename in ipairs(FILES) do

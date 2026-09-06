@@ -166,7 +166,7 @@ _G.DHTools = {
 -- Tooltip excluded - see header)
 --------------------------------------------------------------------------
 
-local ADDON_ROOT = "C:\\AIProjects\\WoW\\src\\DH-Tools\\Modules\\DHBavin\\"
+local ADDON_ROOT = "C:\\AIProjects-NOSYNC\\WoW\\src\\DH-Tools\\Modules\\DHBavin\\"
 local FILES = { "Core.lua", "Sync.lua", "ItemPoints.lua" }
 
 for _, filename in ipairs(FILES) do

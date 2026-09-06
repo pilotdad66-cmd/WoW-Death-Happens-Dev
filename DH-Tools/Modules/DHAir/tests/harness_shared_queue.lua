@@ -284,7 +284,7 @@ end
 -- 2026-08-20 DH-Air merge: files now live under DH-Tools' own Modules\
 -- folder and load as part of the "DH-Tools" addon - see tests\harness.lua
 -- for why ADDON_NAME changed to match.
-local ADDON_ROOT = "C:\\AIProjects\\WoW\\src\\DH-Tools\\Modules\\DHAir\\"
+local ADDON_ROOT = "C:\\AIProjects-NOSYNC\\WoW\\src\\DH-Tools\\Modules\\DHAir\\"
 local ADDON_NAME = "DH-Tools"
 local FILES = { "Core.lua", "Destinations.lua", "Queue.lua", "Roster.lua", "Invite.lua", "Sync.lua", "Leadership.lua", "Summon.lua", "Commands.lua" }
 
