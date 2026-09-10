@@ -166,117 +166,37 @@ function DHAir:HandleWhisper(msg, sender)
         DebouncedInvite(self, sender)
         -- `note` is LOCAL to this client and deliberately never synced
         -- (QueueFeedback design D6); an INV request never had one anyway.
-        self:QueueForAirService(sender, nil)
+        self:FinishAirServiceQueueJoin(sender, nil)
     end
 
     if isQueueJoin and self.db.phraseAutoInvite then
         DebouncedInvite(self, sender)
-        self:QueueForAirService(sender, note)
+        self:FinishAirServiceQueueJoin(sender, note)
     end
 end
 
--- "Already in Booty Bay" exclusion (2026-09-05, Deves via Chris, README
--- §14 vetted before any of this was written - see STATUS.md's 2026-09-05
--- design-ideas entry for the original ask and Chris's Booty-Bay-only
--- correction: STV generally and Stormwind still get queued normally,
--- only Booty Bay itself skips the queue).
+-- The three steps HandleWhisper always runs once a trigger fires: add to
+-- the queue, broadcast the add to synced clients, and (if World Buff Mode
+-- is on) tag the destination as Booty Bay. Unconditional - no zone check.
 --
--- We can't know the requester's specific location until they're actually
--- a party/raid member - the requester almost never has the addon, so the
--- only per-unit position data we can read (FindGroupUnitByName + C_Map)
--- requires a real unit token, which doesn't exist before they accept the
--- invite. So the invite is sent immediately as before, but the
--- QueueAdd/broadcast/destination-tag step is HELD until we can check -
--- see QueueForAirService below.
---
--- Fails OPEN in every uncertain case - unresolved API, an ambiguous/other
--- zone name, or the requester never showing up in time - because this
--- codebase's standing rule (Queue.lua @kb:air-requeue-always, design D9)
--- is that an unneeded extra summon is cheap and visible, while a silently
--- skipped one is not. Concretely: IsUnitInBootyBay only ever returns true
--- on an exact "Booty Bay" match; anything else (including plain
--- "Stranglethorn Vale") queues normally.
---
--- UNVERIFIED (2026-09-05): whether C_Map.GetBestMapForUnit/GetMapInfo
--- actually reports "Booty Bay" as distinct from "Stranglethorn Vale" for a
--- REMOTE party/raid unit has not been confirmed in-game - Booty Bay is a
--- subzone, and this addon has never read subzone-level location for
--- anyone but the local player before now. If it turns out Classic doesn't
--- expose that distinction for a remote unit, this always returns false
--- and the exclusion simply never fires (same as World Buff Mode being off
--- for this one feature) - safe, but needs an in-game check (two accounts,
--- one standing in Booty Bay, in the same party) before relying on it.
-local WORLD_BUFF_CHECK_INTERVAL_SECONDS = 2
-local WORLD_BUFF_CHECK_TIMEOUT_SECONDS = 30
-local BOOTY_BAY_ZONE_NAME = "Booty Bay"
-
-local pendingWorldBuffCheck = {}
-local worldBuffSweepRunning = false
-
-local function IsUnitInBootyBay(unit)
-    if not (C_Map and C_Map.GetBestMapForUnit and C_Map.GetMapInfo) then
-        return false
-    end
-    local ok, mapID = pcall(C_Map.GetBestMapForUnit, unit)
-    if not ok or not mapID then return false end
-    local ok2, info = pcall(C_Map.GetMapInfo, mapID)
-    if not ok2 or not info or not info.name then return false end
-    return info.name == BOOTY_BAY_ZONE_NAME
-end
-
--- The three steps HandleWhisper always ran inline before this feature
--- existed - unchanged, just pulled out so both the immediate path (World
--- Buff Mode off) and the deferred path (below) call the same code.
+-- 2026-09-05/2026-09-10 history: this briefly held the queue-join open
+-- pending a per-unit Booty-Bay zone check (Deves' "already in Booty Bay
+-- doesn't need a summon" request via Chris), skipping the queue on an
+-- exact "Booty Bay" match and queueing normally otherwise. Reverted
+-- 2026-09-10 (Chris): in practice it never skipped anyone - whispering
+-- always still invited and queued - because
+-- C_Map.GetBestMapForUnit/GetMapInfo could not resolve "Booty Bay" as
+-- distinct from "Stranglethorn Vale" for a remote party/raid unit (the
+-- UNVERIFIED risk this shipped with, see STATUS.md). Chris also
+-- confirmed the guild does not want STV excluded either, so rather than
+-- chase subzone detection, the exclusion is gone: whisper -> invite +
+-- immediate queue join, regardless of zone.
 function DHAir:FinishAirServiceQueueJoin(name, note)
     if self:QueueAdd(name, note) then
         if self.Sync_BroadcastAdd then
             self:Sync_BroadcastAdd(name)
         end
         self:ApplyWorldBuffModeDestination(name)
-    end
-end
-
-local function SweepPendingWorldBuffChecks()
-    local now = GetTime()
-    for name, info in pairs(pendingWorldBuffCheck) do
-        local unit = DHAir.FindGroupUnitByName and DHAir.FindGroupUnitByName(name)
-        if unit then
-            pendingWorldBuffCheck[name] = nil
-            if IsUnitInBootyBay(unit) then
-                DHAir:Print(DHAir:NormalizeName(name) .. " is already in Booty Bay - skipping the summon queue.")
-            else
-                DHAir:FinishAirServiceQueueJoin(name, info.note)
-            end
-        elseif now - info.requestedAt > WORLD_BUFF_CHECK_TIMEOUT_SECONDS then
-            -- Never showed up (declined/ignored the invite, or simply
-            -- hasn't yet) - fail open per this function's header comment
-            -- rather than leaving them un-queued forever.
-            pendingWorldBuffCheck[name] = nil
-            DHAir:FinishAirServiceQueueJoin(name, info.note)
-        end
-    end
-
-    if next(pendingWorldBuffCheck) ~= nil then
-        C_Timer.NewTimer(WORLD_BUFF_CHECK_INTERVAL_SECONDS, SweepPendingWorldBuffChecks)
-    else
-        worldBuffSweepRunning = false
-    end
-end
-
--- Replaces HandleWhisper's old inline QueueAdd/broadcast/destination-tag
--- block. Immediate (unchanged behavior) unless World Buff Mode is on, in
--- which case the join is held until SweepPendingWorldBuffChecks can see
--- whether the requester landed in Booty Bay.
-function DHAir:QueueForAirService(sender, note)
-    if not (self.db and self.db.worldBuffMode) then
-        self:FinishAirServiceQueueJoin(sender, note)
-        return
-    end
-
-    pendingWorldBuffCheck[sender] = { note = note, requestedAt = GetTime() }
-    if not worldBuffSweepRunning then
-        worldBuffSweepRunning = true
-        C_Timer.NewTimer(WORLD_BUFF_CHECK_INTERVAL_SECONDS, SweepPendingWorldBuffChecks)
     end
 end
 

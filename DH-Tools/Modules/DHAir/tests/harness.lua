@@ -120,17 +120,6 @@ _G.UnitName = function(unit)
     return nil
 end
 
--- Booty Bay world-buff-mode test mock (2026-09-05): maps a unit token
--- (e.g. "party1") to the "zone name" C_Map.GetMapInfo should report for
--- it. A unit with no entry here correctly exercises the production code's
--- fail-open path - same as real Classic's C_Map behavior being UNVERIFIED
--- for a remote unit (see Invite.lua's header comment on this feature).
-local unitZoneMock = {}
-_G.C_Map = {
-    GetBestMapForUnit = function(unit) return unitZoneMock[unit] end,
-    GetMapInfo = function(mapID) return mapID and { name = mapID } or nil end,
-}
-
 _G.TargetUnit = function(unit)
     local idx = tonumber(unit:match("^party(%d+)$") or unit:match("^raid(%d+)$"))
     if idx and groupRoster[idx] then
@@ -296,7 +285,6 @@ local function resetState()
     castShouldFail = false
     groupRoster = {}
     inRaid, inGroup, inGuild = false, false, false
-    unitZoneMock = {}
     shardCount = 10
     currentPlayerName = "TestChar"
     _G.DHAirDB.isAuthorAccount = nil
@@ -610,48 +598,16 @@ DHAir.db.active = true
 local nextUp = DHAir:QueueNextAvailable(false)
 check("Non-guild entry is skipped once guildOnly is turned on", nextUp ~= nil and nextUp.name == "Guildmate")
 
--- World Buff Mode - "already in Booty Bay" exclusion (2026-09-05, Deves
--- via Chris). World Buff Mode off: unchanged immediate-queue behavior.
+-- World Buff Mode on (whisper queue join is unconditional now - the
+-- 2026-09-05 "already in Booty Bay" skip-queue exclusion was reverted
+-- 2026-09-10, Chris: it never actually skipped anyone in practice, and
+-- the guild doesn't want STV excluded either - see Invite.lua's
+-- FinishAirServiceQueueJoin header comment).
 resetState()
-DHAir.db.worldBuffMode = false
+DHAir.db.worldBuffMode = true
 DHAir:HandleWhisper("inv", "Nadia")
-check("World Buff Mode off: whisper still queues immediately",
+check("World Buff Mode on: whisper still queues immediately, regardless of zone",
     DHAir:QueueNext() ~= nil and DHAir:QueueNext().name == "Nadia")
-
--- World Buff Mode on, requester never joins the group: after the timeout
--- elapses, the pending check fails OPEN and queues them anyway rather
--- than leaving them stuck forever.
-resetState()
-DHAir.db.worldBuffMode = true
-DHAir:HandleWhisper("inv", "Oscar")
-check("World Buff Mode on: not queued yet (awaiting the zone check)", DHAir:QueueNext() == nil)
-gameTime = gameTime + 31 -- production code times this via GetTime(), not time()
-fireNextTimer() -- the sweep's own C_Timer.NewTimer callback
-check("...times out unresolved and queues anyway (fail-open, D9)",
-    DHAir:QueueNext() ~= nil and DHAir:QueueNext().name == "Oscar")
-
--- World Buff Mode on, requester accepts and lands somewhere that is NOT
--- Booty Bay (including plain Stranglethorn Vale) - queued normally.
-resetState()
-DHAir.db.worldBuffMode = true
-DHAir:HandleWhisper("inv", "Priya")
-groupRoster = { "Priya" }
-inGroup = true
-unitZoneMock["party1"] = "Stranglethorn Vale"
-fireNextTimer()
-check("In STV but not Booty Bay specifically: still queued",
-    DHAir:QueueNext() ~= nil and DHAir:QueueNext().name == "Priya")
-
--- World Buff Mode on, requester accepts and IS in Booty Bay - the queue
--- join is skipped entirely (no summon needed).
-resetState()
-DHAir.db.worldBuffMode = true
-DHAir:HandleWhisper("inv", "Quinn")
-groupRoster = { "Quinn" }
-inGroup = true
-unitZoneMock["party1"] = "Booty Bay"
-fireNextTimer()
-check("Already in Booty Bay: never added to the queue", DHAir:QueueNext() == nil)
 
 -- Online status tracking (for the Board's offline-dimming feature).
 resetState()
