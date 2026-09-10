@@ -1044,7 +1044,9 @@ local function CreateDangerPanel(parent)
     scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
 
     local content = CreateFrame("Frame", nil, scrollFrame)
-    content:SetSize(1, 780)
+    -- 780 -> 860 (2026-09-10): the new Repeat Alert Delay slider/caveat
+    -- added ~70px between the level-below slider and Alert Categories.
+    content:SetSize(1, 860)
     scrollFrame:SetScrollChild(content)
 
     local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -1240,6 +1242,58 @@ local function CreateDangerPanel(parent)
     end)
 
     --------------------------------------------------------------------
+    -- Repeat Alert Delay (2026-09-10, Chris): alerts were firing too
+    -- close together, most visibly with roaming packs made of several
+    -- same-named mobs - each is a different GUID, so the fixed 20s
+    -- per-GUID anti-flicker cooldown (Core.lua's COOLDOWN local, not
+    -- exposed here) does nothing to space THOSE apart. This is the
+    -- separate, configurable, per-npcID cooldown on top of that one -
+    -- see Core.lua's ns.Alert. Applies to every curated category
+    -- (Chris's explicit call, 2026-09-10), not conditional on the Alert
+    -- On radio above, so it's NOT tied to belowSlider's show/hide.
+    --------------------------------------------------------------------
+    local function FormatRepeatDelay(secs)
+        if secs <= 0 then return "Off (every instance alerts on its own)" end
+        local m, s = math.floor(secs / 60), secs % 60
+        if m == 0 then return s .. "s" end
+        if s == 0 then return m .. (m == 1 and " min" or " min") end
+        return string.format("%dm %ds", m, s)
+    end
+
+    local repeatDelayLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    repeatDelayLabel:SetPoint("TOPLEFT", belowSlider, "BOTTOMLEFT", -24, -16)
+    repeatDelayLabel:SetText("Repeat Alert Delay:")
+
+    local repeatDelaySlider = CreateFrame("Slider", "DHToolsDangerRepeatDelaySlider", content, "OptionsSliderTemplate")
+    repeatDelaySlider:SetPoint("TOPLEFT", repeatDelayLabel, "BOTTOMLEFT", 4, -14)
+    repeatDelaySlider:SetWidth(160)
+    repeatDelaySlider:SetMinMaxValues(0, 300)
+    repeatDelaySlider:SetValueStep(30)
+    if repeatDelaySlider.SetObeyStepOnDrag then repeatDelaySlider:SetObeyStepOnDrag(true) end
+    local repeatDelaySliderLow = _G[repeatDelaySlider:GetName() .. "Low"]
+    local repeatDelaySliderHigh = _G[repeatDelaySlider:GetName() .. "High"]
+    repeatDelaySliderLow:SetFontObject("GameFontHighlightSmall")
+    repeatDelaySliderHigh:SetFontObject("GameFontHighlightSmall")
+    repeatDelaySliderLow:SetText("Off")
+    repeatDelaySliderHigh:SetText("5m")
+    local repeatDelaySliderText = _G[repeatDelaySlider:GetName() .. "Text"]
+    repeatDelaySliderText:SetFontObject("GameFontHighlightSmall")
+    repeatDelaySlider:SetScript("OnValueChanged", function(self, value)
+        value = math.floor(value / 30 + 0.5) * 30
+        Danger.db.repeatDelay = value
+        repeatDelaySliderText:SetText(FormatRepeatDelay(value))
+    end)
+
+    local repeatDelayCaveat = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    repeatDelayCaveat:SetPoint("TOPLEFT", repeatDelaySlider, "BOTTOMLEFT", -4, -6)
+    repeatDelayCaveat:SetPoint("RIGHT", -16, 0)
+    repeatDelayCaveat:SetJustifyH("LEFT")
+    repeatDelayCaveat:SetWordWrap(true)
+    repeatDelayCaveat:SetText("Minimum time before the same mob TYPE can alert again, even from a "
+        .. "different instance of it (e.g. another mob in the same roaming pack). Separate from - and "
+        .. "on top of - the fixed 20s anti-flicker cooldown for re-detecting the exact same mob.")
+
+    --------------------------------------------------------------------
     -- Alert Categories (combined 2026-08-14, Loopi - was two separate
     -- 5-row sections, "Alert For" and "Always Alert For"; now one 5-row
     -- table with a checkbox column for each).
@@ -1249,7 +1303,7 @@ local function CreateDangerPanel(parent)
     local categoriesDivider = content:CreateTexture(nil, "ARTWORK")
     categoriesDivider:SetColorTexture(1, 1, 1, 0.15)
     categoriesDivider:SetHeight(1)
-    categoriesDivider:SetPoint("TOPLEFT", belowSlider, "BOTTOMLEFT", -24, -14)
+    categoriesDivider:SetPoint("TOPLEFT", repeatDelayCaveat, "BOTTOMLEFT", 0, -14)
     categoriesDivider:SetPoint("RIGHT", -16, 0)
 
     local categoriesTitle = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -1324,6 +1378,9 @@ local function CreateDangerPanel(parent)
             zoneHideGrayCheck:SetChecked(Danger.db.zoneWarnHideGray == true)
             UpdateZoneHideGrayEnabled()
             shareSyncCheck:SetChecked(Danger.db.shareSync ~= false)
+            local repeatDelay = Danger.db.repeatDelay or 120
+            repeatDelaySlider:SetValue(repeatDelay)
+            repeatDelaySliderText:SetText(FormatRepeatDelay(repeatDelay))
         end
 
         local s = Danger.db and Danger.db.settings

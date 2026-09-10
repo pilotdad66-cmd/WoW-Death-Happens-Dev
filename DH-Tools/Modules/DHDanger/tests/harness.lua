@@ -172,8 +172,14 @@ check("listed mob alerts", alertCount(), 1)
 check("sound played", sounds, 1)
 
 -- 3. Nameplate flicker must not machine-gun the alert. Plates are added
---    and removed constantly as the camera turns.
+--    and removed constantly as the camera turns. Isolated from the
+--    2026-09-10 per-npcID repeatDelay (repeatDelay=0) so this keeps
+--    testing only the fixed 20s per-GUID anti-flicker cooldown on its
+--    own - see the repeatDelay tests (4b-4d) for the new gate, which at
+--    its 120s default would otherwise also suppress this test's
+--    25-seconds-later re-alert (same npcID as the first).
 reset()
+ns.db.repeatDelay = 0
 ns.acctDB.manualList[448] = "Hogger"
 for i = 1, 10 do Fire("NAME_PLATE_UNIT_ADDED", "nameplate1") end
 check("cooldown suppresses repeats", alertCount(), 1)
@@ -181,15 +187,61 @@ now = now + 25
 Fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
 check("alerts again after the cooldown", alertCount(), 2)
 
--- 4. Two DIFFERENT mobs of the same type each get their own warning -
---    the cooldown is per GUID, not per npcID. Two Hoggers is worse news
---    than one, not the same news twice.
+-- 4. Two DIFFERENT mobs of the same type: with the repeat-alert delay
+--    OFF (2026-09-10, Chris - see repeatDelay tests below for the
+--    default-ON behavior), the cooldown is per GUID only, so each still
+--    gets its own warning - two Hoggers is worse news than one.
 reset()
+ns.db.repeatDelay = 0
 ns.acctDB.manualList[448] = "Hogger"
 units.nameplate3 = { guid = "Creature-0-0-0-0-448-0009", name = "Hogger" }
 Fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
 Fire("NAME_PLATE_UNIT_ADDED", "nameplate3")
-check("per-GUID cooldown, not per-npcID", alertCount(), 2)
+check("repeatDelay=0: per-GUID cooldown only, not per-npcID", alertCount(), 2)
+
+-- 4b. Repeat-alert delay (2026-09-10, Chris - roaming packs of several
+--     same-named mobs were re-alerting too close together). Default is
+--     120s and applies across DIFFERENT guids sharing the same npcID -
+--     the opposite of test 4 above, which is what turning it off (0)
+--     is for.
+reset()
+check("default repeatDelay is 120s", ns.db.repeatDelay, 120)
+ns.acctDB.manualList[448] = "Hogger"
+units.nameplate3 = { guid = "Creature-0-0-0-0-448-0009", name = "Hogger" }
+Fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
+check("first pack member alerts", alertCount(), 1)
+Fire("NAME_PLATE_UNIT_ADDED", "nameplate3")
+check("second pack member (same npcID, different guid) suppressed within the default 120s", alertCount(), 1)
+now = now + 121
+Fire("NAME_PLATE_UNIT_ADDED", "nameplate3")
+check("alerts again once the repeat-alert delay elapses", alertCount(), 2)
+
+-- 4c. A DIFFERENT npcID is never held back by another mob's repeatDelay -
+--     only same-type repeats are throttled.
+reset()
+ns.acctDB.manualList[448] = "Hogger"
+ns.acctDB.manualList[299] = "Kobold Vermin"
+Fire("NAME_PLATE_UNIT_ADDED", "nameplate1") -- Hogger, npc 448
+Fire("NAME_PLATE_UNIT_ADDED", "nameplate2") -- Kobold Vermin, npc 299
+check("a different mob type alerts independently of another type's repeatDelay", alertCount(), 2)
+
+-- 4d. repeatDelay is configurable and snaps to the console command's own
+--     clamp/rounding (Config.lua's slider does the same 30s snapping).
+reset()
+ns.acctDB.manualList[448] = "Hogger"
+units.nameplate3 = { guid = "Creature-0-0-0-0-448-0009", name = "Hogger" }
+SlashCmdList["DHDANGER"]("repeatdelay 45") -- 45 is nearer 60 than 30 -> snaps to 60
+check("repeatdelay snaps 45 -> 60 (nearest 30s step)", ns.db.repeatDelay, 60)
+Fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
+Fire("NAME_PLATE_UNIT_ADDED", "nameplate3")
+check("suppressed within the newly configured 60s window", alertCount(), 1)
+now = now + 61
+Fire("NAME_PLATE_UNIT_ADDED", "nameplate3")
+check("alerts again after the configured window", alertCount(), 2)
+SlashCmdList["DHDANGER"]("repeatdelay 400") -- clamps to 300 (5 min max)
+check("repeatdelay clamps to the 300s (5 min) ceiling", ns.db.repeatDelay, 300)
+SlashCmdList["DHDANGER"]("repeatdelay -10") -- clamps to 0 (off)
+check("repeatdelay clamps to 0 (off) floor", ns.db.repeatDelay, 0)
 
 -- 5. k-0025: the yell path derives the npcID from arg12's GUID, with no
 --    curated "yells" flag anywhere.

@@ -122,6 +122,21 @@ function ns.InitDB()
     -- world. Default ON (Loopi).
     if db.shareSync == nil then db.shareSync = true end
 
+    -- Repeat-alert delay (2026-09-10, Chris): reported that alerts fire
+    -- too closely together, most visibly with roaming packs made of
+    -- several mobs sharing the same name/npcID - each is a different
+    -- GUID, so the existing per-GUID COOLDOWN below (20s, unconfigurable,
+    -- anti-flicker for the SAME creature instance) does nothing to space
+    -- them out. This is a SEPARATE, configurable, per-npcID cooldown on
+    -- top of that one - see ns.Alert. Applies to every curated category,
+    -- not just Roaming Packs (Chris's explicit choice, 2026-09-10,
+    -- overriding the older "two Hoggers is worse news than one" per-GUID
+    -- design for anyone who wants quieter alerts - 0 restores that old
+    -- behavior exactly). Seconds; UI is a 0-300 slider in 30s steps
+    -- (Config.lua). Per-character, same reasoning as zoneWarn/shareSync -
+    -- a preference for how chatty THIS character's alerts are.
+    if db.repeatDelay == nil then db.repeatDelay = 120 end
+
     -- Alert policy settings (2026-08-08, Loopi - "start adding the
     -- choices we discussed"). Category/level choices drive the
     -- zone-entry warning AND, since 2026-08-18, the curated half of live
@@ -202,7 +217,15 @@ end
 
 local COOLDOWN = 20     -- seconds before the same mob may alert again
 
-local lastAlert = {}    -- guid -> GetTime() of its last alert
+local lastAlert = {}       -- guid -> GetTime() of its last alert
+local lastAlertByType = {} -- npcID -> GetTime() of its last alert (2026-09-10,
+                            -- Chris - see InitDB's db.repeatDelay comment).
+                            -- Independent of lastAlert above: this one
+                            -- fires across DIFFERENT guids sharing the
+                            -- same npcID, which is what actually spaces
+                            -- out a roaming pack's several same-named
+                            -- members instead of just one flickering
+                            -- nameplate.
 local pending   = {}    -- guid -> {t=, x=, y=}, for the debug lead-time timer
 local playerGUID
 
@@ -423,7 +446,20 @@ function ns.Alert(guid, npcID, name, source)
     if lastAlert[key] and (now - lastAlert[key]) < COOLDOWN then
         return false
     end
+    -- Repeat-alert delay (2026-09-10, Chris - see InitDB's db.repeatDelay
+    -- comment): a SEPARATE, configurable, per-npcID cooldown on top of
+    -- the fixed per-GUID one above. lastAlert (above) only stops the
+    -- SAME creature instance from re-firing (nameplate flicker); this
+    -- stops DIFFERENT instances of the same mob type (a roaming pack's
+    -- several same-named members) from re-alerting within the window.
+    -- 0 disables this check entirely, restoring the old "every instance
+    -- alerts independently" behavior.
+    local repeatDelay = (ns.db and ns.db.repeatDelay) or 0
+    if repeatDelay > 0 and lastAlertByType[npcID] and (now - lastAlertByType[npcID]) < repeatDelay then
+        return false
+    end
     lastAlert[key] = now
+    lastAlertByType[npcID] = now
     -- source is passed through so the spot records how precisely it was
     -- actually located (SRC_ACCURACY) - a yell is not a nameplate.
     ns.RecordSighting(npcID, name, source)
@@ -907,6 +943,7 @@ function ns.RemoveTarget(arg)
     if not had then ns.Print(string.format("npc %d isn't on the list.", npcID)) return end
     ns.acctDB.manualList[npcID] = nil
     lastAlert = {}
+    lastAlertByType = {}
     ns.Print(string.format("removed |cffffff00%s|r (npc %d). %d left.", had, npcID, ns.Count()))
 end
 
@@ -942,6 +979,7 @@ SlashCmdList["DHDANGER"] = function(msg)
     elseif cmd == "clear" then
         ns.acctDB.manualList = {}
         lastAlert = {}
+        lastAlertByType = {}
         ns.Print("danger list cleared (account-wide - this clears it for every character).")
     elseif cmd == "sightings" then
         local mobs, spots = 0, 0
@@ -984,6 +1022,19 @@ SlashCmdList["DHDANGER"] = function(msg)
         Toggle("sound", arg, "alert sound")
     elseif cmd == "debug" then
         Toggle("debug", arg, "debug lead-time timing")
+    elseif cmd == "repeatdelay" then
+        -- Console shortcut for the Config page slider (2026-09-10).
+        -- Clamped 0-300 and snapped to the nearest 30s so a typo like
+        -- "/dhdanger repeatdelay 45" lands on the same steps the slider
+        -- allows, rather than a value the UI can't represent.
+        local secs = tonumber(arg)
+        if not secs then
+            ns.Print(string.format("current repeat-alert delay: %ds. Usage: /dhdanger repeatdelay <0-300, seconds>", ns.db.repeatDelay or 120))
+        else
+            secs = math.floor(math.max(0, math.min(300, secs)) / 30 + 0.5) * 30
+            ns.db.repeatDelay = secs
+            ns.Print(string.format("repeat-alert delay set to %ds%s.", secs, secs == 0 and " (off - every instance alerts independently again)" or ""))
+        end
     else
         ns.Print("DH-Danger commands:")
         ns.Print("  /dhdanger add            - add your current target")
@@ -994,6 +1045,7 @@ SlashCmdList["DHDANGER"] = function(msg)
         ns.Print("  /dhdanger zonewarn on|off- list curated dangers when entering a zone")
         ns.Print("  /dhdanger sound on|off   - alert sound")
         ns.Print("  /dhdanger debug on|off   - time the gap from alert to first hit")
+        ns.Print("  /dhdanger repeatdelay <secs> - minimum gap before the same mob TYPE can alert again (0-300, default 120)")
         ns.Print("Detection: nameplate, mouseover, target, yell, emote all alert; loot only records a sighting.")
         local curated = ns.Curated()
         local n = 0
