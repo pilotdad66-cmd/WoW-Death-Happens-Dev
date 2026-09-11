@@ -523,7 +523,7 @@ end
 local function zoneWarnings()
 	local n = 0
 	for _, m in ipairs(chat) do
-		if m:find("curated danger(s)", 1, true) then n = n + 1 end
+		if m:find("Curated Threats", 1, true) then n = n + 1 end
 	end
 	return n
 end
@@ -1014,6 +1014,80 @@ ns.db.shareSync = false
 posX, posY = 0, 0
 Fire("CHAT_MSG_ADDON", "DHDangerV1", "SIGHT|448|Creature-0-0-0-0-448-9999|0|0|Elwynn Forest|nameplate", "GUILD", "Someone")
 check("receiving still works with sharing off", alertCount(), 1)
+
+---------------------------------------------------------------------
+-- 51-53. Curated-row exclusion (include=false, 2026-09-11, Chris -
+--        "excluded rows") and the zone-entry header's total-vs-shown
+--        split. A dedicated fixture (Redwater Shore, npcIDs 901-904) so
+--        these don't disturb any of fakeCuration()'s existing Duskwood-
+--        based category/level assertions above.
+---------------------------------------------------------------------
+local function fakeExcludeCuration()
+	ns.addonNS = { Curation = { npcs = {
+		-- Same type/level as 902 on purpose: proves exclusion is what
+		-- differs, not some other field.
+		[901] = { name = "Testmob Rare",     zone = "Redwater Shore", level = 20, type = "rare" },
+		[902] = { name = "Testmob Excluded", zone = "Redwater Shore", level = 20, type = "rare", include = false },
+		-- Green/gray at player level 20 (GrayBelow(20) = 7): diff -6 is
+		-- green, diff -10 is gray - see Core.lua's ns.LevelColor.
+		[903] = { name = "Testmob Green", zone = "Redwater Shore", level = 14, type = "rare" },
+		[904] = { name = "Testmob Gray",  zone = "Redwater Shore", level = 10, type = "rare" },
+	} } }
+end
+
+reset()
+fakeExcludeCuration()
+local excludedEntry = ns.addonNS.Curation.npcs[902]
+check("CategoriesFor returns no categories for an excluded row", #ns.CategoriesFor(excludedEntry), 0)
+check("EntryWarns is false for an excluded row even though type/level would otherwise qualify",
+	ns.EntryWarns(excludedEntry, 20, true), false)
+check("an excluded row never appears in ZoneThreats", (function()
+	for _, t in ipairs(ns.ZoneThreats("Redwater Shore", 20, true)) do
+		if t.id == 902 then return true end
+	end
+	return false
+end)(), false)
+check("IsDangerous is false for an excluded npcID with no manual-list entry", ns.IsDangerous(902), false)
+ns.acctDB.manualList[902] = "hand-added anyway"
+check("a manual /dhdanger add still overrides curation exclusion (independent sources, unchanged design)",
+	ns.IsDangerous(902), true)
+
+-- 52. The zone-entry header's total is every npcID ZoneIndex assigned to
+--     the zone - unaffected by include=false OR either hide-color option.
+--     "Shown" is whatever actually survives every filter. Redwater Shore
+--     has 4 indexed entries (901-904) in every scenario below.
+reset()
+fakeExcludeCuration()
+ns.ZoneReport("Redwater Shore", 20, false, false, false)
+check("header total is all 4 indexed entries, hideGray/hideGreen both off",
+	chat[1]:find("4 Curated Threats, 3 Shown", 1, true) ~= nil, true)
+-- 3 shown: 901 (yellow), 903 (green, visible), 904 (gray, visible) -
+-- 902 never counts, exclusion isn't a color and isn't touched by either
+-- checkbox.
+
+reset()
+fakeExcludeCuration()
+ns.ZoneReport("Redwater Shore", 20, false, true, false)
+check("hideGray alone drops only the gray one - total still 4",
+	chat[1]:find("4 Curated Threats, 2 Shown", 1, true) ~= nil, true)
+
+reset()
+fakeExcludeCuration()
+ns.ZoneReport("Redwater Shore", 20, false, false, true)
+check("hideGreen alone drops only the green one - total still 4",
+	chat[1]:find("4 Curated Threats, 2 Shown", 1, true) ~= nil, true)
+
+reset()
+fakeExcludeCuration()
+ns.ZoneReport("Redwater Shore", 20, false, true, true)
+check("both hide flags together drop gray AND green - total still 4",
+	chat[1]:find("4 Curated Threats, 1 Shown", 1, true) ~= nil, true)
+
+-- 53. Defaults locked in (2026-09-11, Chris): Hide Gray still defaults
+--     ON (2026-08-31, unchanged); the new Hide Green defaults OFF.
+reset()
+check("default zoneWarnHideGray is still on", ns.db.zoneWarnHideGray, true)
+check("default zoneWarnHideGreen is off", ns.db.zoneWarnHideGreen, false)
 
 ---------------------------------------------------------------------
 print(string.format("== %d passed, %d failed ==", passed, failed))

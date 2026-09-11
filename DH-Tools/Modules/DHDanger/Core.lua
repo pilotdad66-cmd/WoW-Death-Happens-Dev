@@ -114,6 +114,12 @@ function ns.InitDB()
     -- (verbose) always shows everything regardless of this setting
     -- (Loopi, 2026-08-14). Per-character, same reasoning as zoneWarn.
     if db.zoneWarnHideGray == nil then db.zoneWarnHideGray = true end
+    -- Same idea, for green-level (per ns.LevelColor) threats (2026-09-11,
+    -- Chris - a second, independent checkbox alongside Hide Gray, not a
+    -- replacement). Default OFF: gray defaults ON per the 2026-08-31
+    -- suite-wide flip, but Chris wants green left visible until a player
+    -- opts in to hiding it too.
+    if db.zoneWarnHideGreen == nil then db.zoneWarnHideGreen = false end
 
     -- Peer-relay broadcast (k-0026/k-0030, design finalized 2026-08-20
     -- with Loopi - see Sync.lua). Gates SENDING your own detections
@@ -728,6 +734,15 @@ end
 function ns.CategoriesFor(entry)
     local cats = {}
     if not entry then return cats end
+    -- include=false (2026-09-11, Chris): a curated row marked excluded -
+    -- wired up from the CSV's previously-unused `include` column, which
+    -- no runtime code had ever read before this. Returning zero
+    -- categories here means EntryWarns, and everything that calls it
+    -- (live-alert IsDangerous, zone-entry ZoneThreats/ZoneReport), treats
+    -- the row as if it doesn't exist - without deleting its data or
+    -- touching any of those call sites individually. include==true or
+    -- absent is unaffected - identical to pre-2026-09-11 behavior.
+    if entry.include == false then return cats end
     if entry.surprise == "guard" then cats[#cats + 1] = "guard" end
     local t = entry.type
     if t == "rare" or t == "rareelite" or t == "elite" then cats[#cats + 1] = t end
@@ -799,7 +814,7 @@ end
 
 local lastZoneWarned
 
-function ns.ZoneReport(zone, playerLevel, verbose, hideGray)
+function ns.ZoneReport(zone, playerLevel, verbose, hideGray, hideGreen)
     local idx = ZoneIndex()
     if not idx then
         if verbose then
@@ -821,17 +836,30 @@ function ns.ZoneReport(zone, playerLevel, verbose, hideGray)
         return
     end
 
+    -- Raw total (2026-09-11, Chris): every npcID ZoneIndex assigned to
+    -- this zone, full stop - NOT reduced by include=false, the category/
+    -- level policy, or hideGray/hideGreen. The header line reports this
+    -- alongside how many actually made it through every filter below, so
+    -- "N Curated Threats, M Shown" always means what it says even when
+    -- N > M for reasons other than level.
+    local total = #idx[zone]
+
     -- Zone entry is an orientation warning, not a recommendation of what
     -- the player can safely fight. Show every enabled curated danger -
-    -- except gray-level ones when hideGray is set (2026-08-14, Loopi):
-    -- ONLY the automatic zone-entry warning passes hideGray=true;
-    -- `/dhdanger zone` (verbose) always leaves it unset so the manual
-    -- check still shows everything, on purpose.
+    -- except gray-level ones when hideGray is set (2026-08-14, Loopi)
+    -- and/or green-level ones when hideGreen is set (2026-09-11, Chris -
+    -- a second, independent checkbox, not a replacement). ONLY the
+    -- automatic zone-entry warning passes either flag; `/dhdanger zone`
+    -- (verbose) always leaves both unset so the manual check still shows
+    -- everything, on purpose.
     local threats = ns.ZoneThreats(zone, playerLevel, true)
-    if hideGray then
+    if hideGray or hideGreen then
         local filtered = {}
         for _, t in ipairs(threats) do
-            if ns.LevelColor(t.e.level, playerLevel) ~= DIFFICULTY_COLOR.gray then
+            local color = ns.LevelColor(t.e.level, playerLevel)
+            local hide = (hideGray and color == DIFFICULTY_COLOR.gray)
+                or (hideGreen and color == DIFFICULTY_COLOR.green)
+            if not hide then
                 filtered[#filtered + 1] = t
             end
         end
@@ -846,7 +874,7 @@ function ns.ZoneReport(zone, playerLevel, verbose, hideGray)
     end
 
     ns.Print(string.format(
-        "|cffff2020%s:|r %d curated danger(s)", zone, #threats))
+        "|cffff2020%s:|r %d Curated Threats, %d Shown", zone, total, #threats))
     for _, t in ipairs(threats) do
         local creatureType = ThreatCreatureType(t.e)
         local roaming = t.e.roams and "  Roaming" or ""
@@ -863,7 +891,8 @@ local function OnZoneChanged()
     local zone = (GetRealZoneText and GetRealZoneText()) or ""
     if zone == "" or zone == lastZoneWarned then return end
     lastZoneWarned = zone
-    ns.ZoneReport(zone, UnitLevel and UnitLevel("player") or nil, false, ns.db.zoneWarnHideGray == true)
+    ns.ZoneReport(zone, UnitLevel and UnitLevel("player") or nil, false,
+        ns.db.zoneWarnHideGray == true, ns.db.zoneWarnHideGreen == true)
 end
 
 f:SetScript("OnEvent", function(_, event, ...)

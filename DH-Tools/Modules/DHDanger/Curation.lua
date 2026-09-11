@@ -2,7 +2,7 @@
 -- GENERATED FILE - DO NOT HAND-EDIT.
 -- Source: claude\DH-Danger\curation\DH-Danger-Curation.csv
 -- Regenerate: powershell -ExecutionPolicy Bypass -File claude\DH-Danger\import-curation.ps1
--- Generated: 2026-08-25 20:23
+-- Generated: 2026-09-10 22:04
 --
 -- HUMAN JUDGEMENT ONLY. Facts live in DangerData.lua, which is
 -- regenerated from the import files and the in-game dump. Keeping
@@ -17,7 +17,7 @@
 local _, ns = ...
 
 ns.Curation = ns.Curation or {}
-ns.Curation.generated = "2026-08-25 20:23"
+ns.Curation.generated = "2026-09-10 22:04"
 
 -- [npcID or name] = { name, zone|zones, level, type, creatureType, surprise,
 --             severity, yells, stealth, roams, soloable, include, why }
@@ -30,6 +30,11 @@ ns.Curation.generated = "2026-08-25 20:23"
 -- zones (an array) instead, merged from one CSV row per zone -
 -- consumers must read e.zones or {e.zone}, never e.zone alone.
 -- type mirrors UnitClassification(): normal|elite|rare|rareelite.
+-- include=false means EXCLUDED (2026-09-11, Chris): Core.lua's
+-- ns.CategoriesFor returns no categories at all for the entry, so it
+-- never live-alerts and never appears in a zone-entry report - a soft
+-- delete that keeps the row's data intact. include=true or absent
+-- behaves exactly as it did before this flag was wired up.
 -- creatureType mostly mirrors UnitCreatureType() (e.g. Humanoid); absent
 -- means unknown. Hydra/Silithid/Slime are a deliberate exception (Loopi,
 -- 2026-08-13) - the live API lumps them under Beast/uncategorized, which
@@ -88,9 +93,9 @@ ns.Curation.npcs = {
 	[877]={name="Saltscale Forager",zone="Stranglethorn Vale",level=36,type="elite",creatureType="Humanoid"},  -- Saltscale Forager
 	[947]={name="Rohh the Silent",zone="Redridge Mountains",level=26,type="rare",creatureType="Humanoid"},  -- Rohh the Silent
 	[1037]={name="Dragonmaw Battlemaster",zone="Wetlands",level=30,type="rare",creatureType="Humanoid"},  -- Dragonmaw Battlemaster
-	[1047]={name="Red Scalebane",zone="Wetlands",level=60,type="elite",creatureType="Dragonkin"},  -- Red Scalebane
-	[1048]={name="Scalebane Lieutenant",zone="Wetlands",level=61,type="elite",creatureType="Dragonkin"},  -- Scalebane Lieutenant
-	[1050]={name="Scalebane Royal Guard",zone="Wetlands",level=62,type="elite",creatureType="Dragonkin"},  -- Scalebane Royal Guard
+	[1047]={name="Red Scalebane",zone="Wetlands",level=60,type="elite",creatureType="Dragonkin",include=false},  -- Red Scalebane
+	[1048]={name="Scalebane Lieutenant",zone="Wetlands",level=61,type="elite",creatureType="Dragonkin",include=false},  -- Scalebane Lieutenant
+	[1050]={name="Scalebane Royal Guard",zone="Wetlands",level=62,type="elite",creatureType="Dragonkin",include=false},  -- Scalebane Royal Guard
 	[1051]={name="Dark Iron Dwarf",zone="Wetlands",level=28,type="elite",creatureType="Humanoid"},  -- Dark Iron Dwarf
 	[1052]={name="Dark Iron Saboteur",zones={"Wetlands","Arathi Highlands"},level=29,type="elite",creatureType="Humanoid"},  -- Dark Iron Saboteur
 	[1053]={name="Dark Iron Tunneler",zone="Wetlands",level=30,type="elite",creatureType="Humanoid"},  -- Dark Iron Tunneler
@@ -571,7 +576,7 @@ ns.Curation.npcs = {
 	[12803]={name="Lord Lakmaeran",zone="Feralas",level=62,type="elite",creatureType="Beast"},  -- Lord Lakmaeran
 	[12864]={name="Warsong Outrider",zone="Ashenvale",level=30,type="normal",creatureType="Humanoid",roams=true},  -- Warsong Outrider
 	[12865]={name="Ambassador Malcin",zone="The Barrens",level=36,type="elite",creatureType="Undead"},  -- Ambassador Malcin
-	[12899]={name="Axtroz",zone="Wetlands",level=62,type="elite",creatureType="Dragonkin"},  -- Axtroz
+	[12899]={name="Axtroz",zone="Wetlands",level=62,type="elite",creatureType="Dragonkin",include=false},  -- Axtroz
 	[12900]={name="Somnus",zone="Swamp of Sorrows",level=62,type="elite",creatureType="Dragonkin"},  -- Somnus
 	[13082]={name="Milton Beats",zone="Hillsbrad Foothills",level=33,type="elite",creatureType="Humanoid"},  -- Milton Beats
 	[13177]={name="Vahgruk",zone="Burning Steppes",level=55,type="elite",creatureType="Humanoid"},  -- Vahgruk
@@ -615,7 +620,7 @@ ns.Curation.npcs = {
 	[14345]={name="The Ongar",zone="Felwood",level=51,type="rare",creatureType="Slime"},  -- The Ongar
 	[14357]={name="Lake Thresher",zone="Redridge Mountains",level=25,type="elite",creatureType="Beast"},  -- Lake Thresher
 	[14377]={name="Scout Tharr",zone="Orgrimmar",level=60,type="elite",creatureType="Humanoid"},  -- Scout Tharr
-	[14388]={name="Rogue Black Drake",zones={"Elwynn Forest","Burning Steppes"},level=52,type="elite",creatureType="Dragonkin"},  -- Rogue Black Drake
+	[14388]={name="Rogue Black Drake",zone="Burning Steppes",level=52,type="elite",creatureType="Dragonkin"},  -- Rogue Black Drake
 	[14392]={name="Overlord Runthak",zone="Orgrimmar",level=60,type="elite",creatureType="Humanoid"},  -- Overlord Runthak
 	[14424]={name="Mirelow",zone="Wetlands",level=25,type="rare",creatureType="Elemental"},  -- Mirelow
 	[14425]={name="Gnawbone",zone="Wetlands",level=25,type="rare",creatureType="Humanoid"},  -- Gnawbone

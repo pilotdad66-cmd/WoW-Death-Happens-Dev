@@ -1100,30 +1100,61 @@ local function CreateDangerPanel(parent)
     zoneWarnCheck:SetPoint("TOPLEFT", zoneTitle, "BOTTOMLEFT", -4, -8)
     _G[zoneWarnCheck:GetName() .. "Text"]:SetText("Alert when entering a dangerous zone")
 
+    -- Exclude Gray / Green from the zone-entry message (2026-09-11,
+    -- Chris - Hide Gray already existed as its own checkbox; Hide Green
+    -- is new and independent, not a replacement). One compact line:
+    -- "Exclude [x]Gray / [x]Green Threats from the Zone In Message",
+    -- with the words Gray/Green colored to match ns.LevelColor's own
+    -- difficulty-color scheme (DIFFICULTY_COLOR.gray/.green in Core.lua)
+    -- so the checkbox label matches what the zone report actually shows.
+    -- `/dhdanger zone` (verbose) always ignores both, same as before.
+    local excludeLabel = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    excludeLabel:SetPoint("TOPLEFT", zoneWarnCheck, "BOTTOMLEFT", 20, -8)
+    excludeLabel:SetText("Exclude")
+
     local zoneHideGrayCheck = CreateFrame("CheckButton", "DHToolsDangerZoneHideGrayCheck", content, "UICheckButtonTemplate")
-    zoneHideGrayCheck:SetPoint("TOPLEFT", zoneWarnCheck, "BOTTOMLEFT", 20, -4)
-    _G[zoneHideGrayCheck:GetName() .. "Text"]:SetText("Hide gray-level creatures")
+    zoneHideGrayCheck:SetPoint("LEFT", excludeLabel, "RIGHT", 2, 0)
+    _G[zoneHideGrayCheck:GetName() .. "Text"]:SetText("|cffbfbfbfGray|r /")
+
+    local zoneHideGreenCheck = CreateFrame("CheckButton", "DHToolsDangerZoneHideGreenCheck", content, "UICheckButtonTemplate")
+    zoneHideGreenCheck:SetPoint("LEFT", _G[zoneHideGrayCheck:GetName() .. "Text"], "RIGHT", 2, 0)
+    _G[zoneHideGreenCheck:GetName() .. "Text"]:SetText("|cff40bf40Green|r Threats from the Zone In Message")
 
     -- Only meaningful when zoneWarn is on - disabled (and greyed) rather
-    -- than hidden, so its existence isn't a surprise once zoneWarn is
-    -- turned back on.
-    local function UpdateZoneHideGrayEnabled()
-        local zoneHideGrayText = _G[zoneHideGrayCheck:GetName() .. "Text"]
+    -- than hidden, so their existence isn't a surprise once zoneWarn is
+    -- turned back on. NOTE: the Gray/Green words above are colored with
+    -- embedded |cAARRGGBB codes, which win over SetFontObject's color -
+    -- so "disabling" still leaves those two words showing their bright
+    -- colors even though the checkbox itself is greyed/unclickable. A
+    -- cosmetic gap, not a functional one - Enable/Disable still gates
+    -- whether the checkbox can be clicked.
+    local function UpdateZoneExcludeCheckboxesEnabled()
+        local grayText = _G[zoneHideGrayCheck:GetName() .. "Text"]
+        local greenText = _G[zoneHideGreenCheck:GetName() .. "Text"]
         if zoneWarnCheck:GetChecked() then
             zoneHideGrayCheck:Enable()
-            zoneHideGrayText:SetFontObject("GameFontHighlight")
+            zoneHideGreenCheck:Enable()
+            excludeLabel:SetFontObject("GameFontHighlight")
+            grayText:SetFontObject("GameFontHighlight")
+            greenText:SetFontObject("GameFontHighlight")
         else
             zoneHideGrayCheck:Disable()
-            zoneHideGrayText:SetFontObject("GameFontDisable")
+            zoneHideGreenCheck:Disable()
+            excludeLabel:SetFontObject("GameFontDisable")
+            grayText:SetFontObject("GameFontDisable")
+            greenText:SetFontObject("GameFontDisable")
         end
     end
 
     zoneWarnCheck:SetScript("OnClick", function(self)
         Danger.db.zoneWarn = self:GetChecked() and true or false
-        UpdateZoneHideGrayEnabled()
+        UpdateZoneExcludeCheckboxesEnabled()
     end)
     zoneHideGrayCheck:SetScript("OnClick", function(self)
         Danger.db.zoneWarnHideGray = self:GetChecked() and true or false
+    end)
+    zoneHideGreenCheck:SetScript("OnClick", function(self)
+        Danger.db.zoneWarnHideGreen = self:GetChecked() and true or false
     end)
 
     --------------------------------------------------------------------
@@ -1376,7 +1407,8 @@ local function CreateDangerPanel(parent)
         if Danger.db then
             zoneWarnCheck:SetChecked(Danger.db.zoneWarn ~= false)
             zoneHideGrayCheck:SetChecked(Danger.db.zoneWarnHideGray == true)
-            UpdateZoneHideGrayEnabled()
+            zoneHideGreenCheck:SetChecked(Danger.db.zoneWarnHideGreen == true)
+            UpdateZoneExcludeCheckboxesEnabled()
             shareSyncCheck:SetChecked(Danger.db.shareSync ~= false)
             local repeatDelay = Danger.db.repeatDelay or 120
             repeatDelaySlider:SetValue(repeatDelay)
