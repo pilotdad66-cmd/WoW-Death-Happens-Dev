@@ -9,9 +9,11 @@ if you skim the first.
 
 ## What's in this repo
 
-This repo holds only the addon source (`DH-Tools/`) - no design notes, no project-management
-files, no history beyond the code itself. That's deliberate, not an
-oversight - don't read anything into what's absent.
+This repo holds the addon source (`DH-Tools/`) and its per-module design
+docs (`*-Design.md`, one per module, explaining why a feature works the
+way it does) - no project-management files, no history beyond the code
+itself. That's deliberate, not an oversight - don't read anything into
+what's absent.
 
 `DH-Tools/Modules/` is where almost everything lives: each guild feature
 (Air Service, Bavin, Danger, Quests, Macros, Mob Marker) is its own
