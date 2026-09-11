@@ -1,6 +1,6 @@
 # DH-Tools
 
-**Version 2.0.4** | Author: **Loopi** | For: *Death Happens* Hardcore guild
+**Version 2.0.5** | Author: **Loopi** | For: *Death Happens* Hardcore guild
 
 ---
 
@@ -61,6 +61,32 @@ you actually want running, all managed from one place.
 ---
 
 ## Changelog
+
+### 2.0.5
+- **DH-Danger: rows can now be excluded from detection without deleting
+  them.** A handful of curated entries (the Wetlands dragonkin rares,
+  and a duplicate Rogue Black Drake row) are now marked excluded rather
+  than removed, so the underlying data stays on record but the addon
+  treats them as if they don't exist.
+- **DH-Danger: separate Gray and Green filters for the zone-entry
+  message.** The old "ignore gray mobs when zoning in" option is now
+  two independent checkboxes - "Exclude Gray / Green Threats from the
+  Zone In Message" - so you can hide either color on its own. Gray
+  stays on by default; Green defaults off.
+- **DH-Danger: the zone-entry header now shows both counts.** It now
+  reads "N Curated Threats, M Shown" - N is everything curated for the
+  zone regardless of your filters, M is how many are actually listed
+  below it.
+- **DH-Danger: new configurable Repeat Alert Delay.** A slider (0-300s,
+  30s steps) controls how soon the same mob type can alert again,
+  independent of the existing per-creature cooldown - useful when
+  several mobs sharing a name (e.g. a roaming pack) were alerting back
+  to back. Set it to 0 to get the old behavior back.
+- **DH-Air: reverted the Booty Bay World Buff Mode summon-skip.** The
+  recent change meant to skip queuing a summon for someone already in
+  Booty Bay never actually worked in practice, so whispering for a
+  summon now always invites and queues, same as before that change was
+  introduced.
 
 ### 2.0.4
 - **DH-Air: World Buff Mode no longer re-queues a summon for someone

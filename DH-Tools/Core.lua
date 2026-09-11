@@ -150,7 +150,7 @@ end
 -- Version line and the changelog) - build-test-zip.ps1 never touches
 -- Core.lua at all, so a test build always announces whatever the last
 -- REAL release was, never a number nobody can download.
-local LAST_RELEASE_VERSION = "2.0.4"
+local LAST_RELEASE_VERSION = "2.0.5"
 
 local VER_PREFIX = "DHToolsVer"
 -- In-memory only, never persisted - Chris's call: the "update available"
