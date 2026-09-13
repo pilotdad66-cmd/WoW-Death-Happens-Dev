@@ -227,6 +227,176 @@ local function VersionCheck_Announce()
     end
 end
 
+-- === Guild-chat item lookup (2026-09-13) ===
+-- Lets any guild member ask "what's this worth to Bavin" just by posting
+-- "?" followed by an item link in guild chat - see
+-- Modules\DHBavin\DH-Bavin-ChatLookup-Design.md for the full design. The
+-- TRIGGER WATCHER lives here in Core, not behind the Bavin module's own
+-- on/off gate, on purpose: the "nobody online has Bavin enabled"
+-- fallback message can only be true and postable if the code noticing
+-- the silence isn't itself the thing that would be missing. Only the
+-- actual item-data lookup (ns.Bavin.TryClassifyLookup) requires the
+-- Bavin module to be enabled - Core just detects the trigger, extracts
+-- links, and runs the same claim-race machinery for either outcome.
+--
+-- PROTOCOL: one new addon-message type, "CLAIM|key", broadcast to GUILD
+-- on its own prefix once a client decides to answer (whether with real
+-- data or the fallback text) - the client that broadcasts it also posts
+-- the actual human-readable reply straight to guild chat itself in the
+-- same breath. `key` is built from {sender, a hash of the raw message,
+-- link index} so two different questions (or the same question asked
+-- twice) never collide, without needing any delimiter that could appear
+-- inside the raw chat text itself (which, once an item link's color/
+-- hyperlink escapes are in it, definitely contains "|").
+--
+-- CLAIM RACE: every client that reaches a decision for a given key waits
+-- a random delay before broadcasting, standing down immediately if it
+-- hears someone else's CLAIM for that key first - this IS the tie-break
+-- (Chris's call: random, not deterministic). Real answers get first
+-- crack (a short delay window); the "nobody's home" fallback is
+-- deliberately given a LATER window so it only wins when no real answer
+-- showed up in time. Total budget end-to-end is ~2 seconds (Chris's
+-- number) - guild addon messages already round-trip in a small fraction
+-- of that under normal conditions (same channel DH-Bavin's own SYNCREQ/
+-- SYNCDATA relies on), so this is a comfortable multiple of real
+-- latency, not a tight budget. An occasional duplicate reply from
+-- near-simultaneous timers is accepted (Chris's call) rather than
+-- engineered away entirely.
+local LOOKUP_PREFIX = "DHToolsLookupV1"
+
+-- Standard chat item-hyperlink shape: |cAARRGGBB|Hitem:...|h[Name]|h|r
+local ITEM_LINK_PATTERN = "|c%x%x%x%x%x%x%x%x|Hitem:.-|h%[.-%]|h|r"
+
+local ANSWER_DELAY_MIN, ANSWER_DELAY_MAX = 0.1, 1.2     -- real-data replies
+local FALLBACK_DELAY_MIN, FALLBACK_DELAY_MAX = 1.5, 2.0 -- "nobody's running Bavin"
+local LINK_STAGGER = 0.4 -- per link index, so one client winning 2+ of a
+                          -- message's up-to-3 links doesn't fire multiple
+                          -- SendChatMessage calls back-to-back (WoW's own
+                          -- chat throttle can silently drop rapid sends)
+local CHAT_MAX_LEN = 255 -- guild chat's own hard cap
+
+local FALLBACK_TEXT = "Nobody online has the DH-Bavin module enabled. Please install DH-Tools and enable the DH-Bavin module."
+
+-- key -> true once a CLAIM for it has been heard (including our own, the
+-- instant we broadcast it) - in-memory only, cleared by relog/reload same
+-- as everything else in this file. Not pruned; a session's worth of keys
+-- is a few hundred bytes at most, not worth the complexity of expiring
+-- entries for a table this short-lived.
+local lookupClaims = {}
+
+-- Deterministic DJB2-style hash so every client that received the exact
+-- same CHAT_MSG_GUILD text computes the exact same key component, with
+-- no delimiter collision risk against the raw (hyperlink-laden) message
+-- text itself - this is coordination, not cryptography, same "good
+-- enough for guild-social-trust" standard as the rest of this addon
+-- suite's sync protocols.
+local function SimpleHash(str)
+    local hash = 5381
+    for i = 1, #str do
+        hash = (hash * 33 + str:byte(i)) % 4294967296
+    end
+    return hash
+end
+
+local function LookupSend(text)
+    if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+        C_ChatInfo.SendAddonMessage(LOOKUP_PREFIX, text, "GUILD")
+    elseif SendAddonMessage then
+        SendAddonMessage(LOOKUP_PREFIX, text, "GUILD")
+    end
+end
+
+local function LookupRegisterPrefix()
+    if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
+        pcall(C_ChatInfo.RegisterAddonMessagePrefix, LOOKUP_PREFIX)
+    elseif RegisterAddonMessagePrefix then
+        pcall(RegisterAddonMessagePrefix, LOOKUP_PREFIX)
+    end
+end
+
+-- Never drops the link itself - truncates the trailing text (with an
+-- ellipsis) if the two together would exceed guild chat's 255-char cap.
+-- Long item names plus a verbose spreadsheet detail line can occasionally
+-- get close to this.
+local function TruncateReply(text)
+    if #text <= CHAT_MAX_LEN then return text end
+    local budget = CHAT_MAX_LEN - 3
+    if budget < 1 then return text:sub(1, CHAT_MAX_LEN) end
+    return text:sub(1, budget) .. "..."
+end
+
+local function LookupOnMessage(prefix, message, _channel, _sender)
+    if prefix ~= LOOKUP_PREFIX then return end
+    local msgType, key = message:match("^(%u+)|(.*)$")
+    if msgType == "CLAIM" and key then
+        lookupClaims[key] = true
+    end
+end
+
+-- Schedules this client's attempt to answer `key`. Stands down (does
+-- nothing) if any client's CLAIM for this key - including one heard
+-- while waiting - arrives first. Winning means: broadcast the CLAIM (so
+-- every other waiting client stands down too), then post `replyText` to
+-- guild chat, in that order.
+local function ScheduleLookupAttempt(key, delayMin, delayMax, replyText)
+    local delay = delayMin + math.random() * (delayMax - delayMin)
+    C_Timer.After(delay, function()
+        if lookupClaims[key] then return end
+        lookupClaims[key] = true
+        LookupSend("CLAIM|" .. key)
+        SendChatMessage(TruncateReply(replyText), "GUILD")
+    end)
+end
+
+local function LookupHandleTrigger(key, link, linkIndex)
+    if lookupClaims[key] then return end
+    local offset = (linkIndex - 1) * LINK_STAGGER
+    local bavinEnabled = ns.IsModuleEnabled("bavin")
+
+    -- 2026-09-13 (Loopi), TEMPORARY: Bavin's own testing-phase kill
+    -- switch (Modules\DHBavin\Config page) - if it's off, this client
+    -- sits out the whole feature, including fallback participation.
+    -- Remove this check when the checkbox itself is removed (design
+    -- doc's CL4).
+    if bavinEnabled and ns.Bavin and ns.Bavin.db and ns.Bavin.db.chatLookupEnabled == false then
+        return
+    end
+
+    if bavinEnabled and ns.Bavin and ns.Bavin.TryClassifyLookup then
+        local reply = ns.Bavin.TryClassifyLookup(link)
+        if reply then
+            ScheduleLookupAttempt(key, ANSWER_DELAY_MIN + offset, ANSWER_DELAY_MAX + offset, reply)
+            return
+        end
+    end
+
+    ScheduleLookupAttempt(key, FALLBACK_DELAY_MIN + offset, FALLBACK_DELAY_MAX + offset,
+        link .. " " .. FALLBACK_TEXT)
+end
+
+-- Guild-scoped like the rest of DH-Bavin's own permission model (k-0019:
+-- an off-guild alt must never act on Death Happens' own Bavin data, or
+-- announce anything into some OTHER guild's chat about it). Refuses to
+-- run at all if DH-Bavin's Core.lua somehow isn't loaded.
+local function LookupIsInTargetGuild()
+    return ns.Bavin and ns.Bavin.IsInTargetGuild and ns.Bavin.IsInTargetGuild()
+end
+
+local function LookupTrigger_OnChatMsgGuild(message, sender)
+    if type(message) ~= "string" or message:sub(1, 1) ~= "?" then return end
+    if not LookupIsInTargetGuild() then return end
+
+    local senderShort = (ns.Bavin and ns.Bavin.NormalizeName and ns.Bavin.NormalizeName(sender)) or sender
+    local hash = SimpleHash(message)
+    local linkIndex = 0
+    for link in message:gmatch(ITEM_LINK_PATTERN) do
+        linkIndex = linkIndex + 1
+        if linkIndex > 3 then break end
+        local key = (senderShort or "?") .. ":" .. linkIndex .. ":" .. hash
+        LookupHandleTrigger(key, link, linkIndex)
+    end
+end
+
 -- Sets up a top-level DH-Tools window with the properties every one of them
 -- needs: proper click-to-raise behavior, a guaranteed-opaque background
 -- (rather than relying entirely on the template's own backdrop), and
@@ -305,6 +475,7 @@ local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("CHAT_MSG_ADDON")
+frame:RegisterEvent("CHAT_MSG_GUILD") -- guild-chat item lookup trigger, see above
 frame:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
         local arg1 = ...
@@ -319,8 +490,12 @@ frame:SetScript("OnEvent", function(self, event, ...)
         end
         ns.Print(("loaded (v%s). Type /dht help for commands."):format(ns.VERSION))
         C_Timer.After(math.random(5, 20), VersionCheck_Announce)
+        LookupRegisterPrefix()
     elseif event == "CHAT_MSG_ADDON" then
         VersionCheck_OnMessage(...)
+        LookupOnMessage(...)
+    elseif event == "CHAT_MSG_GUILD" then
+        LookupTrigger_OnChatMsgGuild(...)
     end
 end)
 

@@ -606,7 +606,7 @@ local function CreateBavinPanel(parent)
     scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
 
     local content = CreateFrame("Frame", nil, scrollFrame)
-    content:SetSize(1, 620) -- width set in Refresh; height is a generous
+    content:SetSize(1, 640) -- width set in Refresh; height is a generous
                              -- fixed estimate for this page's content -
                              -- pad rather than trim if it's off, same
                              -- approach Mob Marker's page already uses.
@@ -645,10 +645,23 @@ local function CreateBavinPanel(parent)
         Bavin.db.mouseoverChatTooltips = self:GetChecked() and true or false
     end)
 
+    -- 2026-09-13 (Loopi): TEMPORARY - kill switch for the new "? [item
+    -- link]" guild-chat lookup feature, added at Chris's explicit request
+    -- as a testing-phase safety valve. Remove this checkbox (and Core.lua's/
+    -- ChatLookup.lua's/DH-Tools\Core.lua's reads of chatLookupEnabled) once
+    -- the feature is confirmed working in-game - see this module's
+    -- DH-Bavin-ChatLookup-Design.md, milestone CL4.
+    local chatLookupCheck = CreateFrame("CheckButton", "DHToolsBavinChatLookupCheck", content, "UICheckButtonTemplate")
+    chatLookupCheck:SetPoint("TOPLEFT", mouseoverCheck, "BOTTOMLEFT", 0, -6)
+    _G[chatLookupCheck:GetName() .. "Text"]:SetText("Answer \"?\" + item link questions in guild chat (TEMPORARY - testing)")
+    chatLookupCheck:SetScript("OnClick", function(self)
+        Bavin.db.chatLookupEnabled = self:GetChecked() and true or false
+    end)
+
     local everyoneDivider = content:CreateTexture(nil, "ARTWORK")
     everyoneDivider:SetColorTexture(1, 1, 1, 0.15)
     everyoneDivider:SetHeight(1)
-    everyoneDivider:SetPoint("TOPLEFT", mouseoverCheck, "BOTTOMLEFT", -4, -10)
+    everyoneDivider:SetPoint("TOPLEFT", chatLookupCheck, "BOTTOMLEFT", -4, -10)
     everyoneDivider:SetPoint("RIGHT", -16, 0)
 
     --------------------------------------------------------------------
@@ -954,6 +967,7 @@ local function CreateBavinPanel(parent)
 
         Bavin.InitDB()
         mouseoverCheck:SetChecked(Bavin.db and Bavin.db.mouseoverChatTooltips)
+        chatLookupCheck:SetChecked(Bavin.db and Bavin.db.chatLookupEnabled)
         -- 2026-08-05: recipient and editor management are separately
         -- scoped now (CanManageRecipient: Bavin/Loopidot by name only;
         -- CanManageEditors: rank<=3 officers or Loopidot) - each

@@ -67,6 +67,16 @@ function ns.InitDB()
     if ns.db.mouseoverChatTooltips == nil then
         ns.db.mouseoverChatTooltips = true
     end
+    -- 2026-09-13 (Loopi): TEMPORARY testing safety valve for the new
+    -- guild-chat item lookup feature (see this folder's
+    -- DH-Bavin-ChatLookup-Design.md and DH-Tools\Core.lua's own "Guild-
+    -- chat item lookup" section) - Chris's explicit condition for
+    -- approving it: remove this field, its Config.lua checkbox, and
+    -- every read of it once the feature is confirmed working in-game
+    -- (tracked as milestone CL4 in that design doc). Default ON.
+    if ns.db.chatLookupEnabled == nil then
+        ns.db.chatLookupEnabled = true
+    end
     -- 2026-08-05: the priority want-list itself now persists too. Until
     -- now ns.priorityList (Sync.lua) was PURE runtime state - never
     -- written into DHBavinDB at all - rebuilt every login only from live

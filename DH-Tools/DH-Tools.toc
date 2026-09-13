@@ -33,6 +33,7 @@ Modules\DHBavin\ItemPoints.lua
 Modules\DHBavin\PointsEditor.lua
 Modules\DHBavin\PriorityEditor.lua
 Modules\DHBavin\Tooltip.lua
+Modules\DHBavin\ChatLookup.lua
 Modules\DHBavin\BagMail.lua
 Modules\DHDanger\Core.lua
 Modules\DHDanger\Sync.lua
