@@ -1,6 +1,6 @@
 # DH-Tools
 
-**Version 2.0.5** | Author: **Loopi** | For: *Death Happens* Hardcore guild
+**Version 2.0.6** | Author: **Loopi** | For: *Death Happens* Hardcore guild
 
 ---
 
@@ -33,7 +33,9 @@ one individually from a single config window.
   shows a "Bavin Points" donation-priority value in item tooltips for
   ~7,000 items, editable live by the recipient/editors (`/dhb points`).
   Recipient/editor access is automatically revoked the moment someone
-  leaves the guild.
+  leaves the guild. Post `?` followed by an item link in guild chat and
+  an online guildmate's client automatically replies with Bavin's info on
+  it — exactly one reply per item, fully automatic.
 - **DH-Air** — Warlock/guild summon-coordination: a shared summon
   queue, auto-invite on whisper or a raid-chat code phrase, and
   auto-summon in queue order. Bundled directly into DH-Tools since
@@ -61,6 +63,19 @@ you actually want running, all managed from one place.
 ---
 
 ## Changelog
+
+### 2.0.6
+- **New: guild-chat item lookup for Bavin Points.** Post `?` followed by
+  an item link in guild chat, and whichever online guildmate's client
+  answers first replies automatically with Bavin's info on it — a
+  points/detail line if it's on file, a "no data" note if not, or a
+  "cannot be traded" note for Bind on Pickup or Quest items. Exactly one
+  reply per item, no click required from the responder; if nobody online
+  has DH-Bavin enabled, you'll instead get a note asking you to install
+  it.
+- **Bavin Points data refreshed** from an updated spreadsheet - 7,015
+  items now have a points value on file (6,931 of them also matched to
+  a specific item ID).
 
 ### 2.0.5
 - **DH-Danger: rows can now be excluded from detection without deleting
