@@ -284,6 +284,66 @@ local FALLBACK_TEXT = "Nobody online has the DH-Bavin module enabled. Please ins
 -- entries for a table this short-lived.
 local lookupClaims = {}
 
+-- 2026-09-13 (Loopi): cache-miss retry for an item NONE of this client's
+-- data has ever cached before - typically an item only a guildmate, not
+-- you, has linked/seen. GetItemInfo's cache-miss behavior is to kick off
+-- an async fetch and return nil immediately; the ANSWER delay (0.1-1.2s)
+-- often isn't enough time for that FIRST-EVER fetch to complete, so a
+-- client gave up and stayed completely silent - confirmed 2026-09-13
+-- testing: replies worked for items Chris had already seen locally, went
+-- silent (no debug text either) for items only guildmates had linked.
+-- Fix: keep an itemID -> {list of {key, link}} table of "still waiting
+-- on real data" lookups; GET_ITEM_INFO_RECEIVED (registered in the Boot
+-- section) fires once the fetch actually completes, giving one more shot
+-- at TryClassifyLookup before giving up for good. RETRY_TIMEOUT is
+-- Chris's explicit call: 5 seconds is comfortably longer than a normal
+-- round trip without leaving a listener effectively registered forever
+-- for a bogus/never-resolving item ID.
+local pendingLookups = {}
+local RETRY_TIMEOUT = 5.0
+
+-- The item ID is embedded directly in the hyperlink itself
+-- (|Hitem:ITEMID:...|h[Name]|h|r) - no need to wait on GetItemInfo just
+-- to know which item a GET_ITEM_INFO_RECEIVED event is even about.
+local function ExtractItemID(link)
+    if type(link) ~= "string" then return nil end
+    return tonumber(link:match("item:(%d+)"))
+end
+
+-- Drops one specific pending entry (matched by key, since several
+-- different chat questions can reference the same item ID) once it's
+-- been resolved one way or another - either GET_ITEM_INFO_RECEIVED
+-- already gave it a shot, or RETRY_TIMEOUT expired without one ever
+-- firing.
+local function RemovePendingLookup(itemID, key)
+    local list = pendingLookups[itemID]
+    if not list then return end
+    for i, entry in ipairs(list) do
+        if entry.key == key then
+            table.remove(list, i)
+            break
+        end
+    end
+    if #list == 0 then
+        pendingLookups[itemID] = nil
+    end
+end
+
+-- Called from ScheduleAnswerAttempt below when TryClassifyLookup still
+-- returned nil at fire time - a genuine cache miss, not an error (errors
+-- are already reported and treated as "give up", never retried). No-ops
+-- silently if the link doesn't parse to an item ID (shouldn't happen,
+-- given ITEM_LINK_PATTERN already matched it to get here).
+local function RegisterPendingRetry(key, link)
+    local itemID = ExtractItemID(link)
+    if not itemID then return end
+    pendingLookups[itemID] = pendingLookups[itemID] or {}
+    table.insert(pendingLookups[itemID], { key = key, link = link })
+    C_Timer.After(RETRY_TIMEOUT, function()
+        RemovePendingLookup(itemID, key)
+    end)
+end
+
 -- Deterministic DJB2-style hash so every client that received the exact
 -- same CHAT_MSG_GUILD text computes the exact same key component, with
 -- no delimiter collision risk against the raw (hyperlink-laden) message
@@ -333,6 +393,28 @@ local function LookupOnMessage(prefix, message, _channel, _sender)
     end
 end
 
+-- Registered from the Boot section's GET_ITEM_INFO_RECEIVED handler
+-- below. `success == false` means the fetch failed outright (e.g. a
+-- bogus item ID) - nothing to retry against, so those are ignored.
+local function LookupOnItemInfoReceived(itemID, success)
+    if not success then return end
+    local list = pendingLookups[itemID]
+    if not list then return end
+    pendingLookups[itemID] = nil
+    for _, entry in ipairs(list) do
+        if not lookupClaims[entry.key] and ns.Bavin and ns.Bavin.TryClassifyLookup then
+            local ok, result = pcall(ns.Bavin.TryClassifyLookup, entry.link)
+            if ok and result then
+                lookupClaims[entry.key] = true
+                LookupSend("CLAIM|" .. entry.key)
+                SendChatMessage(TruncateReply(result), "GUILD")
+            elseif not ok then
+                ns.Print("|cffff3333[lookup debug] TryClassifyLookup errored (retry):|r " .. tostring(result))
+            end
+        end
+    end
+end
+
 -- Schedules this client's attempt to answer `key`. Stands down (does
 -- nothing) if any client's CLAIM for this key - including one heard
 -- while waiting - arrives first. Winning means: broadcast the CLAIM (so
@@ -363,25 +445,27 @@ end
 -- callback itself, so it runs at FIRE time (after the random ANSWER
 -- delay has elapsed) instead of at trigger time - giving the item up to
 -- ~1.2 real seconds to finish caching first, which resolves it in
--- practice for the overwhelming majority of items. Still no
--- GET_ITEM_INFO_RECEIVED retry beyond that (same accepted best-effort
--- limitation the design doc already states) - if this still isn't
--- enough in testing, that's the next thing to add.
+-- practice for items this client has already cached before (its own
+-- bags/quests/etc.). Still not enough on its own for an item NONE of
+-- this client's data has ever cached (typically something only a
+-- guildmate has seen) - a genuine nil result here (not an error) now
+-- registers a bounded GET_ITEM_INFO_RECEIVED retry instead of giving up
+-- outright; see the pending-retry section above lookupClaims for the
+-- full story.
 local function ScheduleAnswerAttempt(key, delayMin, delayMax, link)
     local delay = delayMin + math.random() * (delayMax - delayMin)
     C_Timer.After(delay, function()
         if lookupClaims[key] then return end
         local reply
+        local hadError = false
         if ns.Bavin and ns.Bavin.TryClassifyLookup then
-            -- 2026-09-13 (Loopi), TEMPORARY DEBUG: pcall so any error
-            -- anywhere in TryClassifyLookup surfaces here instead of
-            -- vanishing (WoW's Lua-error display is off by default) -
-            -- Chris hit silent failures on tradeable items right after
-            -- this feature shipped. Remove once the cause is confirmed.
+            -- pcall so a hidden Lua error (WoW's Lua-error display is
+            -- off by default) surfaces here instead of vanishing.
             local ok, result = pcall(ns.Bavin.TryClassifyLookup, link)
             if ok then
                 reply = result
             else
+                hadError = true
                 ns.Print("|cffff3333[lookup debug] TryClassifyLookup errored:|r " .. tostring(result))
             end
         end
@@ -389,12 +473,15 @@ local function ScheduleAnswerAttempt(key, delayMin, delayMax, link)
             lookupClaims[key] = true
             LookupSend("CLAIM|" .. key)
             SendChatMessage(TruncateReply(reply), "GUILD")
+        elseif not hadError then
+            -- Genuine cache miss, not an error - register for a real
+            -- shot once GET_ITEM_INFO_RECEIVED actually fires instead of
+            -- giving up here. Does NOT fall through to the fallback text
+            -- itself (that message specifically means "nobody has Bavin
+            -- enabled," which isn't true here) - only a client without
+            -- Bavin enabled runs the fallback race at all.
+            RegisterPendingRetry(key, link)
         end
-        -- Still nil at fire time (a genuine multi-second cache miss): this
-        -- client has nothing to add. It does NOT fall through to the
-        -- fallback text itself (that message specifically means "nobody
-        -- has Bavin enabled," which isn't true here) - only a client
-        -- without Bavin enabled runs the fallback race at all.
     end)
 end
 
@@ -523,6 +610,7 @@ frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("CHAT_MSG_ADDON")
 frame:RegisterEvent("CHAT_MSG_GUILD") -- guild-chat item lookup trigger, see above
+frame:RegisterEvent("GET_ITEM_INFO_RECEIVED") -- guild-chat lookup cache-miss retry, see above
 frame:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
         local arg1 = ...
@@ -543,6 +631,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
         LookupOnMessage(...)
     elseif event == "CHAT_MSG_GUILD" then
         LookupTrigger_OnChatMsgGuild(...)
+    elseif event == "GET_ITEM_INFO_RECEIVED" then
+        LookupOnItemInfoReceived(...)
     end
 end)
 

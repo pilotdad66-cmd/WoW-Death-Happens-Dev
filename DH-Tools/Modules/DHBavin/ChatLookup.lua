@@ -63,20 +63,18 @@ function ns.TryClassifyLookup(link)
         return link .. " cannot be traded. Use it, Vendor it, or DE it."
     end
 
-    -- 2026-09-13 (Loopi), TEMPORARY DEBUG: Chris hit silent failures on
-    -- tradeable items (both unseen and in-bag) right after this line was
-    -- added - wrapping in pcall so a hidden Lua error (WoW's Lua-error
-    -- display is off by default, so an error here would otherwise look
-    -- exactly like "nothing happened") shows up instead of vanishing.
-    -- Remove this pcall/print once the real cause is confirmed.
+    -- 2026-09-13 (Loopi): pcall safety net - a hidden Lua error here
+    -- would otherwise look exactly like "nothing happened" (WoW's
+    -- Lua-error display is off by default). Confirmed 2026-09-13: the
+    -- silent-failure reports during testing were actually a GetItemInfo
+    -- cache miss on OTHER clients, for items THEY had never cached
+    -- before - not a GetItemPoints error - see Core.lua's pending-retry
+    -- section; this pcall stays in as ordinary defensive coding.
     local ok, entry = pcall(ns.GetItemPoints, itemName)
     if not ok then
         ns.Print("|cffff3333[lookup debug] GetItemPoints errored:|r " .. tostring(entry))
         return nil
     end
-    ns.Print("|cff33ff99[lookup debug] item=|r " .. tostring(itemName) ..
-        "  |cff33ff99hasEntry=|r " .. tostring(entry ~= nil) ..
-        "  |cff33ff99detail=|r " .. tostring(entry and entry.detail))
 
     if entry and entry.detail then
         return link .. " " .. entry.detail

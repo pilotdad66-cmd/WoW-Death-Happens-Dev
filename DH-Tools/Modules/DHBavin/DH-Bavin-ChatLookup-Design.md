@@ -186,6 +186,32 @@ already live and complete), but don't skip it at actual release time.
   (Interface 11509) before being trusted, same as every other
   Blizzard-frame-adjacent risk already flagged in DH-Bavin's PROFILE.md.
 
+## Issues found during in-game testing (2026-09-13)
+
+- **Wording change**: the not-tradable reply text was changed at Chris's
+  request from "is not tradable and has no value other than using it or
+  vendoring it." to "cannot be traded. Use it, Vendor it, or DE it."
+- **Bug: eager classification (fixed)**. `TryClassifyLookup` was
+  originally called synchronously the instant the trigger arrived
+  (t=0), before any delay - a near-guaranteed `GetItemInfo` cache miss
+  for a freshly-linked item, so the client fell straight through to the
+  "nobody has Bavin enabled" fallback even with Bavin on. Fixed by
+  deferring the actual classification call into the answer-delay timer
+  callback itself (fires at 0.1-1.2s instead of t=0).
+- **Bug: silent on items only a guildmate has seen (fixed)**. Even after
+  the above fix, replies stayed completely silent for items the
+  answering client itself had never cached before (typically something
+  only the asker, not the answerer, had seen) - the 0.1-1.2s window
+  isn't enough for the FIRST-EVER `GetItemInfo` fetch of an item to
+  round-trip. Fixed with a bounded `GET_ITEM_INFO_RECEIVED` retry
+  (Chris's approved approach, 2026-09-13): a genuine cache-miss (nil,
+  not an error) at fire time registers the pending {key, link} against
+  the item ID; if `GET_ITEM_INFO_RECEIVED` fires for that ID within 5
+  seconds (Chris's explicit ceiling), the client gets one more shot at
+  classifying and, if still unclaimed, answers. See Core.lua's own
+  comments around `pendingLookups`/`RegisterPendingRetry` for the full
+  mechanics.
+
 ## Milestone plan (draft, pending sign-off)
 
 - **CL1** - DH-Tools Core: `CHAT_MSG_GUILD` watcher, trigger grammar,
