@@ -348,6 +348,43 @@ local function ScheduleLookupAttempt(key, delayMin, delayMax, replyText)
     end)
 end
 
+-- 2026-09-13 (Loopi) BUGFIX: classification used to be evaluated eagerly,
+-- the instant the trigger message arrived (t=0), with only the resulting
+-- STRING (or the decision to fall back) carried into the delayed timer.
+-- An item just linked in chat is very often a genuine GetItemInfo cache
+-- miss at that exact instant - the same gap Tooltip.lua's own
+-- OnTooltipSetItem has to retry around (see that file's header comment) -
+-- so evaluating at t=0 meant giving up on a real answer before the
+-- server round-trip had any real chance to complete, which is exactly
+-- what Chris hit testing solo: TryClassifyLookup(link) returned nil every
+-- time because GetItemInfo hadn't resolved yet, so this client fell
+-- straight through to the fallback path despite Bavin being enabled.
+-- Fix: defer the actual GetItemInfo/GetItemPoints call into the timer
+-- callback itself, so it runs at FIRE time (after the random ANSWER
+-- delay has elapsed) instead of at trigger time - giving the item up to
+-- ~1.2 real seconds to finish caching first, which resolves it in
+-- practice for the overwhelming majority of items. Still no
+-- GET_ITEM_INFO_RECEIVED retry beyond that (same accepted best-effort
+-- limitation the design doc already states) - if this still isn't
+-- enough in testing, that's the next thing to add.
+local function ScheduleAnswerAttempt(key, delayMin, delayMax, link)
+    local delay = delayMin + math.random() * (delayMax - delayMin)
+    C_Timer.After(delay, function()
+        if lookupClaims[key] then return end
+        local reply = ns.Bavin and ns.Bavin.TryClassifyLookup and ns.Bavin.TryClassifyLookup(link)
+        if reply then
+            lookupClaims[key] = true
+            LookupSend("CLAIM|" .. key)
+            SendChatMessage(TruncateReply(reply), "GUILD")
+        end
+        -- Still nil at fire time (a genuine multi-second cache miss): this
+        -- client has nothing to add. It does NOT fall through to the
+        -- fallback text itself (that message specifically means "nobody
+        -- has Bavin enabled," which isn't true here) - only a client
+        -- without Bavin enabled runs the fallback race at all.
+    end)
+end
+
 local function LookupHandleTrigger(key, link, linkIndex)
     if lookupClaims[key] then return end
     local offset = (linkIndex - 1) * LINK_STAGGER
@@ -363,11 +400,8 @@ local function LookupHandleTrigger(key, link, linkIndex)
     end
 
     if bavinEnabled and ns.Bavin and ns.Bavin.TryClassifyLookup then
-        local reply = ns.Bavin.TryClassifyLookup(link)
-        if reply then
-            ScheduleLookupAttempt(key, ANSWER_DELAY_MIN + offset, ANSWER_DELAY_MAX + offset, reply)
-            return
-        end
+        ScheduleAnswerAttempt(key, ANSWER_DELAY_MIN + offset, ANSWER_DELAY_MAX + offset, link)
+        return
     end
 
     ScheduleLookupAttempt(key, FALLBACK_DELAY_MIN + offset, FALLBACK_DELAY_MAX + offset,
