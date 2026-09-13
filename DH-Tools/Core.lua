@@ -371,7 +371,20 @@ local function ScheduleAnswerAttempt(key, delayMin, delayMax, link)
     local delay = delayMin + math.random() * (delayMax - delayMin)
     C_Timer.After(delay, function()
         if lookupClaims[key] then return end
-        local reply = ns.Bavin and ns.Bavin.TryClassifyLookup and ns.Bavin.TryClassifyLookup(link)
+        local reply
+        if ns.Bavin and ns.Bavin.TryClassifyLookup then
+            -- 2026-09-13 (Loopi), TEMPORARY DEBUG: pcall so any error
+            -- anywhere in TryClassifyLookup surfaces here instead of
+            -- vanishing (WoW's Lua-error display is off by default) -
+            -- Chris hit silent failures on tradeable items right after
+            -- this feature shipped. Remove once the cause is confirmed.
+            local ok, result = pcall(ns.Bavin.TryClassifyLookup, link)
+            if ok then
+                reply = result
+            else
+                ns.Print("|cffff3333[lookup debug] TryClassifyLookup errored:|r " .. tostring(result))
+            end
+        end
         if reply then
             lookupClaims[key] = true
             LookupSend("CLAIM|" .. key)

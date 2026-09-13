@@ -57,10 +57,27 @@ function ns.TryClassifyLookup(link)
     end
 
     if itemClassID == ITEM_CLASS_QUEST or bindType == BIND_ON_PICKUP then
-        return link .. " is not tradable and has no value other than using it or vendoring it."
+        -- 2026-09-13 (Loopi): wording changed at Chris's request - was
+        -- "is not tradable and has no value other than using it or
+        -- vendoring it."
+        return link .. " cannot be traded. Use it, Vendor it, or DE it."
     end
 
-    local entry = ns.GetItemPoints(itemName)
+    -- 2026-09-13 (Loopi), TEMPORARY DEBUG: Chris hit silent failures on
+    -- tradeable items (both unseen and in-bag) right after this line was
+    -- added - wrapping in pcall so a hidden Lua error (WoW's Lua-error
+    -- display is off by default, so an error here would otherwise look
+    -- exactly like "nothing happened") shows up instead of vanishing.
+    -- Remove this pcall/print once the real cause is confirmed.
+    local ok, entry = pcall(ns.GetItemPoints, itemName)
+    if not ok then
+        ns.Print("|cffff3333[lookup debug] GetItemPoints errored:|r " .. tostring(entry))
+        return nil
+    end
+    ns.Print("|cff33ff99[lookup debug] item=|r " .. tostring(itemName) ..
+        "  |cff33ff99hasEntry=|r " .. tostring(entry ~= nil) ..
+        "  |cff33ff99detail=|r " .. tostring(entry and entry.detail))
+
     if entry and entry.detail then
         return link .. " " .. entry.detail
     end
