@@ -490,15 +490,6 @@ local function LookupHandleTrigger(key, link, linkIndex)
     local offset = (linkIndex - 1) * LINK_STAGGER
     local bavinEnabled = ns.IsModuleEnabled("bavin")
 
-    -- 2026-09-13 (Loopi), TEMPORARY: Bavin's own testing-phase kill
-    -- switch (Modules\DHBavin\Config page) - if it's off, this client
-    -- sits out the whole feature, including fallback participation.
-    -- Remove this check when the checkbox itself is removed (design
-    -- doc's CL4).
-    if bavinEnabled and ns.Bavin and ns.Bavin.db and ns.Bavin.db.chatLookupEnabled == false then
-        return
-    end
-
     if bavinEnabled and ns.Bavin and ns.Bavin.TryClassifyLookup then
         ScheduleAnswerAttempt(key, ANSWER_DELAY_MIN + offset, ANSWER_DELAY_MAX + offset, link)
         return

@@ -8,11 +8,7 @@
 -- asks it: TryClassifyLookup(link) -> a fully-formed reply string, or nil
 -- if this client can't answer (the item isn't cached locally yet, etc.) -
 -- Core.lua treats nil exactly like "Bavin module not enabled" and falls
--- through to its own "nobody's home" fallback race. TEMPORARY note: the
--- kill-switch check itself (Bavin.db.chatLookupEnabled) lives in Core.lua,
--- BEFORE this function is ever called - see that file's comment and this
--- module's Config.lua checkbox, both to be removed together (design
--- doc's CL4) once this feature is confirmed working in-game.
+-- through to its own "nobody's home" fallback race.
 --
 -- REPLY PRIORITY (identical outcome on every client, so who happens to
 -- answer never changes what gets said):

@@ -1,7 +1,8 @@
 # DH-Bavin Guild-Chat Item Lookup - Design & Milestone Plan
 created: 2026-09-13
-status: PROPOSED - scoped with Chris 2026-09-13 across two rounds of
-questions. No code written yet (README §14, ARCHITECTURE FIRST).
+updated: 2026-09-13
+status: SHIPPED - CL1-CL4 complete, Chris-confirmed working in-game,
+kill switch removed. Releasing as DH-Tools v2.0.6.
 
 ## Concept
 
@@ -147,16 +148,16 @@ about different items (or the same item asked twice) don't collide:
   silently dropped by the client's own chat throttle, so stagger
   multiple sends from the same client by roughly half a second.
 
-## Open flag - a kill switch
+## Kill switch - added for testing, removed 2026-09-13 (CL4)
 
-Not asked yet, but worth deciding before this goes out to ~1000
-members: does Bavin (or an officer) want a way to disable automatic
-guild-chat replies suite-wide or per-client if something misfires
-(wrong data, a false trigger, unwanted chat noise), separate from the
-existing Bavin module on/off toggle? A simple checkbox on the existing
-Bavin Config page would be cheap to add now; retrofitting one later
-after a bad in-game surprise is the alternative. Flagging for a yes/no
-rather than assuming either way.
+Added as a temporary Bavin Config checkbox (`chatLookupEnabled`,
+default on) at Chris's request for the testing phase, tied explicitly
+to CL4: remove it once the feature is confirmed working in-game. Chris
+confirmed 2026-09-13 ("It all seems to work fine now") and approved
+removal - the checkbox, its `Bavin.db.chatLookupEnabled`/Core.lua gate,
+and the DHBavin `InitDB` default are all gone as of the 2.0.6 release.
+No suite-wide or per-client disable exists anymore; disabling the
+Bavin module itself is the only way to opt a client out.
 
 ## Unrelated item raised this session (not part of this feature)
 
@@ -224,4 +225,11 @@ already live and complete), but don't skip it at actual release time.
 - **CL3** - Headless harness covering trigger grammar edge cases, claim
   key uniqueness, and reply-priority selection; in-game pass covering
   all three reply types, the fallback message, a multi-link message,
-  and a deliberately provoked simultaneous-claim scenario.
+  and a deliberately provoked simultaneous-claim scenario. **Partial**:
+  Chris's in-game testing (not-tradable, has-data, the cache-miss retry)
+  confirmed working 2026-09-13; the headless harness itself was not
+  built (only ad hoc `luac5.1` syntax checks).
+- **CL4** - Remove the temporary kill switch (Config.lua checkbox +
+  Core.lua/DHBavin Core.lua reads of `chatLookupEnabled`) once the
+  feature is confirmed working in-game. **Done 2026-09-13**, per Chris's
+  approval.
