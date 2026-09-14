@@ -1,6 +1,6 @@
 # DH-Tools
 
-**Version 2.0.6** | Author: **Loopi** | For: *Death Happens* Hardcore guild
+**Version 2.0.7** | Author: **Loopi** | For: *Death Happens* Hardcore guild
 
 ---
 
@@ -63,6 +63,13 @@ you actually want running, all managed from one place.
 ---
 
 ## Changelog
+
+### 2.0.7
+- **Fixed: guild-chat item lookup could get multiple replies from
+  different guildmates for one item.** This showed up mainly on items
+  nobody's client had seen before - the retry that waits for that data
+  to load was missing the same random delay the normal reply already
+  uses to avoid collisions. Still exactly one reply per item.
 
 ### 2.0.6
 - **New: guild-chat item lookup for Bavin Points.** Post `?` followed by

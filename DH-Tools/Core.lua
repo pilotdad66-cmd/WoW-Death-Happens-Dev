@@ -150,7 +150,7 @@ end
 -- Version line and the changelog) - build-test-zip.ps1 never touches
 -- Core.lua at all, so a test build always announces whatever the last
 -- REAL release was, never a number nobody can download.
-local LAST_RELEASE_VERSION = "2.0.6"
+local LAST_RELEASE_VERSION = "2.0.7"
 
 local VER_PREFIX = "DHToolsVer"
 -- In-memory only, never persisted - Chris's call: the "update available"
@@ -396,21 +396,40 @@ end
 -- Registered from the Boot section's GET_ITEM_INFO_RECEIVED handler
 -- below. `success == false` means the fetch failed outright (e.g. a
 -- bogus item ID) - nothing to retry against, so those are ignored.
+--
+-- 2026-09-14 (Loopi) BUGFIX: this used to answer synchronously, the
+-- instant GET_ITEM_INFO_RECEIVED fired, with no random delay at all -
+-- unlike ScheduleAnswerAttempt's normal path, which deliberately spreads
+-- attempts over ANSWER_DELAY_MIN..MAX specifically so a CLAIM broadcast
+-- has time to reach every other client before more than one of them
+-- fires. A brand-new item nobody has cached yet is exactly the case
+-- where several online guildmates are all waiting on the same async
+-- fetch, so their GET_ITEM_INFO_RECEIVED events tend to land within
+-- milliseconds of each other - well before any CLAIM has propagated -
+-- causing multiple guildmates to answer at once (Chris's "way too
+-- spammy" report, 2026-09-14). Fix: give this path the same
+-- delay-then-recheck jitter the normal path already uses, instead of
+-- answering the moment the event fires.
 local function LookupOnItemInfoReceived(itemID, success)
     if not success then return end
     local list = pendingLookups[itemID]
     if not list then return end
     pendingLookups[itemID] = nil
     for _, entry in ipairs(list) do
-        if not lookupClaims[entry.key] and ns.Bavin and ns.Bavin.TryClassifyLookup then
-            local ok, result = pcall(ns.Bavin.TryClassifyLookup, entry.link)
-            if ok and result then
-                lookupClaims[entry.key] = true
-                LookupSend("CLAIM|" .. entry.key)
-                SendChatMessage(TruncateReply(result), "GUILD")
-            elseif not ok then
-                ns.Print("|cffff3333[lookup debug] TryClassifyLookup errored (retry):|r " .. tostring(result))
-            end
+        if not lookupClaims[entry.key] then
+            local delay = ANSWER_DELAY_MIN + math.random() * (ANSWER_DELAY_MAX - ANSWER_DELAY_MIN)
+            C_Timer.After(delay, function()
+                if lookupClaims[entry.key] then return end
+                if not (ns.Bavin and ns.Bavin.TryClassifyLookup) then return end
+                local ok, result = pcall(ns.Bavin.TryClassifyLookup, entry.link)
+                if ok and result then
+                    lookupClaims[entry.key] = true
+                    LookupSend("CLAIM|" .. entry.key)
+                    SendChatMessage(TruncateReply(result), "GUILD")
+                elseif not ok then
+                    ns.Print("|cffff3333[lookup debug] TryClassifyLookup errored (retry):|r " .. tostring(result))
+                end
+            end)
         end
     end
 end
