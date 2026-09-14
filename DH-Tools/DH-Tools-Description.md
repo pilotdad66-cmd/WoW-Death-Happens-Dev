@@ -24,13 +24,13 @@ one individually from a single config window.
   entirely opt-in), and shows everyone else's in a sortable, filterable
   window (`/dhq`) — filter to online-only, sort by player, quest, or
   character level, and invite a matching player straight from the row.
-- **Bavin Wants** — a guild-wide priority want-list for the designated mail
-  collector: matching items are highlighted in every guildmate's own bags
-  with a gold border, plus a mailbox helper ("Fill Recipient" button and a
-  one-click attach for matching items while the mailbox is open). The
-  recipient (or a designated editor) manages who gets items and the list
-  itself from a searchable, type-to-filter editor (`/dhb priority`). Also
-  shows a "Bavin Points" donation-priority value in item tooltips for
+- **Bavin Points** — a guild-wide priority want-list for the designated
+  mail collector: matching items are highlighted in every guildmate's own
+  bags with a gold border, plus a mailbox helper ("Fill Recipient" button
+  and a one-click attach for matching items while the mailbox is open).
+  The recipient (or a designated editor) manages who gets items and the
+  list itself from a searchable, type-to-filter editor (`/dhb priority`).
+  Also shows a donation-priority points value in item tooltips for
   ~7,000 items, editable live by the recipient/editors (`/dhb points`).
   Recipient/editor access is automatically revoked the moment someone
   leaves the guild. Post `?` followed by an item link in guild chat and
