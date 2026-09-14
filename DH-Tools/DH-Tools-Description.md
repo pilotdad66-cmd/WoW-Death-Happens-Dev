@@ -1,6 +1,6 @@
 # DH-Tools
 
-**Version 2.0.7** | Author: **Loopi** | For: *Death Happens* Hardcore guild
+**Version 2.0.8** | Author: **Loopi** | For: *Death Happens* Hardcore guild
 
 ---
 
@@ -57,6 +57,15 @@ you actually want running, all managed from one place.
 ---
 
 ## Changelog
+
+### 2.0.8
+- **Fixed: guild-chat item lookup could still get multiple replies with
+  several guildmates online**, even after 2.0.7's fix. Replaced the
+  random-delay race entirely with a bid-then-decide protocol: every
+  client ready to answer announces it instantly, waits a brief fixed
+  moment for everyone else's announcements to arrive, and only the one
+  announcement wins - so it no longer matters how many people are
+  online at once. Answers should also feel slightly snappier overall.
 
 ### 2.0.7
 - **Fixed: guild-chat item lookup could get multiple replies from
