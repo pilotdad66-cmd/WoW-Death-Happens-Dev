@@ -165,12 +165,26 @@ end
 -- Guild roster cache (for the "guild members only" option)
 --------------------------------------------------------------------------
 
+-- k-0019 (2026-09-14): IsInGuild()/GetGuildRosterInfo() only prove "in
+-- SOME guild", not "in Death Happens" - DH-Bavin hit this for real
+-- (claude\knowledge\k-0019-bavin-off-guild-roster-wipe.md). Same fix
+-- here: gate roster-building on the guild's actual name, not just guild
+-- membership. Deliberately hardcoded, not configurable - this addon is
+-- built for one specific guild.
+local TARGET_GUILD_NAME = "Death Happens"
+
+function DHAir:IsInTargetGuild()
+    if not IsInGuild or not IsInGuild() then return false end
+    local guildName = GetGuildInfo and GetGuildInfo("player")
+    return guildName == TARGET_GUILD_NAME
+end
+
 DHAir.guildRoster = {} -- normalizedName -> { online = true|false }
 
 -- Asks the game to (re)fetch the guild roster. The actual data isn't
 -- necessarily available until GUILD_ROSTER_UPDATE fires afterward.
 function DHAir:RequestGuildRoster()
-    if not IsInGuild() then return end
+    if not self:IsInTargetGuild() then return end
     if C_GuildInfo and C_GuildInfo.GuildRoster then
         pcall(C_GuildInfo.GuildRoster)
     elseif GuildRoster then
@@ -185,7 +199,7 @@ function DHAir:UpdateGuildRosterCache()
         self.guildRoster[k] = nil
     end
 
-    if not IsInGuild() then return end
+    if not self:IsInTargetGuild() then return end
 
     local numMembers = GetNumGuildMembers and GetNumGuildMembers() or 0
     for i = 1, numMembers do

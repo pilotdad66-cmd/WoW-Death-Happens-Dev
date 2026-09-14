@@ -91,6 +91,18 @@ _G.IsInGuild = function() return inGuild end
 _G.GuildRoster = function() end
 _G.C_GuildInfo = { GuildRoster = function() end }
 
+-- k-0019 (2026-09-14): mirrors DH-Bavin's own harness mock (added
+-- 2026-08-06 for its own k-0019 fix) - defaults to the real target guild
+-- ("Death Happens", matching Core.lua's hardcoded TARGET_GUILD_NAME) so
+-- every existing test that sets `inGuild = true` keeps passing
+-- unmodified. A test exercising the off-guild/wrong-guild case sets this
+-- to something else.
+local currentGuildName = "Death Happens"
+_G.GetGuildInfo = function(unit)
+    if unit ~= "player" then return nil end
+    return currentGuildName
+end
+
 -- guildRosterEntries: ordered list of { name=, level=, online= }.
 local guildRosterEntries = {}
 _G.GetNumGuildMembers = function() return #guildRosterEntries end

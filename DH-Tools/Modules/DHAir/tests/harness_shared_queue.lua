@@ -100,6 +100,18 @@ _G.IsInRaid = function() return inRaid end
 _G.IsInGroup = function() return inGroup or inRaid end
 _G.IsInGuild = function() return inGuild end
 
+-- k-0019 (2026-09-14): mirrors DH-Bavin's own harness mock (added
+-- 2026-08-06 for its own k-0019 fix) - defaults to the real target guild
+-- ("Death Happens", matching Core.lua's hardcoded TARGET_GUILD_NAME) so
+-- every existing test that sets `inGuild = true` keeps passing
+-- unmodified. A test exercising the off-guild/wrong-guild case sets this
+-- to something else.
+local currentGuildName = "Death Happens"
+_G.GetGuildInfo = function(unit)
+    if unit ~= "player" then return nil end
+    return currentGuildName
+end
+
 -- Raid leader/assist status is a real, server-verified fact every client
 -- agrees on - unlike claims, there's exactly one shared source of truth.
 local raidLeader = nil       -- name, or nil

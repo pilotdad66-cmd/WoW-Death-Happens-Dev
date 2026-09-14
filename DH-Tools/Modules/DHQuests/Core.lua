@@ -132,6 +132,21 @@ end
 -- peers who are no longer guild members at all, and (2) stamp every
 -- remaining peer quest entry's `status` field with that player's current
 -- online/offline state, for M5's planned online-only filter.
+--
+-- k-0019 (2026-09-14): IsInGuild()/GetGuildRosterInfo() only prove "in
+-- SOME guild", not "in Death Happens" - DH-Bavin hit this for real
+-- (claude\knowledge\k-0019-bavin-off-guild-roster-wipe.md). Same fix
+-- here: gate roster-building on the guild's actual name, not just guild
+-- membership. Deliberately hardcoded, not configurable - this addon is
+-- built for one specific guild.
+local TARGET_GUILD_NAME = "Death Happens"
+
+function ns.IsInTargetGuild()
+    if not IsInGuild or not IsInGuild() then return false end
+    local guildName = GetGuildInfo and GetGuildInfo("player")
+    return guildName == TARGET_GUILD_NAME
+end
+
 ns.guildRoster = ns.guildRoster or {}
 
 local function NormalizeName(name)
@@ -140,7 +155,7 @@ end
 ns.NormalizeName = NormalizeName
 
 function ns.RequestGuildRoster()
-    if not IsInGuild() then return end
+    if not ns.IsInTargetGuild() then return end
     if C_GuildInfo and C_GuildInfo.GuildRoster then
         pcall(C_GuildInfo.GuildRoster)
     elseif GuildRoster then
@@ -158,7 +173,7 @@ end
 -- the moment someone logs off.
 function ns.UpdateGuildRosterCache()
     for k in pairs(ns.guildRoster) do ns.guildRoster[k] = nil end
-    if not IsInGuild() then return end
+    if not ns.IsInTargetGuild() then return end
 
     local numMembers = GetNumGuildMembers and GetNumGuildMembers() or 0
     for i = 1, numMembers do
@@ -260,7 +275,27 @@ ns.frame:RegisterEvent("QUEST_LOG_UPDATE")
 -- quest data. One check up front closes that gap; QueueRescan's own
 -- internal check is now redundant but harmless (defense in depth, same
 -- as leaving it is cheaper than proving it's safe to remove).
+-- === One-time force-on migration (2026-09-14, Chris) ===
+-- Chris wants Quests default ON for all installs going forward, AND
+-- wants this pass to flip it on for existing members even if they'd
+-- explicitly turned it (or "share my quests") off before today - a
+-- one-time override, not a recurring one, so a member who turns it back
+-- off after this keeps it off. Gated on DHQuestsDB.forcedOnV1 so it only
+-- ever fires once per character.
+local function ForceQuestsOnOnce()
+    ns.InitDB()
+    if DHQuestsDB.forcedOnV1 then return end
+    DHQuestsDB.forcedOnV1 = true
+    DHQuestsDB.settings.shareEnabled = true
+    if DHTools.SetModuleEnabled then
+        DHTools.SetModuleEnabled("quests", true)
+    end
+end
+
 ns.frame:SetScript("OnEvent", function(_, event, ...)
+    if event == "PLAYER_LOGIN" then
+        ForceQuestsOnOnce()
+    end
     if not DHTools.IsModuleEnabled("quests") then return end
     if event == "PLAYER_LOGIN" then
         if ns.Sync_Init then
@@ -282,7 +317,7 @@ end)
 -- === Register with DH-Tools ===
 DHTools.RegisterModule("quests", {
     name = "Quests",
-    desc = "Shows which guild members have matching group/elite/class quests, so you can find people to group with.",
-    default = false,
+    desc = "Shows which guild members have matching group/elite/class quests, so you can find people to group with. Leave this on - only disable it if you're having serious lag issues.",
+    default = true, -- 2026-09-14 (Chris): flipped on; see ForceQuestsOnOnce below for the one-time migration of existing installs
     OnEnable = ns.InitDB,
 })

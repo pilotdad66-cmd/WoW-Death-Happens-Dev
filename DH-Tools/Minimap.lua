@@ -406,12 +406,12 @@ end
 -- reason to want their own preferences) while "Officer Settings" keeps
 -- its permission gate below.
 local function BuildBavinSubmenu()
+    -- 2026-09-14 (Chris): "See List" (priority list) dropped - the
+    -- priority want-list is dead code for now, and Chris wants no
+    -- player-visible trace of it. The /dhb items slash command itself
+    -- still works (untouched, same revivability approach as everywhere
+    -- else this session), just not linked from this menu anymore.
     local entries = {
-        { text = "See List", notCheckable = true, minWidth = SUBMENU_MIN_WIDTH, func = function()
-            if SlashCmdList and SlashCmdList["DHBAVIN"] then
-                SlashCmdList["DHBAVIN"]("items")
-            end
-        end },
         { text = "Settings", notCheckable = true, minWidth = SUBMENU_MIN_WIDTH, func = function()
             DHTools:Config_Open("Bavin")
         end },

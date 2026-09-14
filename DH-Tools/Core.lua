@@ -113,9 +113,32 @@ local AUTHOR_CHARACTER_NAMES = { Loopi = true, Loopidot = true }
 -- the author's own account wrongly trust an arbitrary incoming message
 -- just because the RECEIVER happens to be the author - see the
 -- knowledge base entry for why this distinction matters).
+local AUTHOR_MAIN_NAME = "Loopi" -- GRM alt-linking below resolves against this
+
 function ns.IsAuthorAccount()
-    return AUTHOR_OVERRIDE_ENABLED and type(DHToolsAccountDB) == "table"
-        and DHToolsAccountDB.isAuthorAccount == true
+    if not AUTHOR_OVERRIDE_ENABLED then return false end
+    if type(DHToolsAccountDB) == "table" and DHToolsAccountDB.isAuthorAccount == true then
+        return true
+    end
+    -- 2026-09-14 (Chris): all of Loopi's characters (main + every alt)
+    -- should get admin, not just whichever account has had Loopi/Loopidot
+    -- log in on it at least once (the DHToolsAccountDB flag above still
+    -- requires that bootstrap step, and only covers alts on THAT SAME WoW
+    -- account). GRM.GetPlayerMain reliably resolves any character GRM has
+    -- seen to its main - confirmed 6/6 against Loopi's real alts during
+    -- the Credit & Reputation System scoping (DH-Bavin-Credits-Design.md).
+    -- Soft dependency: if GRM isn't installed/hasn't learned this character
+    -- yet, this simply falls through to the flag check above.
+    if GRM and GRM.GetPlayerMain then
+        local ok, main = pcall(GRM.GetPlayerMain, UnitName("player") .. "-" .. GetRealmName())
+        if ok and type(main) == "string" then
+            local mainName = main:match("^([^%-]+)") or main
+            if mainName == AUTHOR_MAIN_NAME then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 -- Called once per login/reload (PLAYER_LOGIN, below). Cheap no-op for

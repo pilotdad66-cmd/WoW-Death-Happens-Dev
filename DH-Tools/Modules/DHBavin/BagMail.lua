@@ -231,6 +231,14 @@ local function AttachAllWantedItems()
     return attached, ranOutOfSlots
 end
 
+-- 2026-09-14 (Chris): the "Bavin Wants" Fill Recipient button is dead
+-- code for now (priority list deprecated same day) - Chris wants it
+-- invisible to players, not just unmaintained. Gated off in the
+-- MAIL_SHOW handler below rather than deleted, so it's trivially
+-- revivable - flip this back to true (or drop the gate) to bring it
+-- back.
+local FILL_RECIPIENT_BUTTON_ENABLED = false
+
 local fillRecipientBtn
 
 local function CreateFillRecipientButton()
@@ -421,7 +429,7 @@ mailFrame:SetScript("OnEvent", function(_, event)
     if not DHTools.IsModuleEnabled("bavin") then return end
     if event == "MAIL_SHOW" then
         mailIsOpen = true
-        if ns.db and ns.db.recipient then
+        if FILL_RECIPIENT_BUTTON_ENABLED and ns.db and ns.db.recipient then
             CreateFillRecipientButton()
             if fillRecipientBtn then fillRecipientBtn:Show() end
         end
