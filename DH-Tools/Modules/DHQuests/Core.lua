@@ -275,8 +275,8 @@ ns.frame:RegisterEvent("QUEST_LOG_UPDATE")
 -- quest data. One check up front closes that gap; QueueRescan's own
 -- internal check is now redundant but harmless (defense in depth, same
 -- as leaving it is cheaper than proving it's safe to remove).
--- === One-time force-on migration (2026-09-14, Chris) ===
--- Chris wants Quests default ON for all installs going forward, AND
+-- === One-time force-on migration (2026-09-14, Loopi) ===
+-- Loopi wants Quests default ON for all installs going forward, AND
 -- wants this pass to flip it on for existing members even if they'd
 -- explicitly turned it (or "share my quests") off before today - a
 -- one-time override, not a recurring one, so a member who turns it back
@@ -318,6 +318,6 @@ end)
 DHTools.RegisterModule("quests", {
     name = "Quests",
     desc = "Shows which guild members have matching group/elite/class quests, so you can find people to group with. Leave this on - only disable it if you're having serious lag issues.",
-    default = true, -- 2026-09-14 (Chris): flipped on; see ForceQuestsOnOnce below for the one-time migration of existing installs
+    default = true, -- 2026-09-14 (Loopi): flipped on; see ForceQuestsOnOnce below for the one-time migration of existing installs
     OnEnable = ns.InitDB,
 })

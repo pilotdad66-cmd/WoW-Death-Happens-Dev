@@ -30,7 +30,7 @@ ns.Curation.generated = "2026-09-10 22:04"
 -- zones (an array) instead, merged from one CSV row per zone -
 -- consumers must read e.zones or {e.zone}, never e.zone alone.
 -- type mirrors UnitClassification(): normal|elite|rare|rareelite.
--- include=false means EXCLUDED (2026-09-11, Chris): Core.lua's
+-- include=false means EXCLUDED (2026-09-11, Loopi): Core.lua's
 -- ns.CategoriesFor returns no categories at all for the entry, so it
 -- never live-alerts and never appears in a zone-entry report - a soft
 -- delete that keeps the row's data intact. include=true or absent

@@ -114,7 +114,7 @@ local defaults = {
     -- first load" - see the ADDON_LOADED handler below. Never reset by
     -- CopyDefaults once populated, so officer edits (M4) persist normally.
     destinations = {},
-    -- officerRankThreshold (M3, DH-Air-Destinations-Design.md §3/§7):
+    -- officerRankThreshold (M3, DH-Air-Destinations-Design.md Â§3/Â§7):
     -- guild rankIndex <= this counts as "officer" for IsGuildOfficer.
     -- Default 3 is Loopi's explicit call for Death Happens' actual rank
     -- ladder (2026-08-03), not the design doc's original rank<=4 guess -
@@ -290,7 +290,7 @@ function DHAir:UnitHasAuthority(name)
     return (UnitIsGroupLeader(unit) == true) or (UnitIsGroupAssistant(unit) == true)
 end
 
--- Real guild-officer-rank check (M3, DH-Air-Destinations-Design.md §3),
+-- Real guild-officer-rank check (M3, DH-Air-Destinations-Design.md Â§3),
 -- replacing the interim leader/assist gate `edit_destinations` used since
 -- M2. Fails CLOSED (false) if unverifiable - same reasoning as
 -- DH-Bavin's IsGuildLeader: this gates a write action, unlike
@@ -366,7 +366,7 @@ function DHAir:HasPermission(action)
         -- permission-model idiom (Board never asks Blizzard directly).
         return self:UnitHasAuthority(UnitName("player"))
     elseif action == "edit_destinations" then
-        -- M3 (DH-Air-Destinations-Design.md §3): real guild-officer rank
+        -- M3 (DH-Air-Destinations-Design.md Â§3): real guild-officer rank
         -- check, replacing the interim leader/assist gate M2 shipped with.
         -- Inherits the Loopidot testing override via IsGuildOfficer itself.
         return self:IsGuildOfficer(UnitName("player"))
@@ -662,7 +662,7 @@ end)
 -- initializes/migrates DHAirDB unconditionally (ungated, same as every
 -- other module's DB init), and every other handler already checks
 -- IsModuleEnabled("air") live - nothing extra to do on toggle. Defaults
--- to OFF on a fresh install (2026-08-31, Chris) - only Mob Marker and
+-- to OFF on a fresh install (2026-08-31, Loopi) - only Mob Marker and
 -- Bavin default on now; a guild member opts everything else in
 -- themselves from the Tools page. Existing members' own saved toggle is
 -- untouched either way.

@@ -231,8 +231,8 @@ local function AttachAllWantedItems()
     return attached, ranOutOfSlots
 end
 
--- 2026-09-14 (Chris): the "Bavin Wants" Fill Recipient button is dead
--- code for now (priority list deprecated same day) - Chris wants it
+-- 2026-09-14 (Loopi): the "Bavin Wants" Fill Recipient button is dead
+-- code for now (priority list deprecated same day) - Loopi wants it
 -- invisible to players, not just unmaintained. Gated off in the
 -- MAIL_SHOW handler below rather than deleted, so it's trivially
 -- revivable - flip this back to true (or drop the gate) to bring it

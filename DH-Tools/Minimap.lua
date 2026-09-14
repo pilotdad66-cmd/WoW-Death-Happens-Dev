@@ -406,8 +406,8 @@ end
 -- reason to want their own preferences) while "Officer Settings" keeps
 -- its permission gate below.
 local function BuildBavinSubmenu()
-    -- 2026-09-14 (Chris): "See List" (priority list) dropped - the
-    -- priority want-list is dead code for now, and Chris wants no
+    -- 2026-09-14 (Loopi): "See List" (priority list) dropped - the
+    -- priority want-list is dead code for now, and Loopi wants no
     -- player-visible trace of it. The /dhb items slash command itself
     -- still works (untouched, same revivability approach as everywhere
     -- else this session), just not linked from this menu anymore.
@@ -570,7 +570,7 @@ local function BuildMenu()
         -- 2026-08-08 (Loopi): reordered top-to-bottom - Mob Marker,
         -- Quests, Bavin Points, DH-Danger, DH-Air, then the divider and
         -- Settings/About (unchanged below it). Top-level label renamed
-        -- "Bavin Wants" -> "Bavin Points" 2026-08-24 (Chris's call).
+        -- "Bavin Wants" -> "Bavin Points" 2026-08-24 (Loopi's call).
         { text = "Mob Marker", notCheckable = true, keepShownOnClick = true,
             hasArrow = true, menuList = BuildMobMarkerSubmenu() },
         { text = "Quests", notCheckable = true, keepShownOnClick = true,
@@ -617,7 +617,7 @@ end
 -- LibDataBroker button
 --------------------------------------------------------------------------
 
--- 2026-08-25 (Chris): two straight attempts at shrinking GameTooltip's
+-- 2026-08-25 (Loopi): two straight attempts at shrinking GameTooltip's
 -- own line font for this hover popup had zero visible effect on the
 -- box size - its size appears to be locked in well before any font
 -- override we can apply gets a chance to matter, and fighting a shared,

@@ -1101,7 +1101,7 @@ local function CreateDangerPanel(parent)
     _G[zoneWarnCheck:GetName() .. "Text"]:SetText("Alert when entering a dangerous zone")
 
     -- Exclude Gray / Green from the zone-entry message (2026-09-11,
-    -- Chris - Hide Gray already existed as its own checkbox; Hide Green
+    -- Loopi - Hide Gray already existed as its own checkbox; Hide Green
     -- is new and independent, not a replacement). One compact line:
     -- "Exclude [x]Gray / [x]Green Threats from the Zone In Message",
     -- with the words Gray/Green colored to match ns.LevelColor's own
@@ -1273,14 +1273,14 @@ local function CreateDangerPanel(parent)
     end)
 
     --------------------------------------------------------------------
-    -- Repeat Alert Delay (2026-09-10, Chris): alerts were firing too
+    -- Repeat Alert Delay (2026-09-10, Loopi): alerts were firing too
     -- close together, most visibly with roaming packs made of several
     -- same-named mobs - each is a different GUID, so the fixed 20s
     -- per-GUID anti-flicker cooldown (Core.lua's COOLDOWN local, not
     -- exposed here) does nothing to space THOSE apart. This is the
     -- separate, configurable, per-npcID cooldown on top of that one -
     -- see Core.lua's ns.Alert. Applies to every curated category
-    -- (Chris's explicit call, 2026-09-10), not conditional on the Alert
+    -- (Loopi's explicit call, 2026-09-10), not conditional on the Alert
     -- On radio above, so it's NOT tied to belowSlider's show/hide.
     --------------------------------------------------------------------
     local function FormatRepeatDelay(secs)

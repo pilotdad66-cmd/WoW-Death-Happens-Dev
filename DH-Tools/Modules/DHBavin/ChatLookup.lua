@@ -18,7 +18,7 @@
 --      non-nil `detail` line (ns.GetItemPoints already resolves override
 --      vs. baseline - see Core.lua's own comment on that function).
 --   3. No data - known or unknown item, but no detail text on file.
--- All three lead with the clickable item link (Chris's explicit call,
+-- All three lead with the clickable item link (Loopi's explicit call,
 -- 2026-09-13), then the message text.
 --
 -- 2026-09-13 (Loopi): classID 12 = Quest item, bindType 1 = Bind on
@@ -53,7 +53,7 @@ function ns.TryClassifyLookup(link)
     end
 
     if itemClassID == ITEM_CLASS_QUEST or bindType == BIND_ON_PICKUP then
-        -- 2026-09-13 (Loopi): wording changed at Chris's request - was
+        -- 2026-09-13 (Loopi): wording changed at Loopi's request - was
         -- "is not tradable and has no value other than using it or
         -- vendoring it."
         return link .. " cannot be traded. Use it, Vendor it, or DE it."

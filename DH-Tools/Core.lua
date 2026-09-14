@@ -120,7 +120,7 @@ function ns.IsAuthorAccount()
     if type(DHToolsAccountDB) == "table" and DHToolsAccountDB.isAuthorAccount == true then
         return true
     end
-    -- 2026-09-14 (Chris): all of Loopi's characters (main + every alt)
+    -- 2026-09-14 (Loopi): all of Loopi's characters (main + every alt)
     -- should get admin, not just whichever account has had Loopi/Loopidot
     -- log in on it at least once (the DHToolsAccountDB flag above still
     -- requires that bootstrap step, and only covers alts on THAT SAME WoW
@@ -165,7 +165,7 @@ end
 -- actual CurseForge/GitHub upload (e.g. to preview the About page before
 -- publishing) or a locally-built test zip that happens to carry that same
 -- bumped-but-unpublished number. Broadcasting THAT could tell a guildmate
--- to go download a version that doesn't exist anywhere yet. Chris's
+-- to go download a version that doesn't exist anywhere yet. Loopi's
 -- explicit call (2026-08-24): this must only ever trigger off a version
 -- that's actually been published. LAST_RELEASE_VERSION below is therefore
 -- a separate literal, updated ONLY by hand as an explicit step of actually
@@ -176,7 +176,7 @@ end
 local LAST_RELEASE_VERSION = "2.0.8"
 
 local VER_PREFIX = "DHToolsVer"
--- In-memory only, never persisted - Chris's call: the "update available"
+-- In-memory only, never persisted - Loopi's call: the "update available"
 -- message shows once per session, and a UI reload or fresh login (which
 -- both re-run this whole file) should reset that, which a plain local
 -- automatically does without any extra code.
@@ -278,7 +278,7 @@ end
 -- at once, since it's a birthday-paradox problem: widening the random
 -- window helps, but two draws can always still land within a
 -- CLAIM-broadcast's travel time of each other, and the more people are
--- racing, the likelier that becomes. Chris hit this in practice
+-- racing, the likelier that becomes. Loopi hit this in practice
 -- (2026-09-14, "way too spammy") even after 2026-09-13 added the same
 -- random-delay jitter to the cache-miss retry path - confirming it
 -- wasn't a bug in one path, it was the mechanism itself.
@@ -356,13 +356,13 @@ local myBids = {}
 -- an async fetch and return nil immediately; the ANSWER delay (0.1-1.2s)
 -- often isn't enough time for that FIRST-EVER fetch to complete, so a
 -- client gave up and stayed completely silent - confirmed 2026-09-13
--- testing: replies worked for items Chris had already seen locally, went
+-- testing: replies worked for items Loopi had already seen locally, went
 -- silent (no debug text either) for items only guildmates had linked.
 -- Fix: keep an itemID -> {list of {key, link}} table of "still waiting
 -- on real data" lookups; GET_ITEM_INFO_RECEIVED (registered in the Boot
 -- section) fires once the fetch actually completes, giving one more shot
 -- at TryClassifyLookup before giving up for good. RETRY_TIMEOUT is
--- Chris's explicit call: 5 seconds is comfortably longer than a normal
+-- Loopi's explicit call: 5 seconds is comfortably longer than a normal
 -- round trip without leaving a listener effectively registered forever
 -- for a bogus/never-resolving item ID.
 local pendingLookups = {}

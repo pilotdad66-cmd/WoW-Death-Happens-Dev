@@ -181,13 +181,13 @@ end
 --
 -- 2026-09-05/2026-09-10 history: this briefly held the queue-join open
 -- pending a per-unit Booty-Bay zone check (Deves' "already in Booty Bay
--- doesn't need a summon" request via Chris), skipping the queue on an
+-- doesn't need a summon" request via Loopi), skipping the queue on an
 -- exact "Booty Bay" match and queueing normally otherwise. Reverted
--- 2026-09-10 (Chris): in practice it never skipped anyone - whispering
+-- 2026-09-10 (Loopi): in practice it never skipped anyone - whispering
 -- always still invited and queued - because
 -- C_Map.GetBestMapForUnit/GetMapInfo could not resolve "Booty Bay" as
 -- distinct from "Stranglethorn Vale" for a remote party/raid unit (the
--- UNVERIFIED risk this shipped with, see STATUS.md). Chris also
+-- UNVERIFIED risk this shipped with, see STATUS.md). Loopi also
 -- confirmed the guild does not want STV excluded either, so rather than
 -- chase subzone detection, the exclusion is gone: whisper -> invite +
 -- immediate queue join, regardless of zone.
