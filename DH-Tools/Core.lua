@@ -685,6 +685,7 @@ end
 
 -- === Boot ===
 local frame = CreateFrame("Frame")
+ns.frame = frame -- exposed for tests\harness.lua (Fire-an-event pattern, same as DHAir/DHQuests/DHBavin's own ns.frame)
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("CHAT_MSG_ADDON")
