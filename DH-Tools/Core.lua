@@ -239,36 +239,66 @@ end
 -- Bavin module to be enabled - Core just detects the trigger, extracts
 -- links, and runs the same claim-race machinery for either outcome.
 --
--- PROTOCOL: one new addon-message type, "CLAIM|key", broadcast to GUILD
--- on its own prefix once a client decides to answer (whether with real
--- data or the fallback text) - the client that broadcasts it also posts
--- the actual human-readable reply straight to guild chat itself in the
--- same breath. `key` is built from {sender, a hash of the raw message,
--- link index} so two different questions (or the same question asked
--- twice) never collide, without needing any delimiter that could appear
--- inside the raw chat text itself (which, once an item link's color/
--- hyperlink escapes are in it, definitely contains "|").
+-- PROTOCOL (redesigned 2026-09-14, Loopi - see below): two addon-message
+-- types on one prefix, "BID|key|tiebreak" and "CLAIM|key", broadcast to
+-- GUILD. `key` is built from {sender, a hash of the raw message, link
+-- index} so two different questions (or the same question asked twice)
+-- never collide, without needing a delimiter that could appear inside
+-- the raw chat text itself (which, once an item link's color/hyperlink
+-- escapes are in it, definitely contains "|").
 --
--- CLAIM RACE: every client that reaches a decision for a given key waits
--- a random delay before broadcasting, standing down immediately if it
--- hears someone else's CLAIM for that key first - this IS the tie-break
--- (Chris's call: random, not deterministic). Real answers get first
--- crack (a short delay window); the "nobody's home" fallback is
--- deliberately given a LATER window so it only wins when no real answer
--- showed up in time. Total budget end-to-end is ~2 seconds (Chris's
--- number) - guild addon messages already round-trip in a small fraction
--- of that under normal conditions (same channel DH-Bavin's own SYNCREQ/
--- SYNCDATA relies on), so this is a comfortable multiple of real
--- latency, not a tight budget. An occasional duplicate reply from
--- near-simultaneous timers is accepted (Chris's call) rather than
--- engineered away entirely.
+-- BID-THEN-DECIDE, not a race: the original design (still in git
+-- history) had every client wait a random delay and broadcast CLAIM the
+-- instant it fired, standing down if someone else's CLAIM arrived
+-- first. That never actually guaranteed one answer - it only made
+-- collisions rarer, and rarer got worse as more guildmates were online
+-- at once, since it's a birthday-paradox problem: widening the random
+-- window helps, but two draws can always still land within a
+-- CLAIM-broadcast's travel time of each other, and the more people are
+-- racing, the likelier that becomes. Chris hit this in practice
+-- (2026-09-14, "way too spammy") even after 2026-09-13 added the same
+-- random-delay jitter to the cache-miss retry path - confirming it
+-- wasn't a bug in one path, it was the mechanism itself.
+--
+-- Replaced with a two-phase protocol that doesn't get less reliable as
+-- more people are online, because its safety margin is network
+-- propagation time, not "did N random draws avoid each other":
+--   1. The instant a client has a reply ready (real data or the
+--      fallback text), it broadcasts a BID carrying a random tiebreak
+--      value, and starts tracking every BID it hears for that key.
+--   2. BID_WINDOW later (comfortably longer than a guild-chat addon
+--      message actually takes to reach everyone - not scaled to however
+--      many clients are contending), each bidder checks whether ITS OWN
+--      tiebreak was the lowest of every bid it saw for that key. Only
+--      the lowest bidder broadcasts CLAIM and posts the actual reply;
+--      everyone else stands down. Every bidder is comparing the same
+--      final set of bids, so they all agree on the same winner.
+-- CLAIM still exists and still means the same thing (stand down
+-- forever, whoever sent it) - it's just no longer what decides the
+-- winner, only what tells latecomers it's already settled.
 local LOOKUP_PREFIX = "DHToolsLookupV1"
 
 -- Standard chat item-hyperlink shape: |cAARRGGBB|Hitem:...|h[Name]|h|r
 local ITEM_LINK_PATTERN = "|c%x%x%x%x%x%x%x%x|Hitem:.-|h%[.-%]|h|r"
 
-local ANSWER_DELAY_MIN, ANSWER_DELAY_MAX = 0.1, 1.2     -- real-data replies
-local FALLBACK_DELAY_MIN, FALLBACK_DELAY_MAX = 1.5, 2.0 -- "nobody's running Bavin"
+local CLASSIFY_DEFER_MIN, CLASSIFY_DEFER_MAX = 0.1, 0.2
+                          -- Small warm-up before the FIRST classify
+                          -- attempt (see the 2026-09-13 eager-evaluation
+                          -- bugfix comment below) so GetItemInfo has a
+                          -- moment to cache. No longer needs to be WIDE -
+                          -- collision-avoidance is BID_WINDOW's job now,
+                          -- not this delay's.
+local BID_WINDOW = 0.4   -- Fixed wait after broadcasting a bid before
+                          -- deciding the winner - comfortably longer
+                          -- than real guild-chat addon-message latency
+                          -- (the same channel DH-Bavin's own SYNCREQ/
+                          -- SYNCDATA round-trips on well under this).
+                          -- Deliberately does NOT scale with how many
+                          -- people are online - that's the whole point.
+local BID_FORGET = 6.0   -- How long a key's best-known bid is remembered
+                          -- before being pruned, comfortably longer than
+                          -- RETRY_TIMEOUT so even a slow retry bid still
+                          -- has real state to compare itself against.
 local LINK_STAGGER = 0.4 -- per link index, so one client winning 2+ of a
                           -- message's up-to-3 links doesn't fire multiple
                           -- SendChatMessage calls back-to-back (WoW's own
@@ -283,6 +313,19 @@ local FALLBACK_TEXT = "Nobody online has the DH-Bavin module enabled. Please ins
 -- is a few hundred bytes at most, not worth the complexity of expiring
 -- entries for a table this short-lived.
 local lookupClaims = {}
+
+-- key -> lowest bid tiebreak string seen so far for that key, from ANY
+-- client (including possibly our own) - tracked for every key we hear a
+-- bid for, not just ones we're contending ourselves, since a client that
+-- bids LATE (e.g. a slow cache-miss retry) still needs to know about
+-- bids that arrived before it had anything to bid. Pruned after
+-- BID_FORGET so this doesn't grow for the life of the session.
+local bestBidSeen = {}
+
+-- key -> {tiebreak, reply} for keys THIS client is itself contending on
+-- right now, between broadcasting its own BID and that key's
+-- BID_WINDOW finalize check.
+local myBids = {}
 
 -- 2026-09-13 (Loopi): cache-miss retry for an item NONE of this client's
 -- data has ever cached before - typically an item only a guildmate, not
@@ -385,121 +428,120 @@ local function TruncateReply(text)
     return text:sub(1, budget) .. "..."
 end
 
+-- Tiebreak values only need to sort consistently and virtually never
+-- collide - not be cryptographically random. Zero-padded so plain
+-- string comparison (`<`) sorts numerically, with the player's own name
+-- appended as an as-good-as-impossible-to-need tie-breaker.
+local function LookupTiebreak()
+    return string.format("%010d:%s", math.random(0, 999999999), (UnitName("player")))
+end
+
+-- Records `tiebreak` as the new best-known bid for `key` if it beats
+-- whatever's on file (including a key we've never heard of before this
+-- call). Called for every incoming BID we hear AND for our own bid the
+-- moment we place it, so the comparison at finalize time always has the
+-- complete picture regardless of what order bids actually arrived in.
+local function RecordBid(key, tiebreak)
+    if not bestBidSeen[key] then
+        C_Timer.After(BID_FORGET, function()
+            bestBidSeen[key] = nil
+        end)
+    end
+    if not bestBidSeen[key] or tiebreak < bestBidSeen[key] then
+        bestBidSeen[key] = tiebreak
+    end
+end
+
 local function LookupOnMessage(prefix, message, _channel, _sender)
     if prefix ~= LOOKUP_PREFIX then return end
-    local msgType, key = message:match("^(%u+)|(.*)$")
-    if msgType == "CLAIM" and key then
-        lookupClaims[key] = true
+    local msgType, rest = message:match("^(%u+)|(.*)$")
+    if not msgType or not rest then return end
+    if msgType == "CLAIM" and rest ~= "" then
+        lookupClaims[rest] = true
+        myBids[rest] = nil
+    elseif msgType == "BID" then
+        local key, tiebreak = rest:match("^(.+)|([^|]+)$")
+        if key and tiebreak then
+            RecordBid(key, tiebreak)
+        end
     end
+end
+
+-- Broadcasts a BID for `key` (carrying a fresh tiebreak) and schedules
+-- the BID_WINDOW finalize check that decides whether THIS client
+-- actually gets to answer. Every path that can produce a reply - real
+-- data, a cache-miss retry that resolved, and the "nobody has Bavin
+-- enabled" fallback - all go through this same function now.
+local function BidToAnswer(key, replyText)
+    if lookupClaims[key] then return end
+    local tiebreak = LookupTiebreak()
+    myBids[key] = { tiebreak = tiebreak, reply = replyText }
+    RecordBid(key, tiebreak)
+    LookupSend("BID|" .. key .. "|" .. tiebreak)
+    C_Timer.After(BID_WINDOW, function()
+        local mine = myBids[key]
+        myBids[key] = nil
+        if not mine or lookupClaims[key] then return end
+        if bestBidSeen[key] ~= mine.tiebreak then return end -- someone else's bid was lower
+        lookupClaims[key] = true
+        LookupSend("CLAIM|" .. key)
+        SendChatMessage(TruncateReply(mine.reply), "GUILD")
+    end)
 end
 
 -- Registered from the Boot section's GET_ITEM_INFO_RECEIVED handler
 -- below. `success == false` means the fetch failed outright (e.g. a
 -- bogus item ID) - nothing to retry against, so those are ignored.
---
--- 2026-09-14 (Loopi) BUGFIX: this used to answer synchronously, the
--- instant GET_ITEM_INFO_RECEIVED fired, with no random delay at all -
--- unlike ScheduleAnswerAttempt's normal path, which deliberately spreads
--- attempts over ANSWER_DELAY_MIN..MAX specifically so a CLAIM broadcast
--- has time to reach every other client before more than one of them
--- fires. A brand-new item nobody has cached yet is exactly the case
--- where several online guildmates are all waiting on the same async
--- fetch, so their GET_ITEM_INFO_RECEIVED events tend to land within
--- milliseconds of each other - well before any CLAIM has propagated -
--- causing multiple guildmates to answer at once (Chris's "way too
--- spammy" report, 2026-09-14). Fix: give this path the same
--- delay-then-recheck jitter the normal path already uses, instead of
--- answering the moment the event fires.
 local function LookupOnItemInfoReceived(itemID, success)
     if not success then return end
     local list = pendingLookups[itemID]
     if not list then return end
     pendingLookups[itemID] = nil
     for _, entry in ipairs(list) do
-        if not lookupClaims[entry.key] then
-            local delay = ANSWER_DELAY_MIN + math.random() * (ANSWER_DELAY_MAX - ANSWER_DELAY_MIN)
-            C_Timer.After(delay, function()
-                if lookupClaims[entry.key] then return end
-                if not (ns.Bavin and ns.Bavin.TryClassifyLookup) then return end
-                local ok, result = pcall(ns.Bavin.TryClassifyLookup, entry.link)
-                if ok and result then
-                    lookupClaims[entry.key] = true
-                    LookupSend("CLAIM|" .. entry.key)
-                    SendChatMessage(TruncateReply(result), "GUILD")
-                elseif not ok then
-                    ns.Print("|cffff3333[lookup debug] TryClassifyLookup errored (retry):|r " .. tostring(result))
-                end
-            end)
+        if not lookupClaims[entry.key] and ns.Bavin and ns.Bavin.TryClassifyLookup then
+            local ok, result = pcall(ns.Bavin.TryClassifyLookup, entry.link)
+            if ok and result then
+                BidToAnswer(entry.key, result)
+            elseif not ok then
+                ns.Print("|cffff3333[lookup debug] TryClassifyLookup errored (retry):|r " .. tostring(result))
+            end
         end
     end
 end
 
--- Schedules this client's attempt to answer `key`. Stands down (does
--- nothing) if any client's CLAIM for this key - including one heard
--- while waiting - arrives first. Winning means: broadcast the CLAIM (so
--- every other waiting client stands down too), then post `replyText` to
--- guild chat, in that order.
-local function ScheduleLookupAttempt(key, delayMin, delayMax, replyText)
-    local delay = delayMin + math.random() * (delayMax - delayMin)
-    C_Timer.After(delay, function()
+-- 2026-09-13 (Loopi) BUGFIX, still true under the 2026-09-14 bid
+-- redesign above: classification must not be evaluated eagerly at
+-- trigger time (t=0) - an item just linked in chat is very often a
+-- genuine GetItemInfo cache miss at that exact instant (the same gap
+-- Tooltip.lua's own OnTooltipSetItem has to retry around), so evaluating
+-- immediately means giving up on a real answer before the server
+-- round-trip has any chance to complete. This defers the actual
+-- GetItemInfo/GetItemPoints call into a short timer callback
+-- (CLASSIFY_DEFER - no longer needs to be wide, see the PROTOCOL comment
+-- above) so it runs after a brief warm-up instead of at trigger time. A
+-- genuine cache miss (nil, not an error) registers a bounded
+-- GET_ITEM_INFO_RECEIVED retry (LookupOnItemInfoReceived above) instead
+-- of giving up outright.
+local function ScheduleAnswerAttempt(key, deferMin, deferMax, link)
+    local defer = deferMin + math.random() * (deferMax - deferMin)
+    C_Timer.After(defer, function()
         if lookupClaims[key] then return end
-        lookupClaims[key] = true
-        LookupSend("CLAIM|" .. key)
-        SendChatMessage(TruncateReply(replyText), "GUILD")
-    end)
-end
-
--- 2026-09-13 (Loopi) BUGFIX: classification used to be evaluated eagerly,
--- the instant the trigger message arrived (t=0), with only the resulting
--- STRING (or the decision to fall back) carried into the delayed timer.
--- An item just linked in chat is very often a genuine GetItemInfo cache
--- miss at that exact instant - the same gap Tooltip.lua's own
--- OnTooltipSetItem has to retry around (see that file's header comment) -
--- so evaluating at t=0 meant giving up on a real answer before the
--- server round-trip had any real chance to complete, which is exactly
--- what Chris hit testing solo: TryClassifyLookup(link) returned nil every
--- time because GetItemInfo hadn't resolved yet, so this client fell
--- straight through to the fallback path despite Bavin being enabled.
--- Fix: defer the actual GetItemInfo/GetItemPoints call into the timer
--- callback itself, so it runs at FIRE time (after the random ANSWER
--- delay has elapsed) instead of at trigger time - giving the item up to
--- ~1.2 real seconds to finish caching first, which resolves it in
--- practice for items this client has already cached before (its own
--- bags/quests/etc.). Still not enough on its own for an item NONE of
--- this client's data has ever cached (typically something only a
--- guildmate has seen) - a genuine nil result here (not an error) now
--- registers a bounded GET_ITEM_INFO_RECEIVED retry instead of giving up
--- outright; see the pending-retry section above lookupClaims for the
--- full story.
-local function ScheduleAnswerAttempt(key, delayMin, delayMax, link)
-    local delay = delayMin + math.random() * (delayMax - delayMin)
-    C_Timer.After(delay, function()
-        if lookupClaims[key] then return end
-        local reply
-        local hadError = false
         if ns.Bavin and ns.Bavin.TryClassifyLookup then
             -- pcall so a hidden Lua error (WoW's Lua-error display is
             -- off by default) surfaces here instead of vanishing.
             local ok, result = pcall(ns.Bavin.TryClassifyLookup, link)
-            if ok then
-                reply = result
+            if ok and result then
+                BidToAnswer(key, result)
+            elseif ok then
+                -- Genuine cache miss, not an error. Does NOT fall
+                -- through to the fallback text itself (that message
+                -- specifically means "nobody has Bavin enabled," which
+                -- isn't true here) - only a client without Bavin
+                -- enabled runs the fallback path at all.
+                RegisterPendingRetry(key, link)
             else
-                hadError = true
                 ns.Print("|cffff3333[lookup debug] TryClassifyLookup errored:|r " .. tostring(result))
             end
-        end
-        if reply then
-            lookupClaims[key] = true
-            LookupSend("CLAIM|" .. key)
-            SendChatMessage(TruncateReply(reply), "GUILD")
-        elseif not hadError then
-            -- Genuine cache miss, not an error - register for a real
-            -- shot once GET_ITEM_INFO_RECEIVED actually fires instead of
-            -- giving up here. Does NOT fall through to the fallback text
-            -- itself (that message specifically means "nobody has Bavin
-            -- enabled," which isn't true here) - only a client without
-            -- Bavin enabled runs the fallback race at all.
-            RegisterPendingRetry(key, link)
         end
     end)
 end
@@ -510,12 +552,16 @@ local function LookupHandleTrigger(key, link, linkIndex)
     local bavinEnabled = ns.IsModuleEnabled("bavin")
 
     if bavinEnabled and ns.Bavin and ns.Bavin.TryClassifyLookup then
-        ScheduleAnswerAttempt(key, ANSWER_DELAY_MIN + offset, ANSWER_DELAY_MAX + offset, link)
+        ScheduleAnswerAttempt(key, CLASSIFY_DEFER_MIN + offset, CLASSIFY_DEFER_MAX + offset, link)
         return
     end
 
-    ScheduleLookupAttempt(key, FALLBACK_DELAY_MIN + offset, FALLBACK_DELAY_MAX + offset,
-        link .. " " .. FALLBACK_TEXT)
+    -- No data-fetch to wait on here - just the same per-link stagger so
+    -- this client's own multiple fallback replies (if it wins 2+ links)
+    -- don't fire back-to-back before bidding.
+    C_Timer.After(offset, function()
+        BidToAnswer(key, link .. " " .. FALLBACK_TEXT)
+    end)
 end
 
 -- Guild-scoped like the rest of DH-Bavin's own permission model (k-0019:

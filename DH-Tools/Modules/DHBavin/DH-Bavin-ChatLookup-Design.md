@@ -100,9 +100,9 @@ requires the Bavin module to be enabled, so a Core-only client can
 notice the silence and post the fallback without being able to answer
 the question itself.
 
-## Claim protocol (new addon message type)
+## Claim protocol (redesigned 2026-09-14 - bid-then-decide, not a race)
 
-New message type on DH-Tools' existing guild addon-message channel,
+Two message types on DH-Tools' existing guild addon-message channel,
 scoped per triggering chat line + link position so concurrent questions
 about different items (or the same item asked twice) don't collide:
 
@@ -110,26 +110,47 @@ about different items (or the same item asked twice) don't collide:
   deterministic and identical across every client that received the
   same `CHAT_MSG_GUILD` event, no clock sync or server-assigned ID
   needed.
-- On seeing a qualifying trigger, each eligible client (Bavin module
-  enabled, for item-lookup; DH-Tools Core, for the fallback-only path)
-  waits a **random short delay**, then broadcasts a claim for that key
-  if it hasn't already heard someone else's claim for it.
-- First claim heard wins; everyone else stands down for that key.
-  **Tie-break: random** if two claims are judged to have arrived
-  effectively simultaneously (Chris's call - simplicity over a
-  deterministic rule).
-- **Wait window: 2 seconds.** Guild addon-message and chat propagation
-  both ride the same server pipe DH-Bavin already depends on for
-  SYNCREQ/SYNCDATA and RECIPIENT/EDITORS sync, which round-trip in a
-  small fraction of a second under normal conditions - 2 seconds is a
-  comfortable multiple of that, not a tight budget. Chris has
-  explicitly accepted the rare duplicate as fine, so this errs toward
-  "someone answers quickly" rather than padding the window further.
-- **No priority order.** Considered and rejected (Chris, 2026-09-13) -
-  the claim race already guarantees exactly one responder regardless of
-  who it is; a priority tier would add complexity (ranking, handling a
-  higher-priority claim that arrives slightly late) without fixing a
-  real problem.
+- **Original design (shipped 2026-09-13, replaced 2026-09-14):** each
+  eligible client waited a random delay then broadcast a claim if it
+  hadn't already heard one; first claim heard won, ties broken randomly.
+  Chris explicitly accepted the rare duplicate as the cost of keeping it
+  simple - but in real guild use with several people online at once it
+  wasn't rare, it was routine ("way too spammy", 2026-09-14), even after
+  widening the random window once already. The problem was structural:
+  a random-delay race can only ever make collisions less likely, never
+  guarantee they don't happen, and it gets WORSE the more people are
+  contending - a birthday-paradox problem that padding the window
+  further doesn't escape.
+- **Current design:** every eligible client that becomes ready to
+  answer (real data, a cache-miss retry that resolved, or the fallback
+  text) immediately broadcasts a **BID** carrying a random tiebreak
+  value, and tracks every BID it hears for that key. A fixed
+  **BID_WINDOW (0.4s)** later, each bidder checks whether its own
+  tiebreak was the LOWEST of every bid it saw for that key - if so, it
+  broadcasts **CLAIM** and posts the reply; otherwise it stands down.
+  Every bidder compares the same final set of bids, so they all agree
+  on the same winner without needing to have fired at exactly the same
+  moment. This is deterministic, not probabilistic: the only thing that
+  has to hold is BID_WINDOW being longer than real guild-chat
+  addon-message propagation time (comfortably true - the same channel
+  SYNCREQ/SYNCDATA and RECIPIENT/EDITORS sync round-trip on well under
+  this), and that safety margin does NOT shrink as more people are
+  online, unlike the old random-delay window.
+- CLAIM still exists and still means "stand down forever" to anyone who
+  hears it - it just no longer decides the winner, only tells a
+  latecomer (e.g. a slow cache-miss retry) that this key is already
+  settled so it shouldn't even bother bidding.
+- **No priority order.** Still rejected (Chris, 2026-09-13) - the
+  protocol already guarantees exactly one responder regardless of who it
+  is; a priority tier would add complexity without fixing a real
+  problem.
+- **Mixed-version guilds:** an un-upgraded client only understands
+  CLAIM, not BID - it still respects a CLAIM broadcast from an upgraded
+  client (so it won't double-answer against one), but it still runs its
+  OLD random-delay race internally and could in principle answer before
+  an upgraded client's BID_WINDOW finalizes. Not fully solved short of
+  everyone being on the same version - acceptable given how quickly a
+  small guild converges on the latest CurseForge/GitHub release.
 - Fully automatic end to end - the winning client posts to guild chat
   itself, no confirmation click from that player. This is new territory
   for the suite (every other DH-Bavin chat-adjacent action - the
