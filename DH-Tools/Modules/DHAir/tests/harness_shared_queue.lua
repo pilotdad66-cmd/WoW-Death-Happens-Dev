@@ -195,10 +195,10 @@ _G.InviteUnit = function() end
 _G.GetBuildInfo = function() return "1.15.7", "12345", "Jan 1 2026", 11507 end
 
 -- Every simulated client reads this as its own DHAir.VERSION (Core.lua's
--- k-0014 metadata read) - matches Sync.lua's MIN_QUEUE_VERSION so the many
--- pre-existing ADD-propagation sections below keep passing unmodified.
--- The MIN_QUEUE_VERSION section further down overrides individual test
--- clients' .VERSION directly to simulate an old build.
+-- k-0014 metadata read). The value itself is arbitrary now that
+-- Sync.lua's MIN_QUEUE_VERSION gate is gone (removed 2026-09-15) -
+-- kept as a real-looking version string only for HELLO/PrintPeers
+-- display, nothing here parses or floors against it anymore.
 _G.GetAddOnMetadata = function(name, field)
     if field == "Version" then return "2.1.6" end
     return nil
@@ -1564,58 +1564,40 @@ check("Re-enabling sharing does not replay a stale change",
     CountPendingSyncreq() == 0)
 
 --------------------------------------------------------------------------
--- Section: MIN_QUEUE_VERSION gate (2026-08-15) - an old client's ADD
--- broadcasts get silently dropped by up-to-date peers; everything else
--- (roster registration, HELLO, claims) still works fine from an old build.
+-- Section: ADD propagates regardless of sender version (2026-09-15) -
+-- replaces the old "MIN_QUEUE_VERSION gate" section. That gate (and its
+-- dedicated test section) is gone - see Sync.lua's removal note - since
+-- the merge broke it into silently dropping every ADD broadcast raid-wide.
+-- This just confirms ADD now propagates unconditionally, whatever
+-- version the sender reports (or reports none at all).
 --------------------------------------------------------------------------
-print("== MIN_QUEUE_VERSION gate ==")
+print("== ADD propagates regardless of sender version ==")
 ResetWorld()
-local Old = NewClient("Old")     -- simulates a client that never updated
-local New1 = NewClient("New1")
-local New2 = NewClient("New2")
-groupRoster = { "Old", "New1", "New2" }
-shardCounts.Old, shardCounts.New1, shardCounts.New2 = 10, 10, 10
+local VOld = NewClient("VOld")     -- simulates a client on a very different version string
+local VNew1 = NewClient("VNew1")
+local VNew2 = NewClient("VNew2")
+groupRoster = { "VOld", "VNew1", "VNew2" }
+shardCounts.VOld, shardCounts.VNew1, shardCounts.VNew2 = 10, 10, 10
 
--- Discard the login handshake BEFORE downgrading Old's version - it
--- already went out carrying the mocked "2.1.6" DHAir.VERSION, and
--- overwriting the field now wouldn't retroactively change that queued
--- message text.
 pendingNetwork = {}
-Old.VERSION = "2.1.5" -- below Sync.lua's MIN_QUEUE_VERSION (2.1.6)
+VOld.VERSION = "1.0.0" -- deliberately far below what any real floor might have used
 
--- Fresh HELLOs from everyone now that Old's version has been downgraded,
--- so each peer's tracked version matches this test's intent.
-As("Old", function() Old:Sync_SendHello() end)
-As("New1", function() New1:Sync_SendHello() end)
-As("New2", function() New2:Sync_SendHello() end)
+As("VOld", function() VOld:Sync_SendHello() end)
+As("VNew1", function() VNew1:Sync_SendHello() end)
+As("VNew2", function() VNew2:Sync_SendHello() end)
 FlushNetwork()
 
-As("Old", function() Old:QueueAdd("Mallory") end)
-As("Old", function() Old:Sync_BroadcastAdd("Mallory") end)
+As("VOld", function() VOld:QueueAdd("Mallory") end)
+As("VOld", function() VOld:Sync_BroadcastAdd("Mallory") end)
 FlushNetwork()
-check("An up-to-date peer drops an ADD broadcast from a below-floor client",
-    New1:QueueWaitingCount() == 0)
-check("...on every up-to-date peer, not just one",
-    New2:QueueWaitingCount() == 0)
-check("The old client still has it locally (only the RECEIVE side is gated)",
-    Old:QueueWaitingCount() == 1)
+check("An ADD from a very-old-reported-version sender still reaches peers",
+    VNew1:QueueWaitingCount() == 1 and VNew1.db.queue[1].name == "Mallory")
+check("...on every peer, not just one",
+    VNew2:QueueWaitingCount() == 1 and VNew2.db.queue[1].name == "Mallory")
 
-As("New1", function() New1:QueueAdd("Nancy") end)
-As("New1", function() New1:Sync_BroadcastAdd("Nancy") end)
-FlushNetwork()
-check("An ADD from an up-to-date client still propagates normally",
-    New2:QueueWaitingCount() == 1 and New2.db.queue[1].name == "Nancy")
-
--- Old's roster registration and presence are untouched by the gate - only
--- its ADD broadcasts are dropped.
-As("Old", function() Old:SetRole("clicker", true) end)
-FlushNetwork()
-check("An old client's ROLE REGISTRATION still reaches peers fine",
-    New1:IsRegistered("clicker", "Old") == true)
-
--- Fail-open for a never-seen sender (no HELLO on file yet - Chris's call,
--- 2026-08-15): simulate this by resetting the world without ever flushing
--- the login HELLO before the ADD arrives.
+-- Fail-open for a never-seen sender still holds trivially now (there's no
+-- gate left to fail open on) - simulate by never flushing the login
+-- HELLO/SYNCREQ before the ADD arrives.
 ResetWorld()
 local Fresh = NewClient("Fresh")
 local Watcher = NewClient("Watcher")
@@ -1626,7 +1608,7 @@ pendingNetwork = {} -- drop the login HELLO/SYNCREQ traffic itself
 As("Fresh", function() Fresh:QueueAdd("Oswin") end)
 As("Fresh", function() Fresh:Sync_BroadcastAdd("Oswin") end)
 FlushNetwork()
-check("An ADD from a never-seen (version-unknown) sender is allowed through (fail-open)",
+check("An ADD from a never-seen (version-unknown) sender still propagates",
     Watcher:QueueWaitingCount() == 1 and Watcher.db.queue[1].name == "Oswin")
 
 --------------------------------------------------------------------------

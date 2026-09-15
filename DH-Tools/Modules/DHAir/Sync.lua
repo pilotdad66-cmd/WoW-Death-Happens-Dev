@@ -11,11 +11,18 @@
 --                               (2026-08-15) is the sender's DHAir.VERSION, purely additive -
 --                               an old client's HELLO carries no payload and the receive
 --                               handler already ignores unknown rest text, so this needed no
---                               PREFIX bump. Lets peers learn who's below MIN_QUEUE_VERSION
---                               (see that constant's comment) without a dedicated message.
---   ADD|Name                  - a player was queued locally; peers should add them too
---                               UNLESS the sender is a known peer below MIN_QUEUE_VERSION -
---                               see the ADD handler and MIN_QUEUE_VERSION's comment.
+--                               PREFIX bump. Informational only (PrintPeers) since the
+--                               2026-09-15 removal of the MIN_QUEUE_VERSION floor - see the
+--                               removal note near that constant's former home below.
+--   ADD|Name                  - a player was queued locally; peers should add them too.
+--                               Used to be dropped receive-side below a MIN_QUEUE_VERSION
+--                               floor; that floor compared DHAir.VERSION, which the
+--                               2026-08-20 DH-Air-into-DH-Tools merge repointed at DH-Tools'
+--                               OWN version numbering (restarted at 2.0.0) - so the floor
+--                               (2.1.6, DH-Air's old standalone line) could never be met
+--                               again and silently dropped every ADD broadcast raid-wide
+--                               since the merge. Removed 2026-09-15 (Loopi/Chris) - see the
+--                               former MIN_QUEUE_VERSION constant's removal note below.
 --   CLAIM|Name|ClaimerName    - claimer is about to attempt summoning Name
 --   RELEASE|Name              - the current claimer is giving up on Name; it's free again
 --   SUMMONED|Name             - Name has been fully summoned (or timed out); mark done everywhere
@@ -122,44 +129,22 @@ local MAX_CHUNK_CHARS = 200
 local CLAIM_TTL_SECONDS = 120     -- how long an unresolved claim is honored before being treated as stale
 local HELLO_INTERVAL_SECONDS = 300 -- re-announce presence at most this often
 
--- 2026-08-15 (Loopi-reported): a client still running an old build with
--- the long-fixed "group members auto-added to the queue" bug can still
--- broadcast bogus ADDs and pollute every up-to-date client's shared
--- queue - PREFIX alone doesn't stop this, since the bug was a LOGIC fix,
--- not a wire-format change, so the old client is still on this same
--- prefix. MIN_QUEUE_VERSION is a narrower floor than PREFIX: peers below
--- it keep working normally for everything else (roster, HELLO, claims);
--- only their ADD broadcasts are silently ignored (see the ADD handler
--- below). Set to the version this floor check itself ships in (2.1.6) -
--- anyone older is below it by definition. Bump this again only if a
--- FUTURE queue-corrupting bug needs excluding the same way - not on
--- every ordinary release (unlike PREFIX, reserved for actual
--- wire-format breaks, see the header comment above).
-local MIN_QUEUE_VERSION = "2.1.6"
-
--- Splits a "2.1.5"-style version string into numeric segments.
-local function ParseVersionSegments(v)
-    local parts = {}
-    for num in tostring(v or ""):gmatch("%d+") do
-        table.insert(parts, tonumber(num))
-    end
-    return parts
-end
-
--- True if version string `v` is >= `floor`, comparing segment-by-segment
--- numerically (never lexically - "2.10" must beat "2.9"). A missing
--- trailing segment compares as 0 ("2.2" >= "2.1.5"). A version with no
--- parseable digits at all (e.g. the "?" fallback for a metadata read that
--- failed) never meets any real floor.
-local function VersionAtLeast(v, floor)
-    local vp, fp = ParseVersionSegments(v), ParseVersionSegments(floor)
-    if #vp == 0 then return false end
-    for i = 1, math.max(#vp, #fp) do
-        local a, b = vp[i] or 0, fp[i] or 0
-        if a ~= b then return a > b end
-    end
-    return true -- exactly equal
-end
+-- REMOVED 2026-09-15 (Loopi/Chris): MIN_QUEUE_VERSION (a floor on
+-- DHAir.VERSION below which a peer's ADD broadcasts were silently
+-- dropped receive-side - added 2026-08-15 to guard against an old
+-- STANDALONE DH-Air client's long-fixed auto-queue bug) and its
+-- ParseVersionSegments/VersionAtLeast helpers lived here. The
+-- 2026-08-20 DH-Air-into-DH-Tools merge repointed DHAir.VERSION
+-- (Core.lua) at DH-Tools' own addon metadata, whose version numbering
+-- restarted at 2.0.0 - so the floor (2.1.6, from DH-Air's retired
+-- standalone line) could never be satisfied again by any real client,
+-- and every ADD broadcast has been silently dropped raid-wide ever
+-- since the merge. Found via Loopi's in-raid report (a non-Warlock
+-- queue member saw their own role registration sync fine - REGISTER/
+-- UNREGISTER were never gated - but never saw anyone ELSE's queue
+-- joins appear). No replacement floor is needed: the bug this guarded
+-- against can't recur now that DH-Air only ships inside DH-Tools, with
+-- no standalone build left to be "old".
 
 DHAir.claims = {}       -- normalizedName -> { by = "ClaimerName", receivedAt = GetTime() }
 DHAir.peers = {}        -- name -> { lastSeen = GetTime(), version = "x.y.z" or nil (unknown until their HELLO arrives) }
@@ -293,7 +278,9 @@ function DHAir:Sync_SendHello()
     self.lastHelloSent = GetTime()
     -- Version travels as HELLO's payload (additive - an old client already
     -- ignores HELLO's rest entirely, see the receive handler on the old
-    -- build) so peers can learn who's below MIN_QUEUE_VERSION.
+    -- build). Informational only (PrintPeers) since the 2026-09-15
+    -- removal of the MIN_QUEUE_VERSION gate - see that removal's note
+    -- earlier in this file.
     self:Sync_Send("HELLO", self.VERSION)
     if self.Roster_Reannounce then
         self:Roster_Reannounce()
@@ -719,17 +706,11 @@ function DHAir:Sync_OnAddonMessage(prefix, message, channel, sender)
     elseif msgType == "ADD" then
         local name = rest
         if name ~= "" then
-            -- 2026-08-15 MIN_QUEUE_VERSION gate: an old client can still
-            -- broadcast bogus ADDs from its long-fixed auto-queue bug.
-            -- Unknown version (no HELLO seen yet, e.g. a race right at
-            -- login) is deliberately allowed through rather than blocked -
-            -- see this file's header comment on MIN_QUEUE_VERSION.
-            if not peerEntry.version or VersionAtLeast(peerEntry.version, MIN_QUEUE_VERSION) then
-                self:QueueAdd(name) -- QueueAdd itself doesn't re-broadcast, so no echo loop
-            end
-            -- else: sender's client predates the queue-safety floor -
-            -- drop silently rather than letting the old bug re-pollute
-            -- the shared queue.
+            -- 2026-09-15: the MIN_QUEUE_VERSION floor that used to gate
+            -- this receive-side (see this file's header comment and the
+            -- removal note near where the constant used to live) is gone -
+            -- every ADD broadcast is applied unconditionally now.
+            self:QueueAdd(name) -- QueueAdd itself doesn't re-broadcast, so no echo loop
         end
 
     elseif msgType == "CLAIM" then
@@ -940,16 +921,11 @@ function DHAir:PrintPeers()
     self:Print("Other DH-Air Warlocks seen in the last 5 minutes:")
     for name, peer in pairs(self.peers) do
         if now - peer.lastSeen < HELLO_INTERVAL_SECONDS then
-            -- 2026-08-15: surfaces who's still on an old build, since
-            -- that's now directly actionable (MIN_QUEUE_VERSION above).
-            local versionNote
-            if peer.version and not VersionAtLeast(peer.version, MIN_QUEUE_VERSION) then
-                versionNote = " (v" .. peer.version .. " - OUTDATED, can't add to the shared queue)"
-            elseif peer.version then
-                versionNote = " (v" .. peer.version .. ")"
-            else
-                versionNote = " (version unknown)"
-            end
+            -- 2026-09-15: no longer flags anyone "OUTDATED" - that used to
+            -- mean "below MIN_QUEUE_VERSION, can't add to the shared
+            -- queue", a floor removed this session (see this file's
+            -- header comment). Version is purely informational now.
+            local versionNote = peer.version and (" (v" .. peer.version .. ")") or " (version unknown)"
             self:Print("  - " .. name .. versionNote)
             any = true
         end
