@@ -1,6 +1,6 @@
 # DH-Tools
 
-**Version 2.0.8** | Author: **Loopi** | For: *Death Happens* Hardcore guild
+**Version 2.1.0** | Author: **Loopi** | For: *Death Happens* Hardcore guild
 
 ---
 
@@ -57,6 +57,14 @@ you actually want running, all managed from one place.
 ---
 
 ## Changelog
+
+### 2.1.0
+- **Fixed: DH-Air summon queue joins weren't reaching anyone else.**
+  Since DH-Air merged into DH-Tools, an internal version check meant
+  every "join the queue" message was silently rejected by every other
+  client - Summoners and Clickers could see a new registration, but
+  never saw anyone actually join the queue afterward. Confirmed fixed
+  in a live raid.
 
 ### 2.0.8
 - **Fixed: guild-chat item lookup could still get multiple replies with
