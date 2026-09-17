@@ -523,15 +523,72 @@ local function CreateMessagesPanel(parent)
         self:SetVerticalScroll(math.min(math.max(cur - delta * 18, 0), self:GetVerticalScrollRange()))
     end)
 
+    -- Destination Whisper (2026-09-17, Chris) - the whisper
+    -- RequestSetDestinationFor (Queue.lua) sends when someone else's
+    -- destination is set or cleared, covering both that manual Board path
+    -- and World Buff Mode's automatic Booty Bay tag (same shared
+    -- function - see Queue.lua's comment). Two single-line fields, no
+    -- enable checkbox (unlike the channel rows above) - this whisper is
+    -- the requester's only feedback, not an optional announcement.
+    local destTitle = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    destTitle:SetPoint("TOPLEFT", giScroll, "BOTTOMLEFT", 2, -16)
+    destTitle:SetText("Destination Whisper")
+
+    local destHint = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    destHint:SetPoint("TOPLEFT", destTitle, "BOTTOMLEFT", -2, -4)
+    destHint:SetPoint("RIGHT", -16, 0)
+    destHint:SetJustifyH("LEFT")
+    destHint:SetText("Sent to whoever's destination is set or cleared for them (Board, or World Buff "
+        .. "Mode's automatic Booty Bay tag). Use {dest} for the destination name and {setter} for who set it.")
+    destHint:SetWordWrap(true)
+
+    local destSetLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    destSetLabel:SetPoint("TOPLEFT", destHint, "BOTTOMLEFT", 2, -8)
+    destSetLabel:SetText("Destination Set")
+
+    local destSetEdit = CreateFrame("EditBox", "DHAirDestSetMsgEdit", panel, "InputBoxTemplate")
+    destSetEdit:SetSize(330, 20)
+    destSetEdit:SetPoint("TOPLEFT", destSetLabel, "BOTTOMLEFT", 4, -6)
+    destSetEdit:SetAutoFocus(false)
+    destSetEdit:SetMaxLetters(255)
+    destSetEdit:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    destSetEdit:SetScript("OnEscapePressed", function(self)
+        self:SetText(DHAir.db.destSetMessage) -- programmatic -> clears dirty via OnTextChanged below
+        self:ClearFocus()
+    end)
+    destSetEdit:SetScript("OnTextChanged", function(self, isUserInput)
+        OnFieldChanged("__destSetMessage", isUserInput)
+    end)
+
+    local destClearedLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    destClearedLabel:SetPoint("TOPLEFT", destSetEdit, "BOTTOMLEFT", -4, -14)
+    destClearedLabel:SetText("Destination Cleared")
+
+    local destClearedEdit = CreateFrame("EditBox", "DHAirDestClearedMsgEdit", panel, "InputBoxTemplate")
+    destClearedEdit:SetSize(330, 20)
+    destClearedEdit:SetPoint("TOPLEFT", destClearedLabel, "BOTTOMLEFT", 4, -6)
+    destClearedEdit:SetAutoFocus(false)
+    destClearedEdit:SetMaxLetters(255)
+    destClearedEdit:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    destClearedEdit:SetScript("OnEscapePressed", function(self)
+        self:SetText(DHAir.db.destClearedMessage) -- programmatic -> clears dirty via OnTextChanged below
+        self:ClearFocus()
+    end)
+    destClearedEdit:SetScript("OnTextChanged", function(self, isUserInput)
+        OnFieldChanged("__destClearedMessage", isUserInput)
+    end)
+
     saveBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
     saveBtn:SetSize(130, 22)
-    saveBtn:SetPoint("TOPLEFT", giScroll, "BOTTOMLEFT", -6, -16)
+    saveBtn:SetPoint("TOPLEFT", destClearedEdit, "BOTTOMLEFT", -4, -16)
     saveBtn:SetText("Save Changes")
     saveBtn:SetScript("OnClick", function()
         for _, info in ipairs(CHANNELS) do
             DHAir.db.messages[info.key].text = rows[info.key].edit:GetText()
         end
         DHAir.db.guildInstructions = giEdit:GetText()
+        DHAir.db.destSetMessage = destSetEdit:GetText()
+        DHAir.db.destClearedMessage = destClearedEdit:GetText()
         textDirty = {}
         RefreshSaveState()
     end)
@@ -555,6 +612,8 @@ local function CreateMessagesPanel(parent)
             DHAir.db.messages[info.key].text = defaultText
         end
         DHAir.db.guildInstructions = DHAir.DEFAULT_GUILD_INSTRUCTIONS
+        DHAir.db.destSetMessage = DHAir.DEFAULT_DEST_SET_MESSAGE
+        DHAir.db.destClearedMessage = DHAir.DEFAULT_DEST_CLEARED_MESSAGE
         textDirty = {}
         panel.Refresh()
     end)
@@ -570,6 +629,12 @@ local function CreateMessagesPanel(parent)
         end
         if not textDirty["__guildInstructions"] then
             giEdit:SetText(DHAir.db.guildInstructions or "")
+        end
+        if not textDirty["__destSetMessage"] then
+            destSetEdit:SetText(DHAir.db.destSetMessage or DHAir.DEFAULT_DEST_SET_MESSAGE)
+        end
+        if not textDirty["__destClearedMessage"] then
+            destClearedEdit:SetText(DHAir.db.destClearedMessage or DHAir.DEFAULT_DEST_CLEARED_MESSAGE)
         end
         RefreshSaveState()
     end

@@ -963,13 +963,17 @@ check("An assistant CAN set someone else's destination",
 check("Riley's entry now carries it", DHAir:QueueNext().destination == "ironforge")
 
 -- The whisper is the whole point of M3 - design D3 calls out that it must
--- say what the destination is, who set it, and how to correct it.
+-- say what the destination is and who set it. Configurable (2026-09-17,
+-- Chris) via db.destSetMessage/db.destClearedMessage (Core.lua defaults,
+-- editable on Config.lua's Messages page) - the default text Chris chose
+-- is informational only, no "whisper me to correct it" invitation, unlike
+-- the old hardcoded wording this replaced.
 local whisper = lastWhisperTo("Riley")
 check("The affected player is whispered in plain chat", whisper ~= nil)
 check("...naming the destination", whisper ~= nil and whisper:find("Ironforge") ~= nil)
 check("...naming who set it", whisper ~= nil and whisper:find("TestChar") ~= nil)
-check("...and telling them how to correct it",
-    whisper ~= nil and whisper:lower():find("whisper me") ~= nil)
+check("...and the default no longer invites a correction",
+    whisper ~= nil and whisper:lower():find("whisper me") == nil)
 
 -- Clearing is the same path, with its own wording.
 check("An assistant can clear someone else's destination",
@@ -977,6 +981,18 @@ check("An assistant can clear someone else's destination",
 check("Riley is undecided again", DHAir:QueueNext().destination == nil)
 check("The clear whispers them too",
     (lastWhisperTo("Riley") or ""):find("cleared") ~= nil)
+
+-- {dest}/{setter} tokens are substituted from whatever template is
+-- currently in db.destSetMessage - covers BOTH this manual "set for
+-- someone else" path and World Buff Mode's automatic Booty Bay tag
+-- (ApplyWorldBuffModeDestination, Invite.lua), since both call this same
+-- function and share one template.
+DHAir.db.destSetMessage = "Custom: go to {dest}, set by {setter}."
+check("A custom template is accepted",
+    DHAir:RequestSetDestinationFor("Riley", "ironforge") == true)
+check("...and its {dest}/{setter} tokens are substituted",
+    lastWhisperTo("Riley") == "Custom: go to Ironforge (Dun Morogh), set by TestChar.")
+DHAir.db.destSetMessage = DHAir.DEFAULT_DEST_SET_MESSAGE
 
 -- Refusals that aren't about permission.
 isLeader, isAssistant = true, false

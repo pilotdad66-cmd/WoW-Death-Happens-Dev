@@ -249,10 +249,14 @@ end
 --
 -- Whispers the affected player in PLAIN CHAT afterwards. That whisper is
 -- the ONLY feedback a non-addon requester ever gets that anything happened
--- at all, so it says three things deliberately: what their destination now
--- is, who set it, and how to correct it. It is sent by the SETTER only -
--- the receive handler in Sync.lua applies the change silently, or every
--- DH-Air client in the raid would whisper the same person at once.
+-- at all. Text comes from db.destSetMessage/db.destClearedMessage
+-- (Core.lua defaults, editable on Config.lua's Messages page) via {dest}/
+-- {setter} substitution - covers this function's own manual "set for
+-- someone else" path AND World Buff Mode's automatic Booty Bay tag
+-- (ApplyWorldBuffModeDestination in Invite.lua), since both call this same
+-- function. It is sent by the SETTER only - the receive handler in
+-- Sync.lua applies the change silently, or every DH-Air client in the
+-- raid would whisper the same person at once.
 function DHAir:RequestSetDestinationFor(name, destId)
     if not name or name == "" then return false end
 
@@ -276,17 +280,16 @@ function DHAir:RequestSetDestinationFor(name, destId)
 
     local short = self:NormalizeName(name)
     local dest = destId and destId ~= "" and self:GetDestination(destId)
+    local setterName = self:NormalizeName(myName)
     if dest then
-        SendChatMessage("[Air Service] Your summon destination is set to "
-            .. dest.label .. " (set by " .. self:NormalizeName(myName)
-            .. "). If that's wrong, just whisper me where you want to go.",
-            "WHISPER", nil, name)
+        local template = (self.db and self.db.destSetMessage) or self.DEFAULT_DEST_SET_MESSAGE
+        local msg = template:gsub("{dest}", dest.label):gsub("{setter}", setterName)
+        SendChatMessage(msg, "WHISPER", nil, name)
         self:Print("Set " .. short .. "'s destination to " .. dest.label .. ".")
     else
-        SendChatMessage("[Air Service] Your summon destination has been cleared by "
-            .. self:NormalizeName(myName)
-            .. ". Whisper me where you'd like to go.",
-            "WHISPER", nil, name)
+        local template = (self.db and self.db.destClearedMessage) or self.DEFAULT_DEST_CLEARED_MESSAGE
+        local msg = template:gsub("{setter}", setterName)
+        SendChatMessage(msg, "WHISPER", nil, name)
         self:Print("Cleared " .. short .. "'s destination.")
     end
 

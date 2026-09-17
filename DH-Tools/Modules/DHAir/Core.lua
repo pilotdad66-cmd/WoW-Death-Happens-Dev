@@ -35,6 +35,22 @@ local DEFAULT_GUILD_INSTRUCTIONS = "World Buffs Soon! Whisper XXXX to me for "
     .. "auto invite and summons. Grab the Flight Path while you're here."
 DHAir.DEFAULT_GUILD_INSTRUCTIONS = DEFAULT_GUILD_INSTRUCTIONS
 
+-- Whisper sent to the affected player when RequestSetDestinationFor
+-- (Queue.lua) sets or clears their destination - the ONLY feedback a
+-- non-addon requester ever gets that anything happened. Configurable
+-- (2026-09-17, Chris) - covers BOTH triggers that call
+-- RequestSetDestinationFor: World Buff Mode's automatic Booty Bay tag
+-- (ApplyWorldBuffModeDestination, Invite.lua) and an officer manually
+-- setting someone's destination from the Board, since both funnel through
+-- that one function. {dest} -> the destination's label, {setter} -> the
+-- summoner who set it (see Queue.lua's gsub). Chris's call: the default
+-- is informational only - no "whisper me to change it" invitation - but
+-- an officer can add that back by editing the text on the Messages page.
+local DEFAULT_DEST_SET_MESSAGE = "[Air Service] Your summon destination is set to {dest} (set by {setter})."
+local DEFAULT_DEST_CLEARED_MESSAGE = "[Air Service] Your summon destination has been cleared by {setter}."
+DHAir.DEFAULT_DEST_SET_MESSAGE = DEFAULT_DEST_SET_MESSAGE
+DHAir.DEFAULT_DEST_CLEARED_MESSAGE = DEFAULT_DEST_CLEARED_MESSAGE
+
 -- Bounds for db.summonTimeout (the stuck-summon fallback - see
 -- @kb:channel-driven-advance). Exported so Config.lua's slider and the
 -- ADDON_LOADED migration below can't disagree about the legal range.
@@ -87,6 +103,11 @@ local defaults = {
     -- DEFAULT_GUILD_INSTRUCTIONS above and Invite.lua's
     -- BroadcastGuildInstructions for the XXXX substitution.
     guildInstructions = DEFAULT_GUILD_INSTRUCTIONS,
+    -- Destination-set/cleared whisper templates (see DEFAULT_DEST_SET_MESSAGE
+    -- above) - local-only, never synced, same reasoning as worldBuffMode:
+    -- only the summoner whose own client sends the whisper ever needs it.
+    destSetMessage = DEFAULT_DEST_SET_MESSAGE,
+    destClearedMessage = DEFAULT_DEST_CLEARED_MESSAGE,
     -- ordered list of { name, summoned, role, queuedAt, destination, note }
     -- `note` is local-only free text and never crosses the wire (D6).
     -- Summoned entries stay here flagged rather than being removed, and are
