@@ -23,10 +23,30 @@ local function CreateOptionsPanel(parent)
     local panel = CreateFrame("Frame", nil, parent)
     panel:SetAllPoints()
 
+    -- 2026-09-17 (Chris-reported): same overflow fix already applied to
+    -- the Messages page - this page's two sections (Member Options +
+    -- Officer/Leader Options) can be taller than the window's resizable
+    -- range guarantees, and a plain Frame never clips/reflows its
+    -- children, so content could render past the window's bottom edge
+    -- when resized down. Wrapped in the same UIPanelScrollFrameTemplate
+    -- idiom the Messages page and Guild Instructions box already use.
+    local scrollFrame = CreateFrame("ScrollFrame", "DHAirOptionsScroll", panel, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
+    scrollFrame:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -28, 4) -- -28: room for the template's scrollbar
+    scrollFrame:EnableMouseWheel(true)
+    scrollFrame:SetScript("OnMouseWheel", function(self, delta)
+        local cur = self:GetVerticalScroll()
+        self:SetVerticalScroll(math.min(math.max(cur - delta * 24, 0), self:GetVerticalScrollRange()))
+    end)
+
+    local scrollChild = CreateFrame("Frame", nil, scrollFrame)
+    scrollChild:SetSize(360, 700)
+    scrollFrame:SetScrollChild(scrollChild)
+
     --------------------------------------------------------------------
     -- Member Options
     --------------------------------------------------------------------
-    local memberTitle = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    local memberTitle = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     memberTitle:SetPoint("TOPLEFT", 16, -16)
     memberTitle:SetText("Member Options")
 
@@ -34,7 +54,7 @@ local function CreateOptionsPanel(parent)
     -- the invite and the queue-join INV can do (Loopi's explicit call,
     -- reversing the 2026-08-05 "INV never queues" decision - see
     -- Invite.lua's HandleWhisper for the full history).
-    local invCheck = CreateFrame("CheckButton", "DHAirInvCheck", panel, "UICheckButtonTemplate")
+    local invCheck = CreateFrame("CheckButton", "DHAirInvCheck", scrollChild, "UICheckButtonTemplate")
     invCheck:SetPoint("TOPLEFT", memberTitle, "BOTTOMLEFT", 0, -12)
     _G[invCheck:GetName() .. "Text"]:SetText("Enable INV Auto-Invite")
     invCheck:SetScript("OnClick", function(self)
@@ -53,7 +73,7 @@ local function CreateOptionsPanel(parent)
     -- (whisper prefix-match AND raid/party chat exact-match both gate on
     -- this - see Invite.lua). The phrase(s) themselves are edited in the
     -- Officer/Leader section below; this is read-only, indented display.
-    local phraseCheck = CreateFrame("CheckButton", "DHAirPhraseCheck", panel, "UICheckButtonTemplate")
+    local phraseCheck = CreateFrame("CheckButton", "DHAirPhraseCheck", scrollChild, "UICheckButtonTemplate")
     phraseCheck:SetPoint("TOPLEFT", invCheck, "BOTTOMLEFT", 0, -8)
     _G[phraseCheck:GetName() .. "Text"]:SetText("Enable Code Phrase Auto-Invite")
     phraseCheck:SetScript("OnClick", function(self)
@@ -67,11 +87,11 @@ local function CreateOptionsPanel(parent)
         DHAir.db.phraseAutoInvite = self:GetChecked() and true or false
     end)
 
-    local phraseListText = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    local phraseListText = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     phraseListText:SetPoint("TOPLEFT", phraseCheck, "BOTTOMLEFT", 24, -2)
     phraseListText:SetJustifyH("LEFT")
 
-    local minimapCheck = CreateFrame("CheckButton", "DHAirMinimapCheck", panel, "UICheckButtonTemplate")
+    local minimapCheck = CreateFrame("CheckButton", "DHAirMinimapCheck", scrollChild, "UICheckButtonTemplate")
     minimapCheck:SetPoint("TOPLEFT", phraseListText, "BOTTOMLEFT", -24, -8)
     _G[minimapCheck:GetName() .. "Text"]:SetText("Show Minimap Button")
     minimapCheck:SetScript("OnClick", function(self)
@@ -87,7 +107,7 @@ local function CreateOptionsPanel(parent)
         end
     end)
 
-    local slider = CreateFrame("Slider", "DHAirTimeoutSlider", panel, "OptionsSliderTemplate")
+    local slider = CreateFrame("Slider", "DHAirTimeoutSlider", scrollChild, "OptionsSliderTemplate")
     slider:SetPoint("TOPLEFT", minimapCheck, "BOTTOMLEFT", 4, -16)
     -- 2026-08-08: was 10-90 in steps of 5, back when this was genuinely
     -- "how long a summon takes". It's now only the stuck-summon fallback
@@ -108,7 +128,7 @@ local function CreateOptionsPanel(parent)
         _G[self:GetName() .. "Text"]:SetText("Stuck Summons Fallback: " .. value .. "s")
     end)
 
-    local shardSlider = CreateFrame("Slider", "DHAirMinShardsSlider", panel, "OptionsSliderTemplate")
+    local shardSlider = CreateFrame("Slider", "DHAirMinShardsSlider", scrollChild, "OptionsSliderTemplate")
     shardSlider:SetPoint("TOPLEFT", slider, "BOTTOMLEFT", 0, -20)
     shardSlider:SetMinMaxValues(0, 6)
     shardSlider:SetValueStep(1)
@@ -138,7 +158,7 @@ local function CreateOptionsPanel(parent)
     -- Config "Reset Queue / Session" button called QueueReset() directly,
     -- LOCAL ONLY with no broadcast, which would have desynced this client
     -- from everyone else exactly like k-0035's bug).
-    local resetQueueBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    local resetQueueBtn = CreateFrame("Button", nil, scrollChild, "UIPanelButtonTemplate")
     resetQueueBtn:SetPoint("TOPLEFT", shardSlider, "BOTTOMLEFT", 4, -16)
     resetQueueBtn:SetText("Reset Queue")
     resetQueueBtn:SetScript("OnClick", function()
@@ -147,12 +167,12 @@ local function CreateOptionsPanel(parent)
         end
     end)
 
-    local printQueueBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    local printQueueBtn = CreateFrame("Button", nil, scrollChild, "UIPanelButtonTemplate")
     printQueueBtn:SetPoint("LEFT", resetQueueBtn, "RIGHT", 8, 0)
     printQueueBtn:SetText("Print Queue")
     printQueueBtn:SetScript("OnClick", function() DHAir:QueueList() end)
 
-    local resetRosterBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    local resetRosterBtn = CreateFrame("Button", nil, scrollChild, "UIPanelButtonTemplate")
     resetRosterBtn:SetPoint("TOPLEFT", resetQueueBtn, "BOTTOMLEFT", 0, -8)
     resetRosterBtn:SetText("Reset Roster")
     resetRosterBtn:SetScript("OnClick", function()
@@ -161,7 +181,7 @@ local function CreateOptionsPanel(parent)
         end
     end)
 
-    local openBoardBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    local openBoardBtn = CreateFrame("Button", nil, scrollChild, "UIPanelButtonTemplate")
     openBoardBtn:SetPoint("LEFT", resetRosterBtn, "RIGHT", 8, 0)
     openBoardBtn:SetText("Open Board")
     openBoardBtn:SetScript("OnClick", function()
@@ -176,20 +196,20 @@ local function CreateOptionsPanel(parent)
     --------------------------------------------------------------------
     -- Divider
     --------------------------------------------------------------------
-    local divider = panel:CreateTexture(nil, "ARTWORK")
+    local divider = scrollChild:CreateTexture(nil, "ARTWORK")
     divider:SetPoint("TOPLEFT", resetRosterBtn, "BOTTOMLEFT", -4, -10)
-    divider:SetPoint("RIGHT", panel, "RIGHT", -16, 0)
+    divider:SetPoint("RIGHT", scrollChild, "RIGHT", -16, 0)
     divider:SetHeight(1)
     divider:SetColorTexture(1, 1, 1, 0.15)
 
     --------------------------------------------------------------------
     -- Officer/Leader Options
     --------------------------------------------------------------------
-    local officerTitle = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    local officerTitle = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     officerTitle:SetPoint("TOPLEFT", divider, "BOTTOMLEFT", 4, -10)
     officerTitle:SetText("Officer/Leader Options")
 
-    local guildOnlyCheck = CreateFrame("CheckButton", "DHAirGuildOnlyCheck", panel, "UICheckButtonTemplate")
+    local guildOnlyCheck = CreateFrame("CheckButton", "DHAirGuildOnlyCheck", scrollChild, "UICheckButtonTemplate")
     guildOnlyCheck:SetPoint("TOPLEFT", officerTitle, "BOTTOMLEFT", 0, -12)
     _G[guildOnlyCheck:GetName() .. "Text"]:SetText("Summon Guild Members Only")
     guildOnlyCheck:SetScript("OnClick", function(self)
@@ -199,13 +219,13 @@ local function CreateOptionsPanel(parent)
         end
     end)
 
-    local phraseLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    local phraseLabel = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     phraseLabel:SetPoint("TOPLEFT", guildOnlyCheck, "BOTTOMLEFT", 0, -12)
     phraseLabel:SetText("Raid Code Phrase(s) (leader/assist only, separate multiple with a comma):")
     phraseLabel:SetWidth(320)
     phraseLabel:SetJustifyH("LEFT")
 
-    local phraseEdit = CreateFrame("EditBox", "DHAirPhraseEdit", panel, "InputBoxTemplate")
+    local phraseEdit = CreateFrame("EditBox", "DHAirPhraseEdit", scrollChild, "InputBoxTemplate")
     phraseEdit:SetSize(220, 20)
     phraseEdit:SetPoint("TOPLEFT", phraseLabel, "BOTTOMLEFT", 6, -12)
     phraseEdit:SetAutoFocus(false)
@@ -251,7 +271,7 @@ local function CreateOptionsPanel(parent)
         RefreshSaveState()
     end)
 
-    saveBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    saveBtn = CreateFrame("Button", nil, scrollChild, "UIPanelButtonTemplate")
     saveBtn:SetSize(60, 22)
     saveBtn:SetPoint("LEFT", phraseEdit, "RIGHT", 8, 0)
     saveBtn:SetText("Save")
@@ -264,11 +284,11 @@ local function CreateOptionsPanel(parent)
     -- uses for its own officer-gated control - hidden entirely for anyone
     -- who isn't rank 0, rather than shown-but-disabled, since a regular
     -- member fiddling with a control they can't use isn't useful UI.
-    local officerLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    local officerLabel = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     officerLabel:SetPoint("TOPLEFT", phraseEdit, "BOTTOMLEFT", -6, -10)
     officerLabel:SetText("Guild officer rank (Guild Master only):")
 
-    local officerDropdown = CreateFrame("Frame", "DHAirOfficerRankDropdown", panel, "UIDropDownMenuTemplate")
+    local officerDropdown = CreateFrame("Frame", "DHAirOfficerRankDropdown", scrollChild, "UIDropDownMenuTemplate")
     officerDropdown:SetPoint("TOPLEFT", officerLabel, "BOTTOMLEFT", -16, -4)
     UIDropDownMenu_SetWidth(officerDropdown, 160)
 
@@ -428,10 +448,17 @@ local function CreateWrapMessageBox(parent, name, anchorTo, xOfs, yOfs, rows, ge
     border:SetBackdrop({ edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 8 })
     border:SetBackdropBorderColor(0.8, 0.8, 0.8, 0.5)
 
+    -- 2026-09-17 (Chris-reported): SetScrollChild anchors edit's TOPLEFT
+    -- flush (0,0) against scroll's own TOPLEFT, but the visible border
+    -- drawn around `bg` (edgeSize=8, wrapping a background that's already
+    -- offset -4px outside scroll) reaches a few px inside that same edge
+    -- - overlapping and clipping the first letter of each wrapped line.
+    -- Inset the text clear of the border instead of leaving it flush.
+    local TEXT_LEFT_INSET = 6
     local edit = CreateFrame("EditBox", name .. "Edit", scroll)
     edit:SetMultiLine(true)
     edit:SetFontObject(ChatFontNormal)
-    edit:SetWidth(292)
+    edit:SetWidth(292 - TEXT_LEFT_INSET)
     edit:SetHeight(100) -- generous scrollable height for up to 255 chars; the visible window is `rows` tall
     edit:SetAutoFocus(false)
     edit:SetMaxLetters(255)
@@ -446,6 +473,10 @@ local function CreateWrapMessageBox(parent, name, anchorTo, xOfs, yOfs, rows, ge
         scroll:SetVerticalScroll(math.min(scroll:GetVerticalScrollRange(), math.max(0, -y - h)))
     end)
     scroll:SetScrollChild(edit)
+    -- Override SetScrollChild's implicit flush (0,0) anchor with the same
+    -- inset, so the text actually starts clear of the border.
+    edit:ClearAllPoints()
+    edit:SetPoint("TOPLEFT", scroll, "TOPLEFT", TEXT_LEFT_INSET, 0)
     scroll:EnableMouseWheel(true)
     scroll:SetScript("OnMouseWheel", function(self, delta)
         local cur = self:GetVerticalScroll()
@@ -627,11 +658,22 @@ local function CreateMessagesPanel(parent)
     -- a single-line box. Switched to CreateWrapMessageBox - the same
     -- bordered, scrollable, word-wrapped box Guild Instructions uses.
     local destTitle = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    destTitle:SetPoint("TOPLEFT", giBg, "BOTTOMLEFT", 2, -16)
+    -- 2026-09-17 (Chris-reported): each element below anchors its TOP to
+    -- the previous element's BOTTOM (for stacking) but its LEFT
+    -- independently to `hint` (this page's stable left margin), instead
+    -- of chaining a single TOPLEFT off the previous element's own
+    -- (already-shifted) left edge. That old chain let a small per-element
+    -- x-offset compound into visible leftward drift down the section -
+    -- worse the further down the chain (Destination Cleared drifted
+    -- roughly twice as far left as Destination Set). Anchoring LEFT to a
+    -- fixed reference every time means it can no longer compound.
+    destTitle:SetPoint("TOP", giBg, "BOTTOM", 0, -16)
+    destTitle:SetPoint("LEFT", hint, "LEFT", 6, 0)
     destTitle:SetText("Destination Whisper")
 
     local destHint = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    destHint:SetPoint("TOPLEFT", destTitle, "BOTTOMLEFT", -2, -4)
+    destHint:SetPoint("TOP", destTitle, "BOTTOM", 0, -4)
+    destHint:SetPoint("LEFT", hint, "LEFT", 0, 0)
     destHint:SetPoint("RIGHT", scrollChild, "RIGHT", -10, 0)
     destHint:SetJustifyH("LEFT")
     destHint:SetText("Sent to whoever's destination is set or cleared for them (Board, or World Buff "
@@ -639,14 +681,16 @@ local function CreateMessagesPanel(parent)
     destHint:SetWordWrap(true)
 
     local destSetLabel = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    destSetLabel:SetPoint("TOPLEFT", destHint, "BOTTOMLEFT", 2, -8)
+    destSetLabel:SetPoint("TOP", destHint, "BOTTOM", 0, -8)
+    destSetLabel:SetPoint("LEFT", hint, "LEFT", 6, 0)
     destSetLabel:SetText("Destination Set")
 
     local destSetEdit, destSetBg = CreateWrapMessageBox(scrollChild, "DHAirDestSetMsg", destSetLabel, 0, -8, 2,
         function() return DHAir.db.destSetMessage end, OnFieldChanged, "__destSetMessage")
 
     local destClearedLabel = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    destClearedLabel:SetPoint("TOPLEFT", destSetBg, "BOTTOMLEFT", -2, -14)
+    destClearedLabel:SetPoint("TOP", destSetBg, "BOTTOM", 0, -14)
+    destClearedLabel:SetPoint("LEFT", hint, "LEFT", 6, 0)
     destClearedLabel:SetText("Destination Cleared")
 
     local destClearedEdit, destClearedBg = CreateWrapMessageBox(scrollChild, "DHAirDestClearedMsg", destClearedLabel, 0, -8, 2,
@@ -654,7 +698,8 @@ local function CreateMessagesPanel(parent)
 
     saveBtn = CreateFrame("Button", nil, scrollChild, "UIPanelButtonTemplate")
     saveBtn:SetSize(130, 22)
-    saveBtn:SetPoint("TOPLEFT", destClearedBg, "BOTTOMLEFT", -2, -16)
+    saveBtn:SetPoint("TOP", destClearedBg, "BOTTOM", 0, -16)
+    saveBtn:SetPoint("LEFT", hint, "LEFT", 0, 0)
     saveBtn:SetText("Save Changes")
     saveBtn:SetScript("OnClick", function()
         for _, info in ipairs(CHANNELS) do
