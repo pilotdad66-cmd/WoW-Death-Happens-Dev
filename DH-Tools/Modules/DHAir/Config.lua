@@ -394,6 +394,67 @@ local function CreateChannelRow(parent, baseline, channelKey, channelLabel, rowI
     return check, edit
 end
 
+-- Small reusable wrapping multi-line text box (bordered, scrollable,
+-- word-wrapped) - same ScrollFrame/backdrop-border idiom Guild
+-- Instructions below already uses, factored out so the Destination
+-- Whisper fields further down (2026-09-18, Loopi-reported: the original
+-- single-line boxes were too narrow for those longer templates and the
+-- text ran off the edge) don't duplicate that boilerplate a second and
+-- third time. Guild Instructions itself is left as its own hand-built
+-- copy rather than migrated onto this helper, to avoid touching working,
+-- in-game-confirmed code while fixing an unrelated bug.
+-- Returns (edit, bottomAnchor) - bottomAnchor is the decorative
+-- background texture, which extends a few px past the scroll frame's own
+-- edges, so the CALLER anchors whatever comes next to bottomAnchor, not
+-- to the scroll frame directly (same convention giBg/giScroll already
+-- follow below).
+local function CreateWrapMessageBox(parent, name, anchorTo, xOfs, yOfs, rows, getDefaultValue, onFieldChanged, fieldKey)
+    local ROW_H = 18
+    local TOP_PAD = math.floor(ROW_H * 1.2 + 0.5) -- ~22px breathing room above the text, same as GI_TOP_PAD below
+    local visibleHeight = rows * ROW_H
+
+    local scroll = CreateFrame("ScrollFrame", name .. "Scroll", parent, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", anchorTo, "BOTTOMLEFT", xOfs, yOfs)
+    scroll:SetSize(292, visibleHeight)
+
+    local bg = parent:CreateTexture(nil, "BACKGROUND")
+    bg:SetPoint("TOPLEFT", scroll, -4, 4 + TOP_PAD)
+    bg:SetPoint("BOTTOMRIGHT", scroll, 22, -4) -- extra room for the template's scrollbar
+    bg:SetColorTexture(0, 0, 0, 0.3)
+
+    local border = CreateFrame("Frame", name .. "Border", parent, "BackdropTemplate")
+    border:SetPoint("TOPLEFT", bg, "TOPLEFT", 0, 0)
+    border:SetPoint("BOTTOMRIGHT", bg, "BOTTOMRIGHT", 0, 0)
+    border:SetBackdrop({ edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 8 })
+    border:SetBackdropBorderColor(0.8, 0.8, 0.8, 0.5)
+
+    local edit = CreateFrame("EditBox", name .. "Edit", scroll)
+    edit:SetMultiLine(true)
+    edit:SetFontObject(ChatFontNormal)
+    edit:SetWidth(292)
+    edit:SetHeight(100) -- generous scrollable height for up to 255 chars; the visible window is `rows` tall
+    edit:SetAutoFocus(false)
+    edit:SetMaxLetters(255)
+    edit:SetScript("OnEscapePressed", function(self)
+        self:SetText(getDefaultValue()) -- programmatic -> clears dirty via OnTextChanged below
+        self:ClearFocus()
+    end)
+    edit:SetScript("OnTextChanged", function(self, isUserInput)
+        onFieldChanged(fieldKey, isUserInput)
+    end)
+    edit:SetScript("OnCursorChanged", function(self, x, y, w, h)
+        scroll:SetVerticalScroll(math.min(scroll:GetVerticalScrollRange(), math.max(0, -y - h)))
+    end)
+    scroll:SetScrollChild(edit)
+    scroll:EnableMouseWheel(true)
+    scroll:SetScript("OnMouseWheel", function(self, delta)
+        local cur = self:GetVerticalScroll()
+        self:SetVerticalScroll(math.min(math.max(cur - delta * 18, 0), self:GetVerticalScrollRange()))
+    end)
+
+    return edit, bg
+end
+
 local function CreateMessagesPanel(parent)
     local panel = CreateFrame("Frame", nil, parent)
     panel:SetAllPoints()
@@ -402,9 +463,39 @@ local function CreateMessagesPanel(parent)
     title:SetPoint("TOPLEFT", 16, -16)
     title:SetText("Messages")
 
-    local hint = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    hint:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
-    hint:SetPoint("RIGHT", -16, 0)
+    -- 2026-09-18 (Loopi-reported): this page's content (5 channel rows +
+    -- Guild Instructions + the Destination Whisper section below) is
+    -- taller than the config window's resizable range can guarantee -
+    -- resizing the window down let the bottom of the page (Save Changes /
+    -- Restore Default Messages, sometimes more) render past the window's
+    -- own edge, since a plain Frame never clips or reflows its children.
+    -- Fix: everything but the fixed `title` header now lives inside a
+    -- scrolling region (same UIPanelScrollFrameTemplate idiom the Board's
+    -- row list and this page's own Guild Instructions box already use)
+    -- instead of directly on `panel`, so it scrolls internally and can
+    -- never spill outside the window regardless of how small the window
+    -- gets resized.
+    local scrollFrame = CreateFrame("ScrollFrame", "DHAirMessagesScroll", panel, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -10)
+    scrollFrame:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -28, 4) -- -28: room for the template's scrollbar
+    scrollFrame:EnableMouseWheel(true)
+    scrollFrame:SetScript("OnMouseWheel", function(self, delta)
+        local cur = self:GetVerticalScroll()
+        self:SetVerticalScroll(math.min(math.max(cur - delta * 24, 0), self:GetVerticalScrollRange()))
+    end)
+
+    -- Fixed width rather than derived from scrollFrame:GetWidth() (which
+    -- would need its own OnSizeChanged re-layout on every window resize) -
+    -- matches the widest existing content (the 330px channel edit boxes)
+    -- plus this page's margins. Height is generous headroom for every
+    -- section below, not a tight fit - unused space just scrolls past.
+    local scrollChild = CreateFrame("Frame", nil, scrollFrame)
+    scrollChild:SetSize(360, 800)
+    scrollFrame:SetScrollChild(scrollChild)
+
+    local hint = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    hint:SetPoint("TOPLEFT", 0, 0)
+    hint:SetPoint("RIGHT", scrollChild, "RIGHT", -10, 0)
     hint:SetJustifyH("LEFT")
     hint:SetText("Use {target} anywhere in a message - it will be replaced with the player's name. "
         .. "\"Whisper to Target\" sends privately to the player being summoned instead of a chat channel.")
@@ -431,7 +522,7 @@ local function CreateMessagesPanel(parent)
     end
 
     for i, info in ipairs(CHANNELS) do
-        local check, edit = CreateChannelRow(panel, hint, info.key, info.label, i, OnFieldChanged)
+        local check, edit = CreateChannelRow(scrollChild, hint, info.key, info.label, i, OnFieldChanged)
         rows[info.key] = { check = check, edit = edit }
     end
 
@@ -451,7 +542,7 @@ local function CreateMessagesPanel(parent)
     -- normal 16px margin, further left than everything else on the page)
     -- with no gap below the last channel row above it - moved to match the
     -- row content's own indent and given breathing room below that row.
-    local giTitle = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    local giTitle = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     giTitle:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", 6, lastRowBottom - 10)
     giTitle:SetText("Guild Instructions")
 
@@ -460,7 +551,7 @@ local function CreateMessagesPanel(parent)
     -- row content's own indent), and this added ANOTHER +6 on top of
     -- that (compounding to +12 total). 0 here now matches giTitle's own
     -- left edge exactly, same as the channel rows' edit boxes.
-    local giScroll = CreateFrame("ScrollFrame", "DHAirGuildInstructionsScroll", panel, "UIPanelScrollFrameTemplate")
+    local giScroll = CreateFrame("ScrollFrame", "DHAirGuildInstructionsScroll", scrollChild, "UIPanelScrollFrameTemplate")
     giScroll:SetPoint("TOPLEFT", giTitle, "BOTTOMLEFT", 0, -8)
     giScroll:SetSize(310, 54) -- ~3 wrapped lines visible; scrolls for more (unconfirmed in-game)
 
@@ -477,7 +568,7 @@ local function CreateMessagesPanel(parent)
     local GI_ROW_HEIGHT = 18
     local GI_TOP_PAD = math.floor(GI_ROW_HEIGHT * 1.2 + 0.5) -- ~22px
 
-    local giBg = panel:CreateTexture(nil, "BACKGROUND")
+    local giBg = scrollChild:CreateTexture(nil, "BACKGROUND")
     giBg:SetPoint("TOPLEFT", giScroll, -4, 4 + GI_TOP_PAD)
     giBg:SetPoint("BOTTOMRIGHT", giScroll, 22, -4) -- extra room for the template's scrollbar
     giBg:SetColorTexture(0, 0, 0, 0.3)
@@ -490,7 +581,7 @@ local function CreateMessagesPanel(parent)
     -- border that scales to any frame size, so it's a legitimate style
     -- match (rounded corners, thin light edge) even though the exact
     -- texture differs from the single-line boxes' pill asset.
-    local giBorder = CreateFrame("Frame", "DHAirGuildInstructionsBorder", panel, "BackdropTemplate")
+    local giBorder = CreateFrame("Frame", "DHAirGuildInstructionsBorder", scrollChild, "BackdropTemplate")
     giBorder:SetPoint("TOPLEFT", giBg, "TOPLEFT", 0, 0)
     giBorder:SetPoint("BOTTOMRIGHT", giBg, "BOTTOMRIGHT", 0, 0)
     giBorder:SetBackdrop({
@@ -527,60 +618,43 @@ local function CreateMessagesPanel(parent)
     -- RequestSetDestinationFor (Queue.lua) sends when someone else's
     -- destination is set or cleared, covering both that manual Board path
     -- and World Buff Mode's automatic Booty Bay tag (same shared
-    -- function - see Queue.lua's comment). Two single-line fields, no
-    -- enable checkbox (unlike the channel rows above) - this whisper is
-    -- the requester's only feedback, not an optional announcement.
-    local destTitle = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    destTitle:SetPoint("TOPLEFT", giScroll, "BOTTOMLEFT", 2, -16)
+    -- function - see Queue.lua's comment). No enable checkbox (unlike the
+    -- channel rows above) - this whisper is the requester's only feedback,
+    -- not an optional announcement.
+    -- 2026-09-18 (Loopi-reported): these started as single-line
+    -- InputBoxTemplate fields like the channel rows above, but the default
+    -- text is much longer than a channel message and ran off the edge of
+    -- a single-line box. Switched to CreateWrapMessageBox - the same
+    -- bordered, scrollable, word-wrapped box Guild Instructions uses.
+    local destTitle = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    destTitle:SetPoint("TOPLEFT", giBg, "BOTTOMLEFT", 2, -16)
     destTitle:SetText("Destination Whisper")
 
-    local destHint = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    local destHint = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     destHint:SetPoint("TOPLEFT", destTitle, "BOTTOMLEFT", -2, -4)
-    destHint:SetPoint("RIGHT", -16, 0)
+    destHint:SetPoint("RIGHT", scrollChild, "RIGHT", -10, 0)
     destHint:SetJustifyH("LEFT")
     destHint:SetText("Sent to whoever's destination is set or cleared for them (Board, or World Buff "
         .. "Mode's automatic Booty Bay tag). Use {dest} for the destination name and {setter} for who set it.")
     destHint:SetWordWrap(true)
 
-    local destSetLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    local destSetLabel = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     destSetLabel:SetPoint("TOPLEFT", destHint, "BOTTOMLEFT", 2, -8)
     destSetLabel:SetText("Destination Set")
 
-    local destSetEdit = CreateFrame("EditBox", "DHAirDestSetMsgEdit", panel, "InputBoxTemplate")
-    destSetEdit:SetSize(330, 20)
-    destSetEdit:SetPoint("TOPLEFT", destSetLabel, "BOTTOMLEFT", 4, -6)
-    destSetEdit:SetAutoFocus(false)
-    destSetEdit:SetMaxLetters(255)
-    destSetEdit:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
-    destSetEdit:SetScript("OnEscapePressed", function(self)
-        self:SetText(DHAir.db.destSetMessage) -- programmatic -> clears dirty via OnTextChanged below
-        self:ClearFocus()
-    end)
-    destSetEdit:SetScript("OnTextChanged", function(self, isUserInput)
-        OnFieldChanged("__destSetMessage", isUserInput)
-    end)
+    local destSetEdit, destSetBg = CreateWrapMessageBox(scrollChild, "DHAirDestSetMsg", destSetLabel, 0, -8, 2,
+        function() return DHAir.db.destSetMessage end, OnFieldChanged, "__destSetMessage")
 
-    local destClearedLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    destClearedLabel:SetPoint("TOPLEFT", destSetEdit, "BOTTOMLEFT", -4, -14)
+    local destClearedLabel = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    destClearedLabel:SetPoint("TOPLEFT", destSetBg, "BOTTOMLEFT", -2, -14)
     destClearedLabel:SetText("Destination Cleared")
 
-    local destClearedEdit = CreateFrame("EditBox", "DHAirDestClearedMsgEdit", panel, "InputBoxTemplate")
-    destClearedEdit:SetSize(330, 20)
-    destClearedEdit:SetPoint("TOPLEFT", destClearedLabel, "BOTTOMLEFT", 4, -6)
-    destClearedEdit:SetAutoFocus(false)
-    destClearedEdit:SetMaxLetters(255)
-    destClearedEdit:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
-    destClearedEdit:SetScript("OnEscapePressed", function(self)
-        self:SetText(DHAir.db.destClearedMessage) -- programmatic -> clears dirty via OnTextChanged below
-        self:ClearFocus()
-    end)
-    destClearedEdit:SetScript("OnTextChanged", function(self, isUserInput)
-        OnFieldChanged("__destClearedMessage", isUserInput)
-    end)
+    local destClearedEdit, destClearedBg = CreateWrapMessageBox(scrollChild, "DHAirDestClearedMsg", destClearedLabel, 0, -8, 2,
+        function() return DHAir.db.destClearedMessage end, OnFieldChanged, "__destClearedMessage")
 
-    saveBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    saveBtn = CreateFrame("Button", nil, scrollChild, "UIPanelButtonTemplate")
     saveBtn:SetSize(130, 22)
-    saveBtn:SetPoint("TOPLEFT", destClearedEdit, "BOTTOMLEFT", -4, -16)
+    saveBtn:SetPoint("TOPLEFT", destClearedBg, "BOTTOMLEFT", -2, -16)
     saveBtn:SetText("Save Changes")
     saveBtn:SetScript("OnClick", function()
         for _, info in ipairs(CHANNELS) do
@@ -600,7 +674,7 @@ local function CreateMessagesPanel(parent)
     -- widget text directly (bypassing panel.Refresh's dirty-guard below on
     -- purpose - restoring defaults should always win over an in-progress
     -- edit, unlike a routine page-revisit refresh).
-    local resetBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    local resetBtn = CreateFrame("Button", nil, scrollChild, "UIPanelButtonTemplate")
     resetBtn:SetSize(180, 22)
     resetBtn:SetPoint("TOPLEFT", saveBtn, "BOTTOMLEFT", 0, -10)
     resetBtn:SetText("Restore Default Messages")
