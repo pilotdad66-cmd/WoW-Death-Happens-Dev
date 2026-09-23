@@ -1612,6 +1612,53 @@ check("An ADD from a never-seen (version-unknown) sender still propagates",
     Watcher:QueueWaitingCount() == 1 and Watcher.db.queue[1].name == "Oswin")
 
 --------------------------------------------------------------------------
+-- Section: role rides along in the ADD payload (2026-09-17, Option 1 fix
+-- for the live-reported queue-visibility desync bug) - a receiver must
+-- use the SENDER's own role even when it never learned that sender was
+-- registered, since re-deriving a REMOTE player's role from this
+-- client's own (possibly incomplete) local roster is exactly what let a
+-- queue entry silently lose its D5 summoner/clicker protection on just
+-- one client while looking fine on every other.
+--------------------------------------------------------------------------
+print("== ADD carries the sender's role even when REGISTER never arrived ==")
+ResetWorld()
+local Sender = NewClient("Sender")
+local Blind = NewClient("Blind") -- never learns Sender is registered
+groupRoster = { "Sender", "Blind" }
+shardCounts.Sender, shardCounts.Blind = 10, 10
+
+pendingNetwork = {}
+As("Sender", function() Sender:SetRole("summoner", true) end)
+-- Drop the REGISTER broadcast before delivery - simulates Blind's local
+-- roster staying ignorant of Sender's registration (a missed message, a
+-- late joiner who hasn't synced yet, etc.) while the ADD (also sent by
+-- SetRole -> SelfJoinQueue) still gets through.
+for i = #pendingNetwork, 1, -1 do
+    if pendingNetwork[i].text:match("^REGISTER|") then
+        table.remove(pendingNetwork, i)
+    end
+end
+FlushNetwork()
+
+check("Blind never learned Sender is a registered summoner",
+    not Blind:IsRegistered("summoner", "Sender"))
+check("...yet Blind's copy of Sender's queue entry still shows role=summoner",
+    Blind.db.queue[1] and Blind.db.queue[1].name == "Sender"
+        and Blind.db.queue[1].role == "summoner")
+
+-- The payoff: SortedQueue's summoned-entry filter (D5/D8) keys off that
+-- role, so this is what actually kept the row from vanishing on the
+-- affected client once it got marked summoned.
+As("Blind", function() Blind:QueueMarkSummoned("Sender") end)
+local ordered = Blind:SortedQueue("wait", "desc")
+local stillVisible = false
+for _, e in ipairs(ordered) do
+    if e.name == "Sender" then stillVisible = true end
+end
+check("A summoned-but-still-registered summoner's row survives on Blind's Board too",
+    stillVisible)
+
+--------------------------------------------------------------------------
 print("")
 print(string.format("RESULTS: %d passed, %d failed", PASS, FAIL))
 if FAIL > 0 then

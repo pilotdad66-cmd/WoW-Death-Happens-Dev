@@ -14,7 +14,14 @@
 --                               PREFIX bump. Informational only (PrintPeers) since the
 --                               2026-09-15 removal of the MIN_QUEUE_VERSION floor - see the
 --                               removal note near that constant's former home below.
---   ADD|Name                  - a player was queued locally; peers should add them too.
+--   ADD|Name|Role              - a player was queued locally; peers should add them too.
+--                               Role (2026-09-17, "summoner"/"clicker"/"") rides along from
+--                               the sender instead of each receiver re-deriving it from its
+--                               own local roster - that local re-derivation could silently
+--                               come out nil on one client while correct on another, which
+--                               was dropping the D5 summoner/clicker protection on just that
+--                               client's copy of the entry. A missing "|" (pre-fix sender) is
+--                               still accepted; the whole payload is then treated as Name.
 --                               Used to be dropped receive-side below a MIN_QUEUE_VERSION
 --                               floor; that floor compared DHAir.VERSION, which the
 --                               2026-08-20 DH-Air-into-DH-Tools merge repointed at DH-Tools'
@@ -371,7 +378,12 @@ end
 
 function DHAir:Sync_BroadcastAdd(name)
     if self:Sync_IsActive() then
-        self:Sync_Send("ADD", name)
+        -- 2026-09-17 (Loopi): role now rides along in the ADD payload
+        -- (Option 1 fix for the queue-visibility desync bug) instead of
+        -- being locally re-derived by every receiver - see the ADD
+        -- receive handler below.
+        local role = (self.EffectiveRole and self:EffectiveRole(name)) or ""
+        self:Sync_Send("ADD", name .. "|" .. role)
     end
 end
 
@@ -704,13 +716,22 @@ function DHAir:Sync_OnAddonMessage(prefix, message, channel, sender)
         end
 
     elseif msgType == "ADD" then
-        local name = rest
+        -- 2026-09-17 (Loopi): payload is now "Name|Role" (Option 1 fix) -
+        -- role rides along from the sender instead of being re-derived
+        -- from this client's own (possibly incomplete) local roster,
+        -- which was letting a queue entry silently lose its D5
+        -- summoner/clicker protection on some clients. role may be ""
+        -- (sender has no role) and the "|" is omitted entirely by a
+        -- pre-fix sender, hence the fallback below.
+        local name, role = rest:match("^(.-)|(.*)$")
+        if not name then name = rest end
+        if role == "" then role = nil end
         if name ~= "" then
             -- 2026-09-15: the MIN_QUEUE_VERSION floor that used to gate
             -- this receive-side (see this file's header comment and the
             -- removal note near where the constant used to live) is gone -
             -- every ADD broadcast is applied unconditionally now.
-            self:QueueAdd(name) -- QueueAdd itself doesn't re-broadcast, so no echo loop
+            self:QueueAdd(name, nil, role) -- QueueAdd itself doesn't re-broadcast, so no echo loop
         end
 
     elseif msgType == "CLAIM" then

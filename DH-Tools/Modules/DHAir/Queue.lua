@@ -23,10 +23,21 @@ end
 -- re-summon is strictly better than a blocked join: a wasted shard is
 -- cheap and visible, silent exclusion is neither. A guard here may INFORM
 -- the Warlock; it must never refuse the requester.
-function DHAir:QueueAdd(name, note)
+-- roleOverride (2026-09-17, Option 1 fix): an explicit trailing arg, read
+-- via `...` so a caller can distinguish "use MY authoritative role" (pass
+-- it, even as nil/"") from "derive it locally" (omit it entirely - the
+-- self-service call sites below, where local EffectiveRole derivation is
+-- correct because it's about THIS client's own role). The Sync.lua ADD
+-- receive handler always passes it (possibly nil), because deriving a
+-- REMOTE player's role from this client's own local roster copy is
+-- exactly the bug this fixes - it can silently come out nil here even
+-- when the sender is genuinely registered.
+function DHAir:QueueAdd(name, note, ...)
     if not name or name == "" then return false end
     local db = self.db
     local short = self:NormalizeName(name)
+    local hasRoleOverride = select('#', ...) > 0
+    local roleOverride = select(1, ...)
 
     for _, entry in ipairs(db.queue) do
         if self:NormalizeName(entry.name) == short then
@@ -44,7 +55,11 @@ function DHAir:QueueAdd(name, note)
             entry.queuedAt = GetTime()
             entry.destination = nil
             entry.note = note
-            entry.role = (self.EffectiveRole and self:EffectiveRole(name)) or entry.role
+            if hasRoleOverride then
+                entry.role = roleOverride
+            else
+                entry.role = (self.EffectiveRole and self:EffectiveRole(name)) or entry.role
+            end
             self:Print(short .. " re-joined the summon queue (previously summoned "
                 .. math.floor(waitedAgo / 60) .. "m ago).")
             if self.TrySummonNext then
@@ -57,7 +72,7 @@ function DHAir:QueueAdd(name, note)
     table.insert(db.queue, {
         name = name,
         summoned = false,
-        role = self.EffectiveRole and self:EffectiveRole(name) or nil,
+        role = hasRoleOverride and roleOverride or (self.EffectiveRole and self:EffectiveRole(name) or nil),
         queuedAt = GetTime(),
         note = note,
     })
