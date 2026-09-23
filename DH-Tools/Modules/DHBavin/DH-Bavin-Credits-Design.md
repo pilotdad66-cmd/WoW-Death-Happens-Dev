@@ -10,8 +10,31 @@ into CM1; two separate test lists gating the inbox and outgoing hooks
 independently; audit trail expanded to three visibility tiers with
 per-role retention; double-spend accepted with Chris's reasoning;
 CM9 cutover milestone added. See "Test strategy" and "Audit trail".)
+updated: 2026-09-22 (Chris raised three real-world gaps in a design
+discussion, no code written: alt-identity needs an officer-visible
+view/edit UI on top of GRM auto-resolution, plus a player-submitted-
+but-officer-approved self-service path; the Reputation-report/Discord-
+name identity mismatch folds into the same reconciliation queue; a new
+full-ledger CSV/XLSX export requirement, to ship as a standalone
+Windows executable Bavin/officers run themselves, not a script Chris
+or Claude has to run; and a test/live data-reset + version-gating
+discussion for CM9 cutover. See new sections below. Chris is still
+waiting on an actual spreadsheet export from Bavin before CM2's
+report-parser spec can be finalized - treat that section as
+provisional until then.)
+updated: 2026-09-22 (same session, follow-up after reviewing Bavin's
+real intake files with Claude: confirmed identity is a three-level
+Discord-name/main-character/alt-character hierarchy, not a two-level
+one; confirmed the export tool's job is plain CSV/XLSX only, never
+Discord-post formatting; clarified `Dhstorage`-style characters are
+ordinary storage alts, no special handling; and corrected the
+donation-growth estimate from the real ~73,500-row file, reopening
+part of the 2026-09-03 no-backfill decision for the officer-side
+store. See "Alt-identity management" and the new "Full audit trail &
+weekly category reporting" section.)
 status: PROPOSED - scoped with Chris 2026-08-31, test strategy added
-2026-09-03, pending his + Bavin's sign-off. No code written yet
+2026-09-03, three more discussion topics added 2026-09-22 - all
+pending his + Bavin's sign-off. No code written yet
 (README §14, ARCHITECTURE FIRST).
 
 ## Concept
@@ -275,13 +298,35 @@ dependency on the processor's client for every single officer mail.
 Decision closed - not revisiting unless the outgoing flow shows a
 problem in practice.
 
-## Open questions - still need Bavin's input
+## Open questions - still need Bavin's and/or Chris's input
 
-None remaining - the last open item (mail-session push boundary) was
-confirmed 2026-08-31: `MAIL_CLOSED` on Bavin's incoming side, per-send
-on the outgoing side. All decisions above are settled pending Chris's
-and Bavin's final sign-off on the plan as a whole; CM1/CM2 are ready
-to start.
+The core 2026-08-31/2026-09-03 plan has no open items of its own - the
+last one (mail-session push boundary) was confirmed 2026-08-31:
+`MAIL_CLOSED` on Bavin's incoming side, per-send on the outgoing side.
+**2026-09-22 additions, updated as they resolved:**
+- ~~Whether the Reputation-report matches this doc's parser format~~ -
+  resolved: real intake files reviewed with Chris (see "Alt-identity
+  management" and "Full audit trail" sections). Still pending: the
+  actual Discord-name -> main -> alts mapping file itself, which Chris
+  will add to `intake\` before testing starts - CM2's exact resolution
+  logic stays provisional until it's in hand.
+- ~~Discord-post generation vs. clean-data export~~ - resolved: the
+  export tool produces plain CSV/XLSX only; Bavin's own downstream
+  process still turns that into the actual Discord post, same as
+  today.
+- Export tool language/library choice (Go vs. C#) - see Data export.
+- Export tool distribution point (GitHub release asset vs. something
+  else) - see Data export.
+- Version-floor gate: hard-block vs. warn-only when a client is below
+  `MIN_CREDIT_VERSION` - see Test/live data reset & version gating.
+- ~~Bounded in-game history window + export-as-archive~~ - confirmed
+  2026-09-22 (see "Full audit trail & weekly category reporting").
+  Exact window length (6-8 weeks proposed) still tunable in CM1.
+
+All prior decisions (2026-08-31, 2026-09-03, 2026-09-22) are settled;
+CM1/CM2 are ready to start once the Discord-name -> main -> alts
+mapping file is in hand and Bavin's formal sign-off on the plan as a
+whole is reconfirmed (last confirmed pending 2026-09-14).
 
 ## Data model (proposal)
 
@@ -521,6 +566,254 @@ about scale rather than correctness:
 Tier/prestige math, the report parser, and the sync layer are all
 testable headless and don't depend on either gap.
 
+## Alt-identity management & Reputation-report reconciliation (raised 2026-09-22, Chris - no code yet)
+
+Two real gaps in the 2026-08-31 alt-linking plan, surfaced by Chris in
+a design discussion:
+
+**Gap 1 - an out-of-guild alt has no GRM record at all.** GRM's
+alt-linking data is built from the guild's own roster, so a character
+that donates but has never been in Death Happens - a common case, per
+Chris - is invisible to `GRM.GetPlayerMain()` no matter how long GRM
+has been running. The existing fallback chain (manual override, then
+GRM, then treat as its own main - see Data model) already handles this
+mechanically, but it was designed as a quiet failure path, not a
+workflow - nobody currently has a reason to notice an out-of-guild
+donor got silently treated as their own separate identity instead of
+being folded into their main's balance.
+
+**Real complication, clarified 2026-09-22 against real intake data:
+identity is three levels, not two.** The canonical "who gets credit"
+identity is often a **Discord name**, not any in-game character name
+at all - confirmed against Bavin's actual Discord post sample. The
+real hierarchy is:
+
+    Discord name -> main character name -> alt character names
+
+and the Discord name is frequently (not always) also one of the
+character names - which is exactly what made this look like a
+hand-entry mistake before real data was in hand. It isn't one. GRM's
+`GetPlayerMain()` only ever resolves the bottom link (alt character ->
+main character); it has no concept of Discord identity, so it can
+never supply the top link by itself. **Bavin is providing a separate
+Discord-name -> main -> alts mapping file before testing starts**
+(Chris will add it to `intake\` once received) - format and
+completeness are unknown until then, so CM2's exact resolution logic
+stays provisional (see Open questions).
+
+**Resolved direction: canonical ledger identity keys on Discord name
+when known, main-character name as fallback.** A person's ledger
+record keys on whichever identity is most durable for them: their
+Discord name if the mapping links one, otherwise the resolved main
+character name. Both link levels need to be visible and editable in
+one place, not just the alt-to-main level originally scoped:
+
+- **View:** every resolved identity - Discord name (if linked), main
+  character, and full alt list, however each link was made (GRM,
+  manual override, or the mapping-file import) - listed and editable
+  by a Designated Officer or Bavin at any time. This is the "see and
+  edit the data" capability Chris asked for, on top of automatic GRM
+  resolution, not instead of it.
+- **Manual link, officer-added:** unchanged from the existing
+  manual-override table in Data model, now covering both link levels
+  (character->main, and main->Discord) - the fallback for anything GRM
+  doesn't know (GRM can never supply the Discord level at all).
+- **Self-service link, new:** a slash command (e.g. `/dhb linkalt
+  <charname>`) lets a player register their own alt. It writes to a
+  **separate pending-links table**, not the live manual-override
+  table, and has zero effect on point/credit resolution until an
+  officer approves it from the Alt-Link Manager. Rejected entries are
+  simply dropped - the "not live until officer review" behavior Chris
+  asked for.
+- **Mapping-file import reconciliation:** once Bavin's file is in
+  hand, CM2's parser seeds all three levels at once. Any row that
+  doesn't cleanly resolve (an alt GRM has never heard of, a Discord
+  name with no obvious character match) drops into the same review
+  queue as a pending self-service link, tagged with its raw source
+  text, for an officer to resolve once using their own knowledge of
+  the guild.
+
+**Storage alts are ordinary alts - no special handling.** Clarified
+2026-09-22: `Dhstorage` (seen as a "From" donor in the raw CSV) is a
+real member's own dedicated storage/bank alt - this game version has
+no true guild bank, so members park low-level alts in a city to hold
+items instead. It resolves through the same alt-linking as any other
+character; nothing distinguishes it in the data model.
+
+This extends CM2 (three-level parser + review-queue plumbing) and adds
+a small UI surface to CM7 alongside the existing audit-trail views,
+rather than opening a new milestone.
+
+## Data export - new requirement (2026-09-22, Chris)
+
+Chris wants the full ledger (and ideally the transaction log)
+exportable to CSV/XLSX, with a constraint that shapes the whole
+approach: **it has to run without him or Claude involved.** He
+travels for work and is off-grid for weeks at a time; Bavin doesn't
+use AI tools. An officer needs to be able to run this alone, any time,
+on their own PC.
+
+**Confirmed 2026-09-22: plain CSV/XLSX, not a formatted Discord
+post.** Bavin doesn't use markdown. The tool's job stops at clean
+tabular data - whatever script turns that into the actual Discord post
+text (his today, possibly ours later if it's ever worth building) is
+explicitly out of scope here.
+
+**Why this can't be an in-addon feature alone.** WoW's addon sandbox
+has no file-system write access beyond SavedVariables (which only the
+game client itself writes, on logout) - an addon cannot produce a
+.csv or .xlsx file directly. Bavin's existing in-game copy-box
+(points tooltip data) still works as a quick manual fallback but
+doesn't scale to "the whole ledger, unattended."
+
+**Resolved direction: a standalone Windows executable, not a script.**
+Chris was clear this must NOT be a PowerShell/Python script that
+assumes Claude (or him) is there to run it or troubleshoot its
+environment - Bavin needs something he double-clicks. Shape of the
+tool, pending actual implementation:
+
+- **What it reads:** the credits SavedVariables file directly (Wall
+  1's separate file, not `DHBavinDB`) from whichever officer's own PC
+  it's run on - Bavin and each Designated Officer already hold a full
+  local replica of the ledger per the existing sync design, so the
+  export tool never needs network access or a "connect to Bavin"
+  step. SavedVariables Lua is a plain, non-executable table literal
+  (no functions, no control flow) - safe to parse with a small
+  hand-written table parser rather than needing an actual Lua runtime.
+- **What it writes:** .csv and/or .xlsx, written next to itself or to
+  a folder the officer picks once and the tool remembers (a tiny local
+  config file beside the .exe) - no command-line arguments required
+  for the common case.
+- **Distribution shape:** compiled to a single self-contained binary
+  so nothing else has to be installed on the officer's machine -
+  candidates are Go (a small hand-rolled or off-the-shelf Lua-table
+  parser, `excelize` for .xlsx output, trivially cross-compiles to a
+  single static .exe) or C# published as a self-contained single-file
+  executable. Not chosen yet - an implementation decision for whenever
+  CM7 is actually built, not today.
+- **Packaging gap to solve later:** this is not an addon file, so it
+  doesn't belong in either the release or test-build zip workflows
+  (ROADMAP's Packaging rules cover only .lua/.toc/Libs\ runtime
+  files). It needs its own distribution point - most likely a
+  standalone GitHub release asset Chris shares with Bavin/officers
+  once, separate from the DH-Tools addon zip. Flagging now so it isn't
+  assumed to "just ship inside the zip" later.
+
+**Scope note:** this broadens what CM7 already sketched as an
+"export-and-purge escape hatch" for the processor's uncapped log (see
+Data model's Size note) into the general-purpose export Chris is
+asking for here - one tool serves both needs rather than building two.
+
+## Test/live data reset & version gating (raised 2026-09-22, Chris - no code yet)
+
+**Data reset at cutover: already solved, no new work needed.** Chris
+asked about naming the test-phase data store with a `-test` suffix and
+renaming it at go-live. That's not needed and would add a real risk
+(a rename step that has to be gotten right, on Bavin's own PC, without
+Chris there) the existing design doesn't have: Wall 1 already keeps
+ALL credit-system state in its own SavedVariables file, entirely
+separate from `DHBavinDB`, and CM9's cutover plan already IS "wipe the
+test ledger" - deleting/clearing that one file, not renaming anything.
+Worth stating plainly so this doesn't get rebuilt: the suffix/rename
+approach was implicitly considered and superseded by the separate-file
+design back on 2026-09-03, for exactly the reason Chris raises now
+(avoiding a fragile in-place migration).
+
+**Version gating - Chris's question: is it even possible, given the
+game can't check for new releases?** Correct that a true "is this the
+single most recent version Chris has published" check is impossible
+from inside the addon sandbox - there's no outbound internet access to
+ask. But this codebase already has two working precedents for the
+version of the problem that's actually useful, both worth reusing
+rather than re-solving:
+
+- **DH-Air's `MIN_QUEUE_VERSION` floor gate (k-0034):** a hardcoded
+  floor baked in at build time, checked against messages from OTHER
+  clients' addons (not against the internet) - lets an up-to-date
+  client refuse a known-old, known-buggy client's messages before they
+  pollute shared data.
+- **DH-Tools' `LAST_RELEASE_VERSION` peer-mismatch notification
+  (k-0048):** clients compare versions with whatever peers they
+  actually talk to and surface a "you're behind" nudge locally when a
+  peer looks newer.
+
+**Recommended shape for the credit system, same idiom:** a
+`MIN_CREDIT_VERSION` floor on the officer-ledger sync protocol (CM3).
+A receiving Bavin/Designated-Officer client rejects (doesn't merge) a
+sync or transaction message tagged below that floor, rather than
+silently accepting data from a stale peer into the shared replica.
+This is a much stronger guarantee here than it could ever be for the
+~1000-member guild-wide case DH-Air/DH-Tools use it for, precisely
+because the officer/Bavin set is small - every one of them can
+plausibly be asked to update within a day.
+
+This protects the two actions Chris named - Bavin opening donation
+mail, an officer sending a credit-charge mail - at the exact point
+they'd actually do damage: writing to or merging into the SHARED
+officer replica. It does NOT (and cannot) catch a client that simply
+hasn't talked to a newer peer yet - that gap is structural, not a bug
+to fix.
+
+**Open decision for Chris/Bavin, not resolved here:** should a client
+below the floor hard-block the mail-hook actions entirely (matching
+DH-Air's queue gate), or just warn loudly and let the officer proceed
+at their own risk? Leaning toward hard-block given real credit/point
+values are at stake (higher cost of a silent bad merge than DH-Air's
+queue-count UX), but this is exactly the kind of call README §14
+reserves for Chris before any code gets written.
+
+## Full audit trail & weekly category reporting - scope change (2026-09-22, Chris)
+
+Chris corrected an earlier assumption: Bavin needs a **full donation
+audit trail**, not just running balances. Confirmed against real data
+why: Bavin already publishes a weekly (sometimes daily) top-3-per-
+category leaderboard across all 17 item categories (see the Discord
+post sample) - that can only be computed from row-level transactions
+(date + category + amount per donation), never from a single
+cumulative point counter. This reopens the 2026-09-03 "no history
+backfill" decision, but only partly:
+
+- **Unaffected:** the member-facing push (own balance + last 50 rows,
+  no backfill) - members don't need category history, this was never
+  about them.
+- **Reopened:** the officer/processor-side store. It now needs to be a
+  real per-transaction ledger (date, resolved identity, category,
+  point amount, processedBy) from CM1 onward, not a balance table with
+  an audit log bolted on as a safety net.
+
+**Corrected growth estimate.** The Size note in Data model guessed "a
+few hundred transactions a week." Real data says otherwise: 73,500
+rows since 2026-02-01 is roughly **4,000 transactions a week** - about
+10x the original guess. "Measure it after a few months" is no longer
+an adequate plan for the uncapped processor log.
+
+**Confirmed 2026-09-22 with Chris: bounded in-game window + export as
+the real archive.** Rather than holding 1.5+ years of rows in
+SavedVariables (a real login-lag risk at this volume - see this
+session's file-size discussion), the addon keeps only a rolling window
+in-game long enough to cover the weekly report plus buffer (something
+like 6-8 weeks), while the all-time record lives in the exported
+file(s) the Data export tool produces - the same role Bavin's own CSV
+already plays today, just kept current by regular exports instead of
+manual upkeep. All-time point/tier/prestige/lifetime totals stay as
+running counters in-game regardless (those don't need row-level detail
+to maintain) - only the row-level transaction detail rolls off after
+export. Exact window length (6-8 weeks proposed) can be tuned in CM1.
+
+**Category auto-tagging, confirmed available.** `DH Reputation - Items
+(1).csv` (the existing item-points intake source) already has a
+`Category` column using the exact same taxonomy as the donation log
+(Alchemy, Cloth, Herbalism, Gear, Quest, Banking, etc.) - it's just not
+imported into `ItemPoints.lua` yet (today's import only takes name/
+points/detail). CM2's item-intake pipeline needs to start pulling that
+column too, so CM4's incoming-mail crediting can tag each transaction's
+category automatically from the same lookup that already prices the
+item - no manual category entry needed anywhere.
+
+**Data type note:** donation amounts in the real data are fractional
+(0.5, 2.2, 33.0, ...) - points/credits fields need to be decimal, not
+integer, throughout.
+
 ## Milestone plan (draft)
 
 - **CM1 - Data model, permission plumbing & isolation walls.** The
@@ -619,6 +912,18 @@ testable headless and don't depend on either gap.
   time could bunch up login-pull traffic more than the steady state
   this design otherwise targets - worth watching in that first
   session, not necessarily worth designing around in advance.
+
+- **Export tool is a new, non-addon artifact** (2026-09-22) - it has
+  its own distribution and update problem entirely separate from the
+  addon's own (see Data export); nobody has decided yet how Bavin/
+  officers would learn a new build of the export tool exists if its
+  parsing logic ever needs to change.
+- **Alt-identity review queue could grow unattended** (2026-09-22) -
+  if no officer clears the pending-links/reconciliation queue
+  regularly, donations from queued (not-yet-approved) alts keep
+  crediting the wrong identity in the meantime. Worth a simple
+  visibility cue (e.g. a queue count) once CM7's UI is built, not
+  necessarily solved now.
 
 ## Deferred / out of scope for this pass
 
