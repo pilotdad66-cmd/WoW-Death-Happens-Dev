@@ -32,9 +32,29 @@ donation-growth estimate from the real ~73,500-row file, reopening
 part of the 2026-09-03 no-backfill decision for the officer-side
 store. See "Alt-identity management" and the new "Full audit trail &
 weekly category reporting" section.)
+updated: 2026-09-23 (Chris + Claude processed Bavin's contributors.csv
+mapping file and calculated real point totals from the 73,500-row
+contribution_data.csv transaction log, cross-checked against the
+Discord report rather than trusting it as source data; resolved four
+contributors.csv edge cases, found and excluded 194 non-donation
+"Exile" sentinel rows, confirmed the report's points are ~10x the raw
+Amount's gold value (open caveat: Bavin's manual per-item point bonus
+mechanism, pending his confirmation), and found the real calculation
+runs a small, consistent +0.86% aggregate above the Discord report -
+consistent with rounding-down rather than a data problem. Evaluated
+and did not adopt a client-side "self-storage" alternative
+architecture. Finalized the milestone rollout/testing order with
+Chris, including a new Step 0 (offline historical reconciliation), a
+mid-testing "reset to zero" utility folded into CM1, and a Step 9.5
+full reseed immediately before cutover. See "Historical data
+reconciliation", "Self-storage / client-side computation", and the
+revised "Milestone plan" below. Still no code written - Chris will
+start with Step 0 in a new session.)
 status: PROPOSED - scoped with Chris 2026-08-31, test strategy added
-2026-09-03, three more discussion topics added 2026-09-22 - all
-pending his + Bavin's sign-off. No code written yet
+2026-09-03, four more discussion topics added 2026-09-22, contributors
+data processed and milestone plan finalized 2026-09-23 - all pending
+Bavin's confirmation on the point-bonus question and his formal
+sign-off on the plan as a whole. No code written yet
 (README §14, ARCHITECTURE FIRST).
 
 ## Concept
@@ -306,10 +326,10 @@ last one (mail-session push boundary) was confirmed 2026-08-31:
 **2026-09-22 additions, updated as they resolved:**
 - ~~Whether the Reputation-report matches this doc's parser format~~ -
   resolved: real intake files reviewed with Chris (see "Alt-identity
-  management" and "Full audit trail" sections). Still pending: the
-  actual Discord-name -> main -> alts mapping file itself, which Chris
-  will add to `intake\` before testing starts - CM2's exact resolution
-  logic stays provisional until it's in hand.
+  management" and "Full audit trail" sections).
+- ~~The Discord-name -> main -> alts mapping file~~ - resolved:
+  `contributors.csv` received and processed 2026-09-23 - see
+  "Alt-identity management".
 - ~~Discord-post generation vs. clean-data export~~ - resolved: the
   export tool produces plain CSV/XLSX only; Bavin's own downstream
   process still turns that into the actual Discord post, same as
@@ -323,10 +343,23 @@ last one (mail-session push boundary) was confirmed 2026-08-31:
   2026-09-22 (see "Full audit trail & weekly category reporting").
   Exact window length (6-8 weeks proposed) still tunable in CM1.
 
-All prior decisions (2026-08-31, 2026-09-03, 2026-09-22) are settled;
-CM1/CM2 are ready to start once the Discord-name -> main -> alts
-mapping file is in hand and Bavin's formal sign-off on the plan as a
-whole is reconfirmed (last confirmed pending 2026-09-14).
+**2026-09-23 additions:**
+- **Bavin's manual per-item point-bonus mechanism** - whether
+  `contribution_data.csv`'s Amount already reflects bonus points Bavin
+  sometimes adds without changing an item's gold value. Chris is
+  checking with Bavin directly; gates finalizing CM2's real-totals
+  calculation - see "Historical data reconciliation".
+- **Two unexplained outliers** - Sayagirl (+41.9%) and Xeriik (+33.1%)
+  compute higher than their Discord-report number by more than the
+  rest of the dataset, and in the wrong direction to be explained by
+  the missing-bonus-points theory. Not investigated further; revisit
+  if they turn out to matter once Bavin's answer is in.
+
+All prior decisions (2026-08-31, 2026-09-03, 2026-09-22, 2026-09-23)
+are settled; Step 0/CM1/CM2 are ready to start (Chris picking up with
+Step 0 in a new session) once Bavin's point-bonus question is answered
+and his formal sign-off on the plan as a whole is reconfirmed (last
+confirmed pending 2026-09-14).
 
 ## Data model (proposal)
 
@@ -644,6 +677,28 @@ This extends CM2 (three-level parser + review-queue plumbing) and adds
 a small UI surface to CM7 alongside the existing audit-trail views,
 rather than opening a new milestone.
 
+**Mapping file received and processed, 2026-09-23.** Bavin's
+Discord-name -> main -> alts mapping file (`contributors.csv`, 2338
+rows) arrived and was processed with Chris this session, resolving to
+643 distinct identity groups. Four concrete decisions came out of
+reviewing it against real data:
+
+- **Direct contradictions** (a name claimed as its own identity in one
+  row but listed as someone else's alt in another - the "Thormhammer"
+  case) **go to the officer review queue** above, same as any other
+  conflict CM2's resolver can't confidently settle itself.
+- **Compound rows** (a single cell listing multiple names via `/` or
+  parentheses) **get exploded and trusted** - each name becomes a
+  linked alt of that row's main.
+- **"Guild Bank" is excluded entirely, not treated as a person.** It's
+  the largest single group in the file (53 characters) but is shared
+  guild storage, not an individual donor - CM2's seed must never
+  credit it.
+- **contributors.csv seeds identity only, not point totals.** The
+  Discord Reputation-report posts are confirmed partial, not the
+  source of truth for actual point/credit values - see "Historical
+  data reconciliation" below for where the real totals come from.
+
 ## Data export - new requirement (2026-09-22, Chris)
 
 Chris wants the full ledger (and ideally the transaction log)
@@ -718,6 +773,17 @@ Worth stating plainly so this doesn't get rebuilt: the suffix/rename
 approach was implicitly considered and superseded by the separate-file
 design back on 2026-09-03, for exactly the reason Chris raises now
 (avoiding a fragile in-place migration).
+
+**Mid-testing reset, new 2026-09-23 - a related but distinct need.**
+Chris also wants the ability to wipe and reseed test data at any point
+*during* testing, not just at cutover - useful for retrying after a
+bad test run without waiting for CM9. This reuses the same
+separate-file design (wipe/clear that one file) but is a standalone
+utility built in CM1 alongside the rest of Wall 1, callable on demand
+throughout CM2-CM8, and distinct from Step 9.5's full reseed (which
+specifically refreshes the seed data from current reality right before
+cutover) and from CM9's own cutover flip. See "Milestone plan" for
+where each lands.
 
 **Version gating - Chris's question: is it even possible, given the
 game can't check for new releases?** Correct that a true "is this the
@@ -814,8 +880,88 @@ item - no manual category entry needed anywhere.
 (0.5, 2.2, 33.0, ...) - points/credits fields need to be decimal, not
 integer, throughout.
 
-## Milestone plan (draft)
+## Historical data reconciliation - contribution_data.csv analysis (2026-09-23, Chris + Claude)
 
+With contributors.csv in hand for identity, Chris asked Claude to
+calculate the real point totals from `contribution_data.csv` (the raw
+73,500-row transaction log) rather than trusting the Discord
+Reputation-report posts as source data - the report is confirmed
+partial. Findings:
+
+- **Tab-delimited, not comma** - `From, Date, Category, Amount`,
+  2025-02-01 through 2026-09-21.
+- **194 rows are a non-donation sentinel, not real transactions:**
+  `Category="Exile"` with `Amount` exactly `-99999`. **Decision
+  (Chris, confirmed): exclude these entirely** from all point/credit
+  aggregation - CM2's importer must filter them out, not just ignore
+  the negative amount.
+- **The `Amount` column is a gold value, not points - confirmed a
+  ×10 conversion.** Cross-checking 183 computed totals (contributors
+  identity + contribution_data.csv, Exile rows excluded, ×10 applied)
+  against the Discord report's posted numbers: 180/183 land within
+  ±5%, matching the same ×10 relationship visible in `DH Reputation -
+  Items (1).csv`'s own Val -> Reputation Value columns (e.g. Flask of
+  the Titans: Val=80 -> 800 points). Chris independently confirmed
+  this is the real system: points are usually 10x the gold value.
+- **Open caveat, not yet resolved:** Bavin sometimes manually bumps a
+  specific item's *point* value without changing its estimated gold
+  value, to steer donations toward something the guild needs right
+  now. Whether `contribution_data.csv`'s Amount already reflects those
+  bonus points, or only the item's baseline gold value, is unconfirmed
+  - **Chris is checking with Bavin directly.** CM2's real-totals
+  calculation can't be finalized until this comes back; treat the ×10
+  conversion as provisionally correct but not yet the final formula.
+- **Direction check, run at Chris's request:** under the corrected
+  (×10) calculation, 182 of 183 people compute HIGHER than their
+  Discord-report number (median +0.79%, average +1.46%, aggregate
+  +0.86%) - a small, consistently one-directional bias rather than
+  random noise, consistent with rounding-down somewhere in Bavin's own
+  report script. Supports Bavin's own hypothesis rather than pointing
+  at a data problem on our end.
+- **Unexplained, not investigated further:** two outliers - Sayagirl
+  (+41.9%) and Xeriik (+33.1%) - move in the wrong direction to be
+  explained by the missing-bonus-points theory (that theory would
+  make the report number too LOW, not too high). Left open; revisit
+  if they turn out to matter once Bavin's answer is in.
+
+## Self-storage / client-side computation - design idea evaluated, not adopted (2026-09-23, Chris)
+
+Chris proposed an alternative architecture: each member's own client
+stores their full rep/donation history locally and only shares a
+running total plus a rolling 7-week per-category summary with Bavin -
+moving the compute/storage load from the "receive" side (Bavin's
+client, today's design) to the "send" side (each donor's own client).
+Asked for an honest efficiency/security/flexibility evaluation.
+
+**Verdict: not adopted.** The efficiency case is real (less load on
+Bavin/officer clients) but it regresses the trust model this whole
+design leans on, specifically for the **spendable credits** half of
+the system - a member's own client becomes an input to a number that
+can be spent, which is a materially different risk than a member
+merely seeing a locally-cached read-only balance (today's CM6 design).
+It would also make the officer-side audit trail (weekly leaderboard,
+category reporting - see "Full audit trail" above) dependent on every
+donor's client being online and reporting honestly, rather than
+authoritative on the processor side where it lives today. Chris
+accepted this evaluation without pushback. A lower-risk variant - a
+non-authoritative local personal-history mirror, additive to (not
+replacing) the officer-side ledger - was suggested as a middle ground
+but not scoped further; revisit only if Chris raises it again.
+
+## Milestone plan (resolved with Chris 2026-09-23)
+
+Testing plan, confirmed with Chris: he tests solo first, using a new
+alt character standing in for Bavin (in the officer/Designated-
+Officers tier for test purposes); once he's satisfied, Bavin joins
+testing directly; only after both are satisfied do they jointly decide
+whether to pull in more officers or go straight to CM9 cutover.
+
+- **Step 0 - Historical reconciliation (offline, not addon code).**
+  Finalize the contributors.csv identity resolution and the
+  contribution_data.csv real-point-total calculation above (pending
+  Bavin's bonus-point answer), cross-checked against the Discord
+  report, into a validated seed dataset. Prerequisite to CM2's seed
+  step, not itself an in-game milestone.
 - **CM1 - Data model, permission plumbing & isolation walls.** The
   new **separate** credits SavedVariables file (Wall 1) holding the
   ledger table, alt-override table, transaction log and credit config
@@ -828,13 +974,23 @@ integer, throughout.
   Wall 4 hangs off, with two no-op hook-installation sites (inbox and
   outgoing) so both gates can be verified before any mail code exists
   behind them. All four walls land here, in the first milestone,
-  before any milestone that touches mail.
-- **CM2 - Historical seed & ongoing alt-linking.** Parser for the
-  Reputation report format above (one-time: points/tier/prestige/
-  lifetime + the go-live alt-to-main snapshot), plus the live
+  before any milestone that touches mail. **New this update: a
+  "reset to zero" test utility** - wipes the test-scoped credits
+  SavedVariables data (ledger, alt table, transaction log) back to
+  empty, callable at any point during testing (not just at CM9
+  cutover, which is a separate, already-solved wipe - see "Test/live
+  data reset" above). Built here alongside the rest of Wall 1's
+  scaffolding; not fully exercisable until CM2's seed step exists, but
+  gets used constantly through CM2-CM8 as Chris/Bavin iterate.
+- **CM2 - Historical seed & ongoing alt-linking.** One-time seed from
+  Step 0's reconciled dataset (contributors.csv for identity,
+  contribution_data.csv for real point/credit totals - superseding the
+  original Reputation-report-only parser plan above), plus the live
   `GRM.GetPlayerMain()`-based resolver for alts created after go-live
   (contract verified this session - see Decisions), with the
-  manual-override table as a fallback.
+  manual-override table as a fallback. Conflicts (Thormhammer-style
+  contradictions) and unresolved rows route to the officer review
+  queue per "Alt-identity management" above.
 - **CM3 - Officer-set ledger sync.** Full replica among Bavin +
   Designated Officers; work out the exact wire format and whether it
   needs a prefix bump.
@@ -863,13 +1019,18 @@ integer, throughout.
   reach zero mail-hook code, and a character on `creditTestReceivers`
   but NOT `creditTestSenders` must get the inbox hook and no outgoing
   hook (and vice versa).
+- **Step 9.5 - Full reseed.** Immediately before cutover: use the CM1
+  reset tool to wipe test data, then re-run Step 0's reconciliation
+  against then-current live data - both the identity mapping and the
+  full contribution history will have moved on since the original
+  reconciliation, so this refreshes CM2's seed from current reality
+  rather than carrying a stale snapshot into cutover.
 - **CM9 - Cutover.** Only after CM1-CM8 are proven and Bavin signs
   off. Empty both test lists, make Bavin the live credit processor,
   remove the TEST ONLY config section, flip the master toggle
-  default. Wipe the test ledger. Bavin retires the
-  Excel/Discord process at this point and not before. Plan a
-  low-volume first live mail session rather than a full ~100-mail
-  batch (see Residual risk in Test strategy).
+  default. Bavin retires the Excel/Discord process at this point and
+  not before. Plan a low-volume first live mail session rather than a
+  full ~100-mail batch (see Residual risk in Test strategy).
 
 ## Risks flagged up front
 
