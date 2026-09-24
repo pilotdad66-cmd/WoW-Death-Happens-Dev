@@ -137,8 +137,45 @@ accepted as a known cosmetic issue, not blocking, not scheduled. All
 committed this session (Credits.lua, CreditsConfig.lua, the .toc/
 Core.lua/Config.lua edits, this doc, STATUS.md, and the Step 0 intake
 deliverables) and pushed to collab-dev.)
-status: STEP 0 COMPLETE, CM1 CODE-COMPLETE INCLUDING REAL UI, FIRST
-IN-GAME TEST PASS DONE - scoped with Chris 2026-08-31, test strategy
+updated: 2026-09-25 (CM2 prep: triaged review-queue.csv's 1129
+"no_identity_mapping" donor names before starting CM2's seed step.
+Built a throwaway GRM-Probe tool (`/dhbgrm run`, same precedent as the
+original Step 0 probe) to run all 1129 through `GRM.GetPlayerMain()` -
+result was 0 resolved, 1129/1129 nil (GRM has zero record of any of
+them), which both confirmed Chris's "quit or never signed up" theory
+and settled the previously-untested "name totally unknown to GRM"
+edge case (see the GRM contract notes above) - deleted the probe tool
+once read back. Then analyzed the 1129 for resemblance to known
+names: 12 rows (9 distinct names) were special-character/diacritic
+variants of a real character's name (e.g. "fragilé" for "Fragile") -
+Chris confirmed these are safe to fold in (3 had two candidate known
+names each, but both candidates resolved to the same main already, so
+the ambiguity was moot). 93 rows looked like 1-character typos of a
+known name, but Chris correctly rejected this as evidence - WoW name
+squatting means "Krazzy" existing because "Krazy" was taken usually
+means two different players, not a misspelling of the same one; that
+bucket was discarded entirely, not folded in. 325 rows shared a 4+
+character prefix with a known name (weak "naming convention" signal,
+e.g. shared word-fragments like "dark-"/"frost-" more often than a
+real family like "Loopi-") - left for manual eyeballing, not bulk
+action. Added `alias-corrections.csv` (9 rows) and wired it into
+step0-reconcile.ps1, merged straight into the alt-resolution table
+right after contributors.csv loads (NOT modeled as a new "Aliases"
+tier in the live data model - Chris's Discord->Main->Alts->Aliases
+idea was narrowed to a Step 0-only historical-data concern, since the
+live CM2 resolver only ever sees real, mail-validated character names
+and can't hit this problem going forward). Re-ran Step 0: review-
+queue.csv's unmapped count dropped 1129 -> 1120, seed-dataset.csv
+grew 651 -> 652 mains, Discord cross-check barely moved (mean now
++0.82%, still within Chris's ~1.46% bar). Remaining 1120 unmapped
+names (plus the 325 weak prefix-siblings) are Chris's call for CM2:
+eyeball what's worth linking, then likely make the rest their own
+mains at the Step 9.5 reseed rather than leaving them in permanent
+limbo.)
+status: STEP 0 COMPLETE (including a 2026-09-25 review-queue triage
+pass - alias corrections applied, GRM-Probe run and retired), CM1
+CODE-COMPLETE INCLUDING REAL UI, FIRST IN-GAME TEST PASS DONE - scoped
+with Chris 2026-08-31, test strategy
 added 2026-09-03, four more discussion topics added 2026-09-22,
 contributors data processed and milestone plan finalized 2026-09-23,
 Step 0 reconciliation validated and CM1 core (Credits.lua, own prefix,
@@ -314,10 +351,14 @@ goes live. That means:
     tolerate this (pcall, plus falling back to the manual-override
     table or simply "unresolved for now" rather than erroring) rather
     than assuming GRM is ready the instant DH-Bavin's own code runs.
-  - Untested edge case, to confirm during CM2 implementation: what
-    `GetPlayerMain` returns for a name GRM has no record of at all
-    (not just "no alts" - genuinely unknown to GRM). Every name tried
-    this session was already GRM-known, so this path is unverified.
+  - **Edge case confirmed 2026-09-25 (GRM-Probe run #2, see the CM2
+    prep changelog entry below):** for a name GRM has no record of at
+    all (not just "no alts"), `GetPlayerMain` returns nil/empty rather
+    than erroring - ran all 1129 of review-queue.csv's
+    "no_identity_mapping" names through it and got 1129/1129 nil, 0
+    resolved. CM2's live resolver can treat nil the same as "unknown,
+    fall through to manual-override table or officer review queue" -
+    no special-case handling needed for this path.
   - A manual add/edit table inside DH-Bavin's own config remains the
     fallback for anything GRM doesn't have, same as before.
 
@@ -793,6 +834,17 @@ one place, not just the alt-to-main level originally scoped:
   by a Designated Officer or Bavin at any time. This is the "see and
   edit the data" capability Chris asked for, on top of automatic GRM
   resolution, not instead of it.
+- **Unresolved-donor list, sortable (Chris, 2026-09-25).** The
+  officer-editable list of donors CM2's resolver couldn't place (the
+  live counterpart of Step 0's `review-queue.csv`) shows each entry's
+  **Latest Donation date** alongside the name, and is sortable by
+  both name and date - not just a flat unsorted dump. Step 0's
+  reconciliation script already computes this (`latestDonation`
+  column added to `review-queue.csv` 2026-09-25, `yyyy-MM-dd`, max
+  date per unresolved donor from `contribution_data.csv`), so CM2's
+  seed step carries it straight into the live table rather than
+  deriving it fresh. Going forward, a new unresolved live donation
+  updates that entry's Latest Donation the same way.
 - **Manual link, officer-added:** unchanged from the existing
   manual-override table in Data model, now covering both link levels
   (character->main, and main->Discord) - the fallback for anything GRM
