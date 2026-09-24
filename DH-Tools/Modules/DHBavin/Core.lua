@@ -588,6 +588,7 @@ local function ShowHelp()
     ns.Print("  /dhb config           - open the Bavin settings page")
     ns.Print("  /dhb items            - list the priority list's current items")
     ns.Print("  /dhb points           - open the Bavin Points editor (recipient/editor only; everyone else sees it read-only)")
+    ns.Print("  /dhb credits          - Credit & Reputation System status/config (TEST PHASE - see /dhb credits with no args for the sub-command list)")
     ns.Print("  /dhb priority         - open the Priority List editor: type an item name, list narrows as you type, click to add/remove (recipient/editor only)")
     ns.Print("  /dhb additem <link>   - fallback: shift-click an item after typing this to add it by name (recipient/editor only) - for the rare item not in the Bavin Points list, which /dhb priority searches")
     ns.Print("  /dhb removeitem <name> - remove an item from the priority list by exact name (recipient/editor only)")
@@ -661,6 +662,12 @@ SlashCmdList["DHBAVIN"] = function(msg)
             ns.PointsEditor_Toggle()
         else
             ns.Print("Points editor didn't load correctly.")
+        end
+    elseif cmd == "credits" then
+        if ns.Credits_HandleSlash then
+            ns.Credits_HandleSlash(rest)
+        else
+            ns.Print("Credits module didn't load correctly.")
         end
     elseif cmd == "priority" then
         if ns.PriorityEditor_Toggle then

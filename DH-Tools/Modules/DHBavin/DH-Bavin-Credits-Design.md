@@ -50,12 +50,107 @@ full reseed immediately before cutover. See "Historical data
 reconciliation", "Self-storage / client-side computation", and the
 revised "Milestone plan" below. Still no code written - Chris will
 start with Step 0 in a new session.)
-status: PROPOSED - scoped with Chris 2026-08-31, test strategy added
-2026-09-03, four more discussion topics added 2026-09-22, contributors
-data processed and milestone plan finalized 2026-09-23 - all pending
-Bavin's confirmation on the point-bonus question and his formal
-sign-off on the plan as a whole. No code written yet
-(README §14, ARCHITECTURE FIRST).
+updated: 2026-09-24 (Step 0 completed and CM1 code-complete. Step 0:
+Chris confirmed the point-bonus discrepancy is rounding in Bavin's
+script and approved seeding with the calculated numbers; identity
+resolution run in PowerShell (Python unavailable on this PC) over
+contributors.csv + the 73,500-row contribution_data.csv, including a
+compound-name explosion fix applied to both files; excluded Guild
+Bank entirely and all "Exile" sentinel rows; produced 642 resolved
+identity groups (1 in conflict: Thormhammer), seed-dataset.csv (651
+mains with lifetime gold/point totals) and review-queue.csv (1
+conflict + 1129 unmapped donor names) for officer triage. Validated
+against the Discord report by reconstructing each person's true
+lifetime total from their tier/prestige history (displayed points
+reset to 0 at every tier crossing; the real total never resets) rather
+than comparing to the raw displayed number - this was Chris's key
+correction to an earlier, meaningless +660% mismatch. Tier-reconstructed
+cross-check: 183 matched names, mean +0.79%/median +0.77% above the
+Discord-implied total, within Chris's ~1.46% acceptability bar.
+CM1: built Modules\DHBavin\Credits.lua - Wall 1-4 isolation (own
+DHBavinCreditsDB SavedVariables, two independent test lists gating
+inbox/outgoing mail hooks, a master toggle defaulting OFF, hooks
+installed only for listed test characters and armed lazily at
+PLAYER_LOGIN), its own addon-message prefix DHBavinCreditsV1 (kept
+separate from DHBavinV4 per Chris's explicit approval), and an
+officer-gated credit multiplier defaulting to 0.60 credits per
+reputation point (corrected from this doc's earlier 0.7 figure -
+credits and reputation points are tracked as two separate numbers,
+never conflated). Config UI deliberately deferred: a full `/dhb
+credits ...` slash-command surface (status/toggle/multiplier/officer/
+receiver/sender/reset) stands in for the design's planned Config.lua
+"TEST ONLY" panel for this pass, to avoid a large edit to the existing
+shared Bavin config UI before Chris reviews the scope. Verified via
+run-tests.ps1: syntax-clean across the whole addon, existing 129-check
+harness unaffected. NOT yet in-game tested - no confirmation yet that
+config sync, arming, or the slash commands behave correctly live. No
+git commit made yet this session.)
+updated: 2026-09-25 (Chris flagged that deferring the config UI risked
+losing track of the real access requirements - good catch. Worked
+through a four-tier access model (member/officer/mail-recipient/
+leader+Loopi - see new "Access tiers" section below) and built the
+real UI: Modules\DHBavin\CreditsConfig.lua, a standalone "Bavin Rep &
+Credit Config" window opened via a new button in DH-Tools\Config.lua's
+existing Bavin officer section (that page is otherwise unchanged, per
+Chris's explicit instruction). Tabs across the top (Settings/Roster/
+Conflicts/Audit Log) rather than an Excel-style editable grid - no
+grid widget is vendored in this addon and a true inline-editable grid
+would be a real UI subsystem to build from scratch; Chris accepted
+this trade-off. Settings tab is fully wired to Credits.lua's existing
+setters (master toggle, multiplier, both Wall 2 test lists, the
+Designated Officers list); Roster/Conflicts/Audit Log are placeholder
+tabs pending CM2/CM7's data. Credits.lua's `/dhb credits` slash
+commands are kept as a diagnostic/scriptable fallback, not removed;
+added `/dhb credits window` to open the new UI. Also clarified scope:
+the mail recipient eventually being able to hand-edit the raw
+reputation source data behind the tooltip is real future work, but
+explicitly indefinitely deferred - the current plan is periodic
+reimport of a fresh data file (Step 0's approach), not manual edits -
+noted in "Access tiers" so it isn't lost, not because it's imminent.
+Verified via run-tests.ps1: syntax-clean, 129-check harness unaffected.
+NOT yet in-game tested.)
+updated: 2026-09-25 (first in-game test pass of CreditsConfig.lua.
+Chris reported 8 numbered items: Master Toggle and the two-click Reset
+Test Data arm/disarm both confirmed working as designed, no changes
+needed. The other 6 were real bugs, all fixed: (1)/(7) the Officers/
+Test Receivers/Test Senders list sections, and separately Config.lua's
+Bavin-page Editors list, were each anchored to a fixed pool-row slot
+(e.g. row 8 of 8) that reserved its full height even when mostly
+empty - `Hide()` doesn't collapse a frame's position in a WoW anchor
+chain. Refactored `CreateNameListSection` so each section tracks its
+last-visible row live and every downstream section/button re-anchors
+to that position on every refresh, collapsing unused space. (2) window
+opened behind the Config.lua window - fixed with
+`SetFrameStrata("HIGH")`. (3) added resizability to
+DHBavinCreditsConfigFrame (min 420x400/max 720x900 + grip) - the main
+DH-Tools config window turned out to already be resizable. (4)
+closing the window left rendered text on screen - root cause was the 4
+tab-content frames never getting an explicit anchor or explicit
+Hide(), only the active one being the ScrollFrame's scroll child;
+fixed with an explicit SetPoint per tab content frame plus explicit
+Show()/Hide() in `CreditsConfig_SelectTab`. (6) added plain-English
+hint text under the Officers/Test Receivers/Test Senders section
+titles. Rebuilt and retested; Chris confirmed the multiplier control
+also works and called the fixes usable, while flagging the gap between
+each section's add-box and its list is still larger than he'd like -
+accepted as a known cosmetic issue, not blocking, not scheduled. All
+committed this session (Credits.lua, CreditsConfig.lua, the .toc/
+Core.lua/Config.lua edits, this doc, STATUS.md, and the Step 0 intake
+deliverables) and pushed to collab-dev.)
+status: STEP 0 COMPLETE, CM1 CODE-COMPLETE INCLUDING REAL UI, FIRST
+IN-GAME TEST PASS DONE - scoped with Chris 2026-08-31, test strategy
+added 2026-09-03, four more discussion topics added 2026-09-22,
+contributors data processed and milestone plan finalized 2026-09-23,
+Step 0 reconciliation validated and CM1 core (Credits.lua, own prefix,
+0.60 multiplier) implemented 2026-09-24, four-tier access model agreed
+and CreditsConfig.lua (the real tabbed UI, opened from Config.lua's
+Bavin page) built 2026-09-25, first in-game test pass done same day -
+6 layout/behavior bugs found and fixed (dynamic row anchoring, window
+strata, resizability, tab close, section hints), 2 items confirmed
+working with no changes. One known cosmetic issue remains (add-box-to-
+list gap still larger than ideal in the three CreditsConfig.lua list
+sections) - Chris said he can work with it, not scheduled. Committed
+and pushed to collab-dev 2026-09-25. Syntax/harness-clean throughout.
 
 ## Concept
 
@@ -100,6 +195,53 @@ Two mail-processing flows drive it:
    credit and blocks the send if not. Same idea, checkbox on the
    outgoing mail window (default = last-selected), gates whether that
    send gets processed.
+
+## Access tiers (resolved 2026-09-25 with Chris)
+
+Four tiers, from the officer/leader UI discussion that produced
+CreditsConfig.lua. Not a re-scope of what mail processing does above -
+this is who can VIEW and EDIT what, across every UI this feature has or
+will have.
+
+1. **Regular member** - read-only, own points/credits/tier/prestige
+   only. A separate window (CM6, minimap-launched quick-actions entry),
+   not CreditsConfig.lua - a regular member never gets that window at
+   all (see its `CreditsConfig_Open` gate).
+2. **Designated Officer** - views everyone's data; edits alt/identity
+   mappings to resolve conflicts (Thormhammer-style) and triage
+   unmapped donor names. This is CM2's job (the officer-visible view/
+   edit UI on top of GRM auto-resolution, from the 2026-09-22 update
+   below) - CreditsConfig.lua's Roster and Conflicts tabs are
+   placeholders until then. An officer can also manage everything on
+   the Settings tab EXCEPT the officers list itself (master toggle,
+   multiplier, both Wall 2 test lists - `CanManageCreditsConfigLocal`).
+3. **Mail recipient (Bavin)** - eventually able to hand-edit the raw
+   reputation source data that backs the tooltip lookup directly (not
+   just resolve identity, actually change a point/credit number by
+   hand). **Explicitly out of scope for now, and deliberately not on
+   any milestone's plan** - the current design keeps that data
+   accurate via periodic reimport of a fresh data file (Step 0's
+   reconciliation approach, repeated), not manual edits. Written down
+   here so the requirement isn't lost, not because it's coming soon;
+   revisit only if Chris raises it again, same footing as the
+   "self-storage" alternative below.
+4. **Guild leader + Loopi (`IsAuthorAccount`)** - manages who holds the
+   Designated Officer role (`CanManageCreditsOfficers`, built in
+   Credits.lua CM1) and, unchanged and separate, the DH-Bavin recipient
+   itself (`Bavin.CanManageRecipient` on the existing Config.lua page -
+   this system's "mail recipient" and the credit system's "Designated
+   Officers" are two different lists, never conflated in code or UI).
+
+CreditsConfig.lua (CM1, 2026-09-25) is where tiers 2 and 4 actually
+live today: a standalone "Bavin Rep & Credit Config" window, opened via
+a button in Config.lua's existing Bavin officer section (that page is
+otherwise unchanged - Chris was explicit the existing page should stay
+as-is). Tabs across the top rather than an Excel-style editable grid -
+DH-Tools vendors no AceGUI/grid widget, and a true inline-editable grid
+would be real UI-subsystem work from scratch; Chris accepted plain
+tabs + row lists + inline add/remove controls instead. Settings tab is
+fully wired; Roster/Conflicts/Audit Log are placeholder tabs waiting on
+CM2/CM7.
 
 ## Tiers (resolved 2026-08-31 from the Reputation report sample)
 
@@ -229,9 +371,13 @@ comes up; the minimap entry is the one firm requirement.
 alongside the tier-resetting points counter - for recognition, not
 gating anything.
 
-**Multiplier: 0.7 credits per point, Bavin-configurable.** A numeric
-field on the officer-gated config page, same idiom as an item-points
-override - not hardcoded.
+**Multiplier: 0.60 credits per point, Bavin-configurable** (corrected
+2026-09-24 from the 0.7 originally noted here - Chris set the actual
+default; credits and reputation points are two separate tracked
+numbers, never the same figure). A numeric field on the officer-gated
+config page, same idiom as an item-points override - not hardcoded.
+CM1 implements this as an officer-gated slash command
+(`/dhb credits multiplier <n>`) pending the Config.lua UI panel.
 
 **Reputation report: one-time paste-in seed, format now known.**
 Bavin will paste in this text once, at go-live. Format (confirmed
@@ -956,13 +1102,40 @@ Officers tier for test purposes); once he's satisfied, Bavin joins
 testing directly; only after both are satisfied do they jointly decide
 whether to pull in more officers or go straight to CM9 cutover.
 
-- **Step 0 - Historical reconciliation (offline, not addon code).**
-  Finalize the contributors.csv identity resolution and the
-  contribution_data.csv real-point-total calculation above (pending
-  Bavin's bonus-point answer), cross-checked against the Discord
-  report, into a validated seed dataset. Prerequisite to CM2's seed
-  step, not itself an in-game milestone.
-- **CM1 - Data model, permission plumbing & isolation walls.** The
+- **Step 0 - Historical reconciliation (offline, not addon code).
+  DONE 2026-09-24.** Identity resolution (642 resolved main groups, 1
+  conflict) and the real point-total calculation over
+  contribution_data.csv, cross-checked against the Discord report via
+  tier/prestige lifetime-total reconstruction (mean +0.79%/median
+  +0.77%, within Chris's ~1.46% bar). Deliverables:
+  `claude\DH-Bavin\intake\seed-dataset.csv` (651 mains) and
+  `review-queue.csv` (1 conflict + 1129 unmapped names), ready for
+  CM2's seed step.
+- **CM1 - Data model, permission plumbing & isolation walls. CODE
+  COMPLETE 2026-09-25 (including the real UI); first in-game test pass
+  done same day - 6 layout/behavior bugs found and fixed, 2 items
+  (Master Toggle, Reset Test Data arming) confirmed working as-is; one
+  known cosmetic gap (add-box-to-list spacing in CreditsConfig.lua)
+  accepted by Chris, not scheduled. Committed and pushed to
+  collab-dev.**
+  `Modules\DHBavin\Credits.lua` built with all four walls, its own
+  `DHBavinCreditsV1` addon-message prefix (kept separate from
+  `DHBavinV4`), and the officer-gated multiplier defaulting to 0.60
+  credits/point. 2026-09-24 pass built a `/dhb credits ...`
+  slash-command surface as a stand-in (status/toggle/multiplier/
+  officer/receiver/sender/reset) rather than the config-page UI, to
+  avoid a large edit to the shared Bavin Config.lua page before Chris
+  reviewed scope. 2026-09-25: Chris reviewed it, flagged that
+  deferring the UI risked losing track of the real access
+  requirements, and settled a four-tier access model (see "Access
+  tiers" above) - built `Modules\DHBavin\CreditsConfig.lua`, a
+  standalone tabbed "Bavin Rep & Credit Config" window (Settings tab
+  fully wired; Roster/Conflicts/Audit Log placeholders for CM2/CM7),
+  opened via one new button on the EXISTING Config.lua Bavin page
+  (otherwise left unchanged, per Chris). Slash commands stay as a
+  diagnostic fallback. Verified via `run-tests.ps1` (syntax-clean,
+  existing 129-check harness unaffected) but not yet exercised
+  in-game. The
   new **separate** credits SavedVariables file (Wall 1) holding the
   ledger table, alt-override table, transaction log and credit config
   - explicitly NOT added to `DHBavinDB`, which keeps only its existing

@@ -6,6 +6,7 @@
 ## SavedVariablesPerCharacter: DHToolsDB
 ## SavedVariablesPerCharacter: DHQuestsDB
 ## SavedVariables: DHBavinDB
+## SavedVariables: DHBavinCreditsDB
 ## SavedVariables: DHToolsAccountDB
 ## SavedVariables: DHAirDB
 ## X-Curse-Project-Name: DH-Tools
@@ -29,6 +30,8 @@ Modules\DHQuests\Sync.lua
 Modules\DHQuests\Board.lua
 Modules\DHBavin\Core.lua
 Modules\DHBavin\Sync.lua
+Modules\DHBavin\Credits.lua
+Modules\DHBavin\CreditsConfig.lua
 Modules\DHBavin\ItemPoints.lua
 Modules\DHBavin\PointsEditor.lua
 Modules\DHBavin\PriorityEditor.lua

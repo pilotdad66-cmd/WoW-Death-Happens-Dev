@@ -606,10 +606,13 @@ local function CreateBavinPanel(parent)
     scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
 
     local content = CreateFrame("Frame", nil, scrollFrame)
-    content:SetSize(1, 620) -- width set in Refresh; height is a generous
+    content:SetSize(1, 690) -- width set in Refresh; height is a generous
                              -- fixed estimate for this page's content -
                              -- pad rather than trim if it's off, same
                              -- approach Mob Marker's page already uses.
+                             -- 2026-09-25: 620 -> 690, room for the new
+                             -- "Open Bavin Rep & Credit Config" button
+                             -- section below Current Editors.
                              -- 2026-08-24: reduced from 820 after tightening
                              -- the officer section's gaps and dropping its
                              -- two internal dividers and half its reserved
@@ -916,12 +919,50 @@ local function CreateBavinPanel(parent)
         prevEditorAnchor = row
     end
 
+    --------------------------------------------------------------------
+    -- Credit & Reputation System (2026-09-25, Chris: "the existing
+    -- DH-Tools config Bavin page should basically remain the same...
+    -- a button in the officer section to open... a new separate
+    -- window"). Deliberately NOT nested inside the recipient/editors
+    -- gate above - Designated Officers (Credits.lua's own officer list)
+    -- aren't necessarily the same people as Bavin's recipient/editors,
+    -- so this button gets its own independent Enable/Disable check in
+    -- Refresh below rather than inheriting canManageRecipient/
+    -- canManageEditors. See CreditsConfig.lua for the window itself.
+    --------------------------------------------------------------------
+    -- 2026-09-25 (Chris): anchored dynamically in RebuildCurrentEditorRows
+    -- below, NOT to currentEditorRows[BAVIN_CURRENT_EDITOR_ROWS] (a fixed
+    -- 10th slot) - that fixed anchor was the bug Chris flagged: with 0-2
+    -- real editors, rows 3-10 sit hidden but still reserve their full
+    -- vertical space (Hide() doesn't collapse a frame's anchor chain), so
+    -- this section always sat 10 rows below the list regardless of how
+    -- many editors actually existed. No initial SetPoint here - the first
+    -- Refresh call (which always runs RebuildCurrentEditorRows) sets it.
+    local creditsTitle = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    creditsTitle:SetText("Credit & Reputation System (in development):")
+
+    local creditsOpenBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    creditsOpenBtn:SetSize(200, 22)
+    creditsOpenBtn:SetPoint("TOPLEFT", creditsTitle, "BOTTOMLEFT", 4, -8)
+    creditsOpenBtn:SetText("Open Bavin Rep & Credit Config")
+    creditsOpenBtn:SetScript("OnClick", function()
+        if Bavin.CreditsConfig_Toggle then
+            Bavin.CreditsConfig_Toggle()
+        end
+    end)
+
+    local creditsLockedNote = content:CreateFontString(nil, "OVERLAY", "GameFontRedSmall")
+    creditsLockedNote:SetPoint("LEFT", creditsOpenBtn, "RIGHT", 10, 0)
+    creditsLockedNote:SetText("|cffff3333Designated Officer/guild leader/author only.|r")
+    creditsLockedNote:Hide()
+
     RebuildCurrentEditorRows = function()
         -- 2026-08-05: removing an editor is editor-management, gated by
         -- CanManageEditors (rank<=3/Loopidot) - was wrongly using
         -- CanManageRecipient (Bavin/Loopidot) before the two gates split.
         local canManage = Bavin.CanManageEditors()
         local editors = (Bavin.db and Bavin.db.editors) or {}
+        local lastShown -- last VISIBLE row this pass, or nil if the list is empty
         for i, row in ipairs(currentEditorRows) do
             local name = editors[i]
             if not name then
@@ -943,7 +984,18 @@ local function CreateBavinPanel(parent)
                 else
                     row.removeBtn:Disable()
                 end
+                lastShown = row
             end
+        end
+
+        -- Dynamic re-anchor (2026-09-25, Chris) - everything below the
+        -- editors list moves up to sit right after whatever's actually
+        -- showing, instead of always sitting 10 rows down.
+        creditsTitle:ClearAllPoints()
+        if lastShown then
+            creditsTitle:SetPoint("TOPLEFT", lastShown, "BOTTOMLEFT", -4, -16)
+        else
+            creditsTitle:SetPoint("TOPLEFT", currentEditorsTitle, "BOTTOMLEFT", 0, -16)
         end
     end
 
@@ -1003,6 +1055,19 @@ local function CreateBavinPanel(parent)
         end
 
         RebuildCurrentEditorRows()
+
+        -- Independent gate (see the section's own comment above) -
+        -- Designated Officers or guild leader/author, not
+        -- canManageRecipient/canManageEditors.
+        local canOpenCredits = (Bavin.CanManageCreditsConfigLocal and Bavin.CanManageCreditsConfigLocal())
+            or (Bavin.CanManageCreditsOfficers and Bavin.CanManageCreditsOfficers())
+        if canOpenCredits then
+            creditsOpenBtn:Enable()
+            creditsLockedNote:Hide()
+        else
+            creditsOpenBtn:Disable()
+            creditsLockedNote:Show()
+        end
     end
 
     return panel
