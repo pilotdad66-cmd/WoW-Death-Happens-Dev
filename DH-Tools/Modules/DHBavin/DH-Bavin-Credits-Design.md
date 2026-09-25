@@ -109,6 +109,30 @@ reimport of a fresh data file (Step 0's approach), not manual edits -
 noted in "Access tiers" so it isn't lost, not because it's imminent.
 Verified via run-tests.ps1: syntax-clean, 129-check harness unaffected.
 NOT yet in-game tested.)
+updated: 2026-09-25 (same day, later session - pure architecture
+discussion, no code written. Separated officer-to-officer live sync
+(CM3, unaffected - the item-points sync pattern already tolerates
+partial overlap) from the addon-shipped static seed file (a one-time
+Step 9.5 bootstrap only, never refreshed again post-cutover once CM6's
+login-pull exists); floated CM3A for officer-approved member
+self-edits; confirmed splitting CM5 into a manual-Bavin-spend phase
+before full auto-deduct; agreed a v1 go-live slice - Step 0+CM1+CM2+
+CM4+CM6 - can ship before CM3/CM5 exist, since CM6 is Bavin-to-member
+and doesn't need the officer replica; reviewed the existing "Data
+export" tool design (confirmed already resolved 2026-09-22, not new)
+and decided its ship timeline can trail v1 after all - see the new
+real-mail parallel-run week below, which covers the same validation
+need without it. Confirmed the SavedVariables-size and static-file
+chunking worries Chris raised are already covered by existing design
+(audit-log export-and-purge, member's 50-row cap); real remaining
+risk is Bavin as a single point of failure pre-CM3, accepted for now
+in favor of a cheap ad hoc backup export later rather than solving it
+today. New: Bavin joins `creditTestReceivers` for a real-mail parallel
+run against his own existing Excel/script process once the alt-soak
+is otherwise passing - about a week, numbers compared by hand,
+discrepancies root-caused and fixed before cutover rather than
+assumed benign. See "Wall 2" and "Test approach" above for the
+narrowed/added text.)
 updated: 2026-09-25 (first in-game test pass of CreditsConfig.lua.
 Chris reported 8 numbered items: Master Toggle and the two-click Reset
 Test Data arm/disarm both confirmed working as designed, no changes
@@ -913,6 +937,19 @@ he holds that role.
 unnecessary: an earlier proposal for per-entry active/shadow modes
 was considered and dropped once he was ruled out entirely.
 
+**Narrowed 2026-09-25 (Chris): Bavin joins `creditTestReceivers` for a
+real-mail parallel-run validation week, once the alt-soak below is
+otherwise passing.** This narrows the exclusion above rather than
+reversing it - Bavin is still never the first character to receive
+the inbox hook, and he never goes on `creditTestSenders` during
+testing (the outgoing/spend hook stays untouched by anyone but Chris's
+listed sender alts). But before cutover his real inbox needs the
+inbox hook live at least once, processing real donation mail
+side-by-side with his existing script/Excel process, so the addon can
+be checked against a real, independently-computed baseline rather
+than only the synthetic test-alt soak. See "Test approach" below for
+how the comparison itself works.
+
 **Wall 3 - ships inert.** The credit code can ship in DH-Tools
 releases during development. Master toggle defaults OFF, with an
 explicit warning in the config UI not to enable it. A member who
@@ -983,6 +1020,29 @@ Other guild members will also mail the test alt - knowingly, with
 junk and low-point items, so there is nothing to re-credit when the
 test ledger is wiped at cutover. That means real sender names, real
 alt-resolution cases, and real item variety ARE covered by the soak.
+
+**Added 2026-09-25 (Chris): a real-mail parallel-run week, once Bavin
+joins testing.** This does not reverse the dual-run rejection above -
+that rejection was specifically about building the addon to reproduce
+Bavin's Excel/Discord logic internally so the two could be diffed
+automatically, which is exactly the porting effort this feature
+exists to avoid. What's added here is much lighter: once Bavin is
+ready to add his live receiving character to `creditTestReceivers`
+(see Wall 2), he keeps running his existing scripts exactly as he
+does today - unchanged, untouched - for about a week while the
+addon's inbox hook processes the same real mail independently. At the
+end of that week, Chris and Bavin compare the two sets of numbers by
+hand. A discrepancy gets root-caused and fixed before cutover, not
+shrugged off - Bavin's process has run for years without a visible
+problem, but that isn't proof it's been arithmetically correct, only
+that nothing has forced the question before now; the cause could turn
+out to be on either side, or both, beyond the rounding difference
+already identified in Step 0. Only a clean week clears this gate; a
+bad week means fix and re-run, not compare-once-and-move-on. The Data
+export tool (see "Data export" below) is deliberately NOT required
+for this comparison - Bavin's existing manual process remains the
+archive of record for the whole test period, so the tool's own
+timeline can trail this decision rather than gating it.
 
 **Residual risk this strategy does NOT cover.** Two things, both
 about scale rather than correctness:
