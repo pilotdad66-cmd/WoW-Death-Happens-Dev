@@ -688,27 +688,28 @@ local function CreateBoardFrame()
     frame = CreateFrame("Frame", "DHAirBoardFrame", UIParent, "BasicFrameTemplateWithInset")
     -- M5: default/min width grew to fit the new destination column + Whisper
     -- button (480 -> 580 default, 420 -> 520 min) - see DH-Air-Destinations-Design.md §5.
-    frame:SetSize(DEFAULT_FRAME_WIDTH, 420)
+    -- Height 420 -> 444 (2026-09-25, round 2): the summon-counter row's
+    -- new third line inside roleGroup/actionBar (see that row's own
+    -- comment for the round-1-didn't-fix-it story) needs the same ~24px
+    -- of extra vertical room everything else already grew by.
+    frame:SetSize(DEFAULT_FRAME_WIDTH, 444)
     frame:SetPoint("CENTER")
     frame:SetResizable(true)
     -- Min height 300 -> 330 (2026-08-17): the footer gained a second row
     -- (Set/Change Destination moved to its own line - see setDestBtn's
     -- creation below), so the minimum needs 30 more px of headroom than
     -- before to avoid the two footer rows crowding the row list.
+    -- Min height 330 -> 354 (2026-09-25, round 2): same +24px as the
+    -- default height above, same reason.
     -- Min width floor raised 520 -> DEFAULT_FRAME_WIDTH (2026-09-25,
-    -- Chris-reported bug): the Summoner/Clicker/World Buff Mode row,
-    -- and the summon-count text + Reset button added onto its right end
-    -- this session, are a plain left-to-right anchor chain with no
-    -- width awareness at all - unlike the queue rows below them (see
-    -- Board_Refresh's column-growth calc), nothing here reflows or
-    -- shrinks on resize. The counter+button were placed based on "~190px
-    -- of room... at the default window width" - true at
-    -- DEFAULT_FRAME_WIDTH, but the old 520 floor let the window narrow
-    -- well past that, running the chain off the visible edge with no
-    -- way to click Reset. Tying the floor to the same constant the
-    -- default width uses (rather than a second hardcoded number) means
-    -- they can't drift apart again if DEFAULT_FRAME_WIDTH ever changes.
-    ApplyResizeBounds(frame, DEFAULT_FRAME_WIDTH, 330, 1000, 700)
+    -- round 1 of the Chris-reported summon-counter/Reset overflow bug):
+    -- turned out NOT to be the actual fix (see round 2's comment on the
+    -- counter row itself) - the row overflowed even at the un-narrowed
+    -- default width, so the floor was never the problem. Left in place
+    -- anyway since tying the floor to the same constant the default
+    -- width uses is still a reasonable safety margin for every other
+    -- fixed-width element in this window, and doesn't hurt anything.
+    ApplyResizeBounds(frame, DEFAULT_FRAME_WIDTH, 354, 1000, 700)
     if frame.TitleText then
         frame.TitleText:SetText("DH-Air - Air Service Board")
     end
@@ -812,7 +813,11 @@ local function CreateBoardFrame()
     local actionBar = CreateFrame("Frame", nil, frame)
     actionBar:SetPoint("TOPLEFT", frame.statSummoners, "BOTTOMLEFT", 0, -10)
     actionBar:SetPoint("RIGHT", frame, "RIGHT", -16, 0)
-    actionBar:SetHeight(52)
+    -- Height 52 -> 76 (2026-09-25, round 2): matches roleGroup's own
+    -- height bump for the summon-counter row's new third line. Everything
+    -- anchored to actionBar's BOTTOM (summoningText, and the row list
+    -- beyond it) shifts down automatically with this change.
+    actionBar:SetHeight(76)
 
     frame.joinBtn = CreateFrame("Button", nil, actionBar, "UIPanelButtonTemplate")
     frame.joinBtn:SetSize(100, 22)
@@ -852,7 +857,11 @@ local function CreateBoardFrame()
 
     local roleGroup = CreateFrame("Frame", nil, actionBar)
     roleGroup:SetPoint("TOPLEFT", frame.joinBtn, "TOPRIGHT", 16, 0)
-    roleGroup:SetSize(280, 52)
+    -- Height 52 -> 76 (2026-09-25, round 2): the summon-counter row added
+    -- below "I'm a clicker" needs its own ~24px - see that row's own
+    -- comment, further down, for why it moved here instead of stretching
+    -- the width budget of the checkbox row above it.
+    roleGroup:SetSize(280, 76)
 
     frame.summonerCheck = CreateFrame("CheckButton", "DHAirBoardSummonerCheck", roleGroup, "UICheckButtonTemplate")
     frame.summonerCheck:SetPoint("TOPLEFT", roleGroup, "TOPLEFT", 0, 0)
@@ -909,16 +918,36 @@ local function CreateBoardFrame()
         DHAir:Board_Refresh()
     end)
 
+    frame.clickerCheck = CreateFrame("CheckButton", "DHAirBoardClickerCheck", roleGroup, "UICheckButtonTemplate")
+    frame.clickerCheck:SetPoint("TOPLEFT", frame.summonerCheck, "BOTTOMLEFT", 0, -2)
+    _G[frame.clickerCheck:GetName() .. "Text"]:SetText("I'm a clicker")
+    frame.clickerCheck:SetScript("OnClick", function(self)
+        DHAir:SetRole("clicker", self:GetChecked() and true or false)
+        DHAir:Board_Refresh()
+    end)
+
     -- Summon counters + session reset (2026-09-25, Chris: "number of
-    -- characters summoned this session and lifetime"; up here to the
-    -- right of World Buff Mode per his preference - there's ~190px of
-    -- room left in this row at the default window width). Gated to the
-    -- same autoSummonReady (summoner-only) flag as World Buff Mode/
-    -- Broadcast to Guild/Auto Summons in Board_Refresh below. Anchored to
-    -- worldBuffLabel (the checkbox's TEXT), same reasoning as
-    -- worldBuffCheck's own anchor comment above.
+    -- characters summoned this session and lifetime"). ON ITS OWN ROW
+    -- below the two role checkboxes (2026-09-25, round 2 - Chris reported
+    -- the row STILL ran off the window's right edge after the first fix).
+    -- The original placement chained off worldBuffLabel's right edge on
+    -- the SAME row as "I'm a summoner"/"World Buff Mode", on the
+    -- unverified assumption that "~190px of room" was left there at the
+    -- default window width - it wasn't: the row overflowed past the
+    -- frame's right edge even AT DEFAULT_FRAME_WIDTH, un-narrowed, so
+    -- round 1's fix (raising the resize floor) couldn't have helped -
+    -- the floor was never the actual problem. Its own row sidesteps the
+    -- "how much horizontal room is actually left" question entirely -
+    -- a full line has plenty of width at any size the window can even be
+    -- resized to. roleGroup/actionBar/frame's heights all grew by the
+    -- same ~24px this row needs (see their SetSize/SetHeight/
+    -- ApplyResizeBounds calls below), so nothing else (summoning-status
+    -- text, the row list) needed to change - both are anchored off
+    -- actionBar's/frame's own edges, not fixed pixel offsets.
+    -- Gated to the same autoSummonReady (summoner-only) flag as World
+    -- Buff Mode/Broadcast to Guild/Auto Summons in Board_Refresh below.
     frame.summonCountText = roleGroup:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    frame.summonCountText:SetPoint("LEFT", worldBuffLabel, "RIGHT", 16, 0)
+    frame.summonCountText:SetPoint("TOPLEFT", frame.clickerCheck, "BOTTOMLEFT", 0, -4)
     frame.summonCountText:SetJustifyH("LEFT")
 
     -- Single click, not a two-click confirm like Bavin's officer/shared-
@@ -931,14 +960,6 @@ local function CreateBoardFrame()
     frame.resetSessionBtn:SetText("Reset")
     frame.resetSessionBtn:SetScript("OnClick", function()
         if DHAir.ResetSummonCountSession then DHAir:ResetSummonCountSession() end
-    end)
-
-    frame.clickerCheck = CreateFrame("CheckButton", "DHAirBoardClickerCheck", roleGroup, "UICheckButtonTemplate")
-    frame.clickerCheck:SetPoint("TOPLEFT", frame.summonerCheck, "BOTTOMLEFT", 0, -2)
-    _G[frame.clickerCheck:GetName() .. "Text"]:SetText("I'm a clicker")
-    frame.clickerCheck:SetScript("OnClick", function(self)
-        DHAir:SetRole("clicker", self:GetChecked() and true or false)
-        DHAir:Board_Refresh()
     end)
 
     -- Currently-summoning indicator - anchored to actionBar's BOTTOM, not to
