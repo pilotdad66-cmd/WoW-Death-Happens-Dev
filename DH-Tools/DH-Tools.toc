@@ -2,7 +2,7 @@
 ## Title: DH-Tools
 ## Notes: Death Happens master addon - toggle individual modules (Mob Marker, and more to come) from one addon.
 ## Author: Loopi
-## Version: 2.1.1
+## Version: 2.1.2
 ## SavedVariablesPerCharacter: DHToolsDB
 ## SavedVariablesPerCharacter: DHQuestsDB
 ## SavedVariables: DHBavinDB

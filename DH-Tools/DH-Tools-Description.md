@@ -1,6 +1,6 @@
 # DH-Tools
 
-**Version 2.1.1** | Author: **Loopi** | For: *Death Happens* Hardcore guild
+**Version 2.1.2** | Author: **Loopi** | For: *Death Happens* Hardcore guild
 
 ---
 
@@ -57,6 +57,20 @@ you actually want running, all managed from one place.
 ---
 
 ## Changelog
+
+### 2.1.2
+- **Fixed: the Air Service Board's summon-count/Reset button could run
+  off the edge of the window.** Added with 2.1.1's summon counters, it
+  could end up past the visible window border depending on window size.
+  It now sits on its own row and stays fully visible at any size.
+- **Fixed: the guild-chat item lookup reply wording.** Dropped the
+  repeated item link (you already posted it to ask the question) and an
+  extra "message him" line on items with no data on file. Replies now
+  lead with "DH-Tools:" so it's clear the addon answered.
+- **Fixed: the version-check broadcast could compare against a stale
+  internal version number**, which could affect whether guildmates on an
+  older version got notified to update.
+- Added test code to DH-Bavin for a future feature release.
 
 ### 2.1.1
 - **New: DH-Air summon counters for Warlocks.** The Air Service Board

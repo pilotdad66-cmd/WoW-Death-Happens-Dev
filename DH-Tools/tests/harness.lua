@@ -262,7 +262,7 @@ playerName = "TestChar"
 
 --------------------------------------------------------------------------
 -- Group D: peer version-check broadcast (VER_PREFIX = "DHToolsVer",
--- LAST_RELEASE_VERSION hardcoded "2.1.1" in Core.lua - bump these fixture
+-- LAST_RELEASE_VERSION hardcoded "2.1.2" in Core.lua - bump these fixture
 -- values in lockstep whenever that literal changes, same as everywhere
 -- else this constant appears; drifting out of sync is exactly what broke
 -- all four checks in this group on 2026-09-25, when v2.1.1 shipped and
@@ -276,11 +276,11 @@ playerName = "TestChar"
 -- isn't exposed for tests to reset, so this scenario must run FIRST,
 -- exactly once, before anything else in this group.
 local printCountBefore = #printLog
-ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsVer", "2.1.2", "GUILD", "Someone-Realm")
+ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsVer", "2.1.3", "GUILD", "Someone-Realm")
 check("a peer announcing a newer version prints an update notice",
     #printLog == printCountBefore + 1 and printLog[#printLog]:find("newer version", 1, true) ~= nil)
 
-ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsVer", "2.1.2", "GUILD", "Someone-Realm")
+ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsVer", "2.1.3", "GUILD", "Someone-Realm")
 check("a second identical newer-version announce does not re-print (shows once per session)",
     #printLog == printCountBefore + 1)
 
@@ -288,10 +288,10 @@ outboxLog = {}
 ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsVer", "2.0.0", "GUILD", "Stale-Realm")
 check("a peer on an older version gets a direct WHISPER reply with our version",
     #outboxLog == 1 and outboxLog[1].channel == "WHISPER"
-    and outboxLog[1].target == "Stale-Realm" and outboxLog[1].text == "2.1.1")
+    and outboxLog[1].target == "Stale-Realm" and outboxLog[1].text == "2.1.2")
 
 outboxLog, printLog = {}, {}
-ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsVer", "2.1.1", "GUILD", "SameVersion-Realm")
+ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsVer", "2.1.2", "GUILD", "SameVersion-Realm")
 check("a peer on the exact same version triggers neither a print nor a reply",
     #outboxLog == 0 and #printLog == 0)
 
