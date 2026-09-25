@@ -75,11 +75,20 @@ end
 -- (2026-09-25: latestDonation added so the Roster tab can show/sort a
 -- "Last Donation" column - Chris's ask - without a second lookup
 -- table). `lastDonationDate` is an addition to the design doc's
--- original ledger shape (`{ mainName, points, credits, tier, prestige,
--- lifetimePoints, lastUpdated }`) - it's Step 0's historical snapshot
--- date, not something CM4's live crediting updates going forward (no
--- live "date of last credited donation" tracking exists yet); read it
--- as "as of the last Step 0 pass," same caveat as lifetimePoints.
+-- original ledger shape - it's Step 0's historical snapshot date, not
+-- something CM4's live crediting updates going forward (no live "date
+-- of last credited donation" tracking exists yet); read it as "as of
+-- the last Step 0 pass," same caveat as lifetimePoints.
+--
+-- IDENTITY MODEL V2 (2026-09-25): the ledger is keyed by discordName,
+-- not mainName - seeded here as discordName = mainToon = the main's
+-- current toon name (design doc: "seed the Discord name as the current
+-- main character name"). Each row also gets its `alts` list, shallow-
+-- copied from the GENERATED AltRoster.lua (ns.CreditsAltRoster[mainName])
+-- so later edits to an account's alts (Link/Unlink) never mutate that
+-- GENERATED table. ns.Credits_RebuildToonIndex() runs once after the
+-- loop rather than incrementally per-row, since Link/Unlink aren't
+-- involved in a seed import.
 function ns.CreditsSeed_Import()
     if not ns.CanManageCreditsConfigLocal() then return false end
     if not ns.CreditsSeedData then
@@ -104,8 +113,17 @@ function ns.CreditsSeed_Import()
             lifetimePoints = entry
         end
         local tier, prestige, points = ns.Credits_TierStateForLifetime(lifetimePoints)
+        local alts = {}
+        local sourceAlts = ns.CreditsAltRoster and ns.CreditsAltRoster[mainName]
+        if sourceAlts then
+            for i, altName in ipairs(sourceAlts) do
+                alts[i] = altName
+            end
+        end
         ns.creditsDb.ledger[mainName] = {
-            mainName = mainName,
+            discordName = mainName,
+            mainToon = mainName,
+            alts = alts,
             points = points,
             credits = 0, -- seeded at 0 for everyone at go-live (Chris, 2026-09-25)
             tier = tier,
@@ -116,6 +134,7 @@ function ns.CreditsSeed_Import()
         }
         count = count + 1
     end
+    if ns.Credits_RebuildToonIndex then ns.Credits_RebuildToonIndex() end
     ns.CreditsPrint(("Seeded %d mains from historical data (SeedData.lua)."):format(count))
     return true, count
 end
@@ -134,27 +153,30 @@ end
 -- 10-points-per-gold convention seed-dataset.csv itself uses
 -- (totalPoints = totalGoldAmount * 10).
 --
--- Two effects, same shape as a manual Link except mainName == altName:
--- (1) an altOverride pointing the name at itself via the existing
--- Credits_SetAltOverride (Credits.lua) - without this, a later live
--- donation from this same name could get silently attributed to
--- whichever main GRM believes claims it (Credits_ResolveMain checks
--- GRM before falling back to self), undoing this decision; (2) a
--- ledger row via the same tier math CreditsSeed_Import uses above, so
--- it shows up correctly on the Roster tab immediately rather than
--- waiting for a reseed. Officer-gated the same way as everything else
--- in this file (via Credits_SetAltOverride's own gate).
+-- IDENTITY MODEL V2 (2026-09-25): creates a brand-new account - a new
+-- ledger row keyed by discordName == the promoted name itself, with
+-- mainToon == that same name and an empty alts list - rather than a
+-- self-pointing altOverride (that whole table is gone; see Credits.lua's
+-- InitCreditsDB comment). Refuses if the name already resolves to an
+-- existing account (toonIndex hit), so this can't silently clobber a
+-- real account sharing the name. Removes the row from the Review Queue
+-- the same way a manual Link does. Officer-gated directly (the deleted
+-- Credits_SetAltOverride used to carry this gate for both operations).
 function ns.Credits_SetAsNewMain(altName, rawGoldAmount, latestDonation)
+    if not ns.CanManageCreditsConfigLocal() then return false end
     if not altName or altName == "" then return false end
     if not ns.creditsDb then return false end
 
-    local mainName = ns.NormalizeName(altName)
-    if not ns.Credits_SetAltOverride(mainName, mainName) then return false end
+    local bareName = ns.NormalizeName(altName)
+    if not ns.creditsDb.toonIndex then ns.Credits_RebuildToonIndex() end
+    if ns.creditsDb.toonIndex[bareName:lower()] then return false end -- already resolves somewhere
 
     local lifetimePoints = (tonumber(rawGoldAmount) or 0) * 10
     local tier, prestige, points = ns.Credits_TierStateForLifetime(lifetimePoints)
-    ns.creditsDb.ledger[mainName] = {
-        mainName = mainName,
+    ns.creditsDb.ledger[bareName] = {
+        discordName = bareName,
+        mainToon = bareName,
+        alts = {},
         points = points,
         credits = 0, -- same go-live convention as CreditsSeed_Import above: credits start at 0, only lifetimePoints/tier/prestige come from history
         tier = tier,
@@ -163,5 +185,7 @@ function ns.Credits_SetAsNewMain(altName, rawGoldAmount, latestDonation)
         lastDonationDate = latestDonation or "",
         lastUpdated = time(),
     }
+    ns.creditsDb.toonIndex[bareName:lower()] = bareName
+    if ns.Credits_RemoveFromReviewQueue then ns.Credits_RemoveFromReviewQueue(bareName) end
     return true
 end

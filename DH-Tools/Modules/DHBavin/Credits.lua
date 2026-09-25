@@ -51,15 +51,32 @@ function ns.InitCreditsDB()
     end
     ns.creditsDb = DHBavinCreditsDB
 
-    -- Ledger: mainName -> { points, credits, tier, prestige,
-    -- lifetimePoints, lastUpdated } - empty until CM2 seeds it from
-    -- Step 0's validated seed-dataset.csv.
+    -- Ledger (Identity model v2, 2026-09-25): keyed by discordName -
+    -- { discordName, mainToon, alts = {...}, points, credits, tier,
+    -- prestige, lifetimePoints, lastDonationDate, lastUpdated }. Empty
+    -- until CM2 seeds it from Step 0's validated seed-dataset.csv.
+    -- Superseded the original mainName-keyed shape (no altOverrides
+    -- table any more - an alt is a direct member of its account's
+    -- `alts` list, not a separate override pointing at a name).
     if type(ns.creditsDb.ledger) ~= "table" then
         ns.creditsDb.ledger = {}
     end
-    -- Manual alt-link overrides, fallback for GRM.GetPlayerMain() - CM2.
-    if type(ns.creditsDb.altOverrides) ~= "table" then
-        ns.creditsDb.altOverrides = {}
+    -- toonIndex: bare-toon-name(lower) -> discordName, rebuilt whenever
+    -- ledger membership changes (seed import, link, unlink, set-as-new-
+    -- main) so Credits_ResolveMain doesn't scan the whole ledger on
+    -- every call. Never hand-edited or persisted meaningfully across a
+    -- version change - always safe to rebuild from the ledger.
+    if type(ns.creditsDb.toonIndex) ~= "table" then
+        ns.creditsDb.toonIndex = {}
+    end
+    -- Dynamic Review Queue additions (2026-09-25, Loopi: "When an alt
+    -- is removed - it should go back into the review queue"): entries
+    -- added at runtime by Credits_UnlinkAlt, on top of the static,
+    -- GENERATED ns.CreditsReviewQueue (Step 0's own unresolved list).
+    -- Same shape as a ReviewQueue.lua row ({ name, issue,
+    -- latestDonation, rawGoldAmount, details }), issue = "removed_alt".
+    if type(ns.creditsDb.dynamicReviewQueue) ~= "table" then
+        ns.creditsDb.dynamicReviewQueue = {}
     end
     -- Per-transaction audit log (who, item, delta, processedBy, when) - CM4+.
     if type(ns.creditsDb.transactionLog) ~= "table" then
@@ -159,31 +176,64 @@ end
 -- Alt resolution (CM2, ongoing - see DH-Bavin-Credits-Design.md's "Data
 -- model" section for the algorithm this implements verbatim)
 --------------------------------------------------------------------------
--- character name (bare or realm-qualified) -> that person's mainName
--- (always returned bare, no "-Realm" suffix - matches how the ledger and
--- SeedData.lua key their entries; SkullRock is the guild's only realm,
--- so a realm suffix on the key would only add noise). Tries, in order:
--- (1) the manual-override table (ns.creditsDb.altOverrides, set via
--- Credits_SetAltOverride below - CM2's historical import doesn't write
--- to this table itself, only the ledger; this is for CM2's future
--- manual-link UI and any case GRM can't resolve), (2) GRM.GetPlayerMain
--- wrapped in pcall (GRM may not be loaded, or may not have learned this
--- character yet - confirmed 2026-09-25 via GRM-Probe that an unknown
--- name returns nil rather than erroring), (3) self-fallback - a
--- character with no linked alts is trivially its own main.
+-- Identity model v2 (2026-09-25, designed with Loopi - see
+-- DH-Bavin-Credits-Design.md's "Identity model v2" section). Ledger is
+-- keyed by discordName (stable, editable, seeded = the main toon's name
+-- at seed time - see CreditsSeed.lua); each account record carries
+-- `mainToon` (the currently-flagged main, editable - a main-swap is now
+-- a field edit, not a ledger-key migration) and `alts` (an array of
+-- toon names belonging to that account). toonIndex maps every known
+-- bare toon name (main or alt, lower-cased) to its account's
+-- discordName, so resolution is a single table lookup instead of a
+-- ledger scan.
+--------------------------------------------------------------------------
+
+-- Rebuilds toonIndex from the ledger's current mainToon/alts fields.
+-- Called after any bulk change (seed import); Link/Unlink/SetAsNewMain
+-- below keep it in sync incrementally instead of paying for a full
+-- rebuild on every single edit.
+function ns.Credits_RebuildToonIndex()
+    local index = {}
+    if ns.creditsDb and ns.creditsDb.ledger then
+        for discordName, rec in pairs(ns.creditsDb.ledger) do
+            if rec.mainToon and rec.mainToon ~= "" then
+                index[rec.mainToon:lower()] = discordName
+            end
+            for _, altName in ipairs(rec.alts or {}) do
+                index[altName:lower()] = discordName
+            end
+        end
+    end
+    ns.creditsDb.toonIndex = index
+    return index
+end
+
+-- character name (bare or realm-qualified) -> that person's CURRENT
+-- mainToon name (always returned bare, no "-Realm" suffix - matches how
+-- the ledger and SeedData.lua key their entries; SkullRock is the
+-- guild's only realm, so a realm suffix on the key would only add
+-- noise). Contract is UNCHANGED from v1 (toon name in, toon name out) -
+-- every existing caller (tooltips, mail crediting, priority lists)
+-- needs no changes. Tries, in order: (1) toonIndex - our own account
+-- data, which Loopi confirmed stays authoritative for future donations
+-- even where GRM disagrees ("GRM remains authoritative" was about never
+-- writing INTO GRM's own database, not about resolution order), (2)
+-- GRM.GetPlayerMain wrapped in pcall (GRM may not be loaded, or may not
+-- have learned this character yet - confirmed 2026-09-25 via GRM-Probe
+-- that an unknown name returns nil rather than erroring), (3)
+-- self-fallback - a character with no linked alts is trivially its own
+-- main.
 function ns.Credits_ResolveMain(characterName)
     if not characterName or characterName == "" then return nil end
     local bareName = ns.NormalizeName(characterName)
 
-    -- altOverrides is keyed lower-cased (see Credits_SetAltOverride) -
-    -- review-queue.csv's names (the Conflicts tab's link source) are
-    -- stored lowercase from Step 0's reconciliation, but a live
-    -- character name off GRM/mail is properly cased, so the lookup key
-    -- itself must fold case even though NormalizeName above doesn't.
-    if ns.creditsDb and ns.creditsDb.altOverrides then
-        local override = ns.creditsDb.altOverrides[bareName:lower()]
-        if override and override ~= "" then
-            return override
+    if ns.creditsDb and ns.creditsDb.toonIndex then
+        local discordName = ns.creditsDb.toonIndex[bareName:lower()]
+        if discordName then
+            local rec = ns.creditsDb.ledger[discordName]
+            if rec and rec.mainToon and rec.mainToon ~= "" then
+                return rec.mainToon
+            end
         end
     end
 
@@ -198,43 +248,162 @@ function ns.Credits_ResolveMain(characterName)
     return bareName
 end
 
--- Manual alt-link overrides: LOCAL ONLY for now, same as
--- Credits_ResetTestData below - the officer-only ledger/alt-override
--- sync wire format is still CM3's job (design doc: "TBD there"), so
--- this doesn't guess at one. Each Designated Officer who adds/edits a
--- manual override does so on their own client until that sync exists;
--- officers coordinate verbally during the test phase, same as the reset
--- utility. Gated the same as the rest of this file's local config
--- writes (CanManageCreditsConfigLocal), not the stricter
--- CanManageCreditsOfficers - resolving alt-identity conflicts is
--- Designated Officer work, not guild-leader-only (design doc's Access
--- tiers: "Designated Officer... resolves alt/identity conflicts").
--- Key is lower-cased bare name (see Credits_ResolveMain's comment on
--- why) - the VALUE (mainName) keeps whatever casing the caller passed,
--- since that needs to match the ledger's own key exactly (SeedData.lua/
--- the ledger are properly-cased).
-function ns.Credits_SetAltOverride(altName, mainName)
+-- Removes altBare from whichever account currently claims it, if any.
+-- Internal helper shared by Link (moving an alt) and Unlink (releasing
+-- one) - does NOT touch the Review Queue; callers decide whether a
+-- reopen is appropriate. No permission gate here - both public callers
+-- gate themselves.
+local function RemoveAltFromAnyAccount(altBare)
+    if not ns.creditsDb or not ns.creditsDb.ledger then return false end
+    local key = altBare:lower()
+    for _, rec in pairs(ns.creditsDb.ledger) do
+        if rec.alts then
+            for i, a in ipairs(rec.alts) do
+                if a:lower() == key then
+                    table.remove(rec.alts, i)
+                    if ns.creditsDb.toonIndex then ns.creditsDb.toonIndex[key] = nil end
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+-- Links altName to the account whose CURRENT main toon is
+-- mainToonName. LOCAL ONLY for now, same as Credits_ResetTestData below
+-- - the officer-only ledger sync wire format is still CM3's job (design
+-- doc: "TBD there"), so this doesn't guess at one. Each Designated
+-- Officer who links an alt does so on their own client until that sync
+-- exists; officers coordinate verbally during the test phase, same as
+-- the reset utility. Gated the same as the rest of this file's local
+-- config writes (CanManageCreditsConfigLocal), not the stricter
+-- CanManageCreditsOfficers - resolving alt-identity is Designated
+-- Officer work, not guild-leader-only (design doc's Access tiers).
+-- Refuses if mainToonName doesn't resolve to any known account -
+-- Credits_SetAsNewMain (CreditsSeed.lua) is the path for making a
+-- brand-new account, this function only ever attaches to an existing
+-- one. Clears any pending Review Queue entry for altName, since
+-- linking it resolves whatever put it there.
+function ns.Credits_LinkAlt(altName, mainToonName)
     if not ns.CanManageCreditsConfigLocal() then return false end
-    if not altName or altName == "" or not mainName or mainName == "" then return false end
-    ns.creditsDb.altOverrides[ns.NormalizeName(altName):lower()] = ns.NormalizeName(mainName)
+    if not altName or altName == "" or not mainToonName or mainToonName == "" then return false end
+    local altBare = ns.NormalizeName(altName)
+    local mainBare = ns.NormalizeName(mainToonName)
+
+    if not ns.creditsDb.toonIndex then ns.Credits_RebuildToonIndex() end
+    local discordName = ns.creditsDb.toonIndex[mainBare:lower()]
+    if not discordName then return false end
+    local rec = ns.creditsDb.ledger[discordName]
+    if not rec then return false end
+    -- Can't link a name to itself, and can't link a name that's
+    -- currently the TARGET account's own main toon (that would need a
+    -- main-reassignment, not a link).
+    if altBare:lower() == mainBare:lower() then return false end
+
+    RemoveAltFromAnyAccount(altBare)
+    rec.alts = rec.alts or {}
+    table.insert(rec.alts, altBare)
+    ns.creditsDb.toonIndex[altBare:lower()] = discordName
+    ns.Credits_RemoveFromReviewQueue(altBare)
     return true
 end
 
-function ns.Credits_RemoveAltOverride(altName)
+-- Officer-initiated removal: takes altName out of its account AND
+-- reopens it in the Review Queue so it can be re-linked to the correct
+-- main rather than just vanishing (2026-09-25, Loopi: "When an alt is
+-- removed - it should go back into the review queue"). Works whether
+-- the association came from a manual Link or from Step 0's historical
+-- import - Loopi confirmed both should be fixable this way; GRM's own
+-- database is never touched either way ("GRM remains authoritative" is
+-- about not writing into GRM, not about what our own records can fix).
+function ns.Credits_UnlinkAlt(altName)
     if not ns.CanManageCreditsConfigLocal() then return false end
     if not altName or altName == "" then return false end
-    local key = ns.NormalizeName(altName):lower()
-    if ns.creditsDb.altOverrides[key] == nil then return false end
-    ns.creditsDb.altOverrides[key] = nil
+    local altBare = ns.NormalizeName(altName)
+    if not RemoveAltFromAnyAccount(altBare) then return false end
+    ns.Credits_AddToReviewQueue(altBare)
     return true
 end
 
--- Read-only lookup for UI (Conflicts tab) - whether `altName` already
--- has a manual override, and what it points to.
-function ns.Credits_GetAltOverride(altName)
-    if not ns.creditsDb or not ns.creditsDb.altOverrides then return nil end
+-- Read-only lookup for UI (Review Queue tab) - which account's mainToon
+-- currently claims altName as an ALT (never returns a name for its own
+-- account's main toon - that's not what "linked as an alt" means here).
+function ns.Credits_GetAltMain(altName)
+    if not ns.creditsDb or not ns.creditsDb.toonIndex then return nil end
     if not altName or altName == "" then return nil end
-    return ns.creditsDb.altOverrides[ns.NormalizeName(altName):lower()]
+    local key = ns.NormalizeName(altName):lower()
+    local discordName = ns.creditsDb.toonIndex[key]
+    if not discordName then return nil end
+    local rec = ns.creditsDb.ledger[discordName]
+    if not rec then return nil end
+    if rec.mainToon and rec.mainToon:lower() == key then return nil end
+    return rec.mainToon
+end
+
+--------------------------------------------------------------------------
+-- Dynamic Review Queue (2026-09-25) - runtime additions layered on top
+-- of the static, GENERATED ns.CreditsReviewQueue (ReviewQueue.lua, Step
+-- 0's own unresolved-donor list). Only Credits_UnlinkAlt adds to this
+-- today. Same row shape as a ReviewQueue.lua entry; rawGoldAmount is
+-- always 0 here since per-alt gold isn't tracked at runtime (only Step
+-- 0's offline contribution_data.csv has that breakdown) - "Set as New
+-- Main" on a reopened entry seeds a 0 lifetime total until the next
+-- real Step 0 pass recomputes it.
+--------------------------------------------------------------------------
+function ns.Credits_AddToReviewQueue(altName)
+    if not ns.creditsDb then return end
+    ns.creditsDb.dynamicReviewQueue = ns.creditsDb.dynamicReviewQueue or {}
+    ns.Credits_RemoveFromReviewQueue(altName) -- no duplicate entries
+    table.insert(ns.creditsDb.dynamicReviewQueue, {
+        name = altName,
+        issue = "removed_alt",
+        latestDonation = "",
+        rawGoldAmount = 0,
+        details = "removed from an account by an officer - no historical gold figure available at runtime",
+    })
+end
+
+function ns.Credits_RemoveFromReviewQueue(altName)
+    if not ns.creditsDb or not ns.creditsDb.dynamicReviewQueue then return end
+    local key = altName:lower()
+    for i, rec in ipairs(ns.creditsDb.dynamicReviewQueue) do
+        if rec.name:lower() == key then
+            table.remove(ns.creditsDb.dynamicReviewQueue, i)
+            return
+        end
+    end
+end
+
+-- Merged Review Queue source (2026-09-25): the tab's data is the
+-- static, GENERATED ns.CreditsReviewQueue (Step 0's own unresolved
+-- list, ReviewQueue.lua) plus ns.creditsDb.dynamicReviewQueue (names
+-- Credits_UnlinkAlt sent back here at runtime), deduped by lowercased
+-- name with the dynamic entry winning - it reflects this client's
+-- live state, the static list only as of Step 0's last run. One shared
+-- function so CreditsConfig.lua's tab isn't the only place that knows
+-- how to combine the two lists.
+function ns.Credits_ReviewQueueRows()
+    local rows, seen = {}, {}
+    if ns.creditsDb and ns.creditsDb.dynamicReviewQueue then
+        for _, rec in ipairs(ns.creditsDb.dynamicReviewQueue) do
+            local key = (rec.name or ""):lower()
+            if key ~= "" and not seen[key] then
+                seen[key] = true
+                table.insert(rows, rec)
+            end
+        end
+    end
+    if ns.CreditsReviewQueue then
+        for _, rec in ipairs(ns.CreditsReviewQueue) do
+            local key = (rec.name or ""):lower()
+            if key ~= "" and not seen[key] then
+                seen[key] = true
+                table.insert(rows, rec)
+            end
+        end
+    end
+    return rows
 end
 
 --------------------------------------------------------------------------
@@ -521,9 +690,10 @@ end
 function ns.Credits_ResetTestData()
     if not ns.CanManageCreditsConfigLocal() then return false end
     ns.creditsDb.ledger = {}
-    ns.creditsDb.altOverrides = {}
+    ns.creditsDb.toonIndex = {}
+    ns.creditsDb.dynamicReviewQueue = {}
     ns.creditsDb.transactionLog = {}
-    ns.CreditsPrint("Test credit data wiped (ledger, alt overrides, transaction log).")
+    ns.CreditsPrint("Test credit data wiped (ledger, toon index, dynamic review queue, transaction log).")
     return true
 end
 

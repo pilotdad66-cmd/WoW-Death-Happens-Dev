@@ -27,7 +27,7 @@
 --      for a player who is neither a Designated Officer nor guild
 --      leader/author (see CreditsConfig_Open's gate below).
 --   2. Designated Officer - views everyone, resolves alt/identity
---      conflicts. CM2's job - the Roster/Conflicts tabs below are
+--      conflicts. CM2's job - the Roster/Review Queue tabs below are
 --      placeholders until that milestone lands.
 --   3. Mail recipient (Bavin) - eventually able to hand-edit the raw
 --      reputation source data backing the tooltip. Deliberately NOT
@@ -44,7 +44,7 @@
 -- master toggle, multiplier, both Wall 2 test lists, and the
 -- Designated Officers list itself (that last one further gated to tier
 -- 4 within this same tab - see BuildSettingsTab's returned refresh
--- closure). Roster/Conflicts/Audit Log tabs are placeholders (CM2/CM7
+-- closure). Roster/Review Queue/Audit Log tabs are placeholders (CM2/CM7
 -- own that data).
 --
 -- GATING: same refuse-outright-on-open philosophy as PointsEditor.lua/
@@ -553,8 +553,8 @@ local function BuildRosterTab(content)
     -- box"). No page controls - the tab's outer ScrollFrame already
     -- handles a tall list (2026-09-25, Chris: "just one scrollable
     -- list"), so the row pool below simply grows to fit.
-    local sortState = { key = "mainName", ascending = true }
-    local expanded = {}   -- mainName -> true when its alts are shown
+    local sortState = { key = "mainToon", ascending = true }
+    local expanded = {}   -- discordName -> true when its alts are shown
 
     -- Column header line - fixed x-offsets matching each row's
     -- FontStrings below, sized to fit the window's default ~480px
@@ -569,25 +569,54 @@ local function BuildRosterTab(content)
     -- column, and Points shows "current/cap" for the main's tier
     -- (2026-09-25, Chris). Lifetime widened 2026-09-25 (Chris: header
     -- text was clipping against the Last Donation column).
+    -- Column layout (2026-09-25, Chris: "why are these not dynamic like
+    -- the Board?") - rebuilt right-to-left off the row's own RIGHT edge,
+    -- the same technique DH-Air's Board.lua uses (see that file's own
+    -- header comment: "the header always lines up with its column no
+    -- matter how the window is resized - both are built from these same
+    -- numbers, right-to-left"). Rank is fixed at the far left; Tier/
+    -- Points/Lifetime/Last Donation/Credits are fixed-width, each
+    -- anchored to the LEFT of the one before it; Name is the only column
+    -- with NO explicit width at all - anchored on both sides (Rank's
+    -- right, Tier's left), it just fills whatever room is left, growing
+    -- or shrinking automatically as the window is resized. Unlike Board
+    -- (which splits extra width between Name and Destination - see its
+    -- Board_Refresh column-growth calc), Roster only has the one column
+    -- that ever needs to grow, so no split/cap math is needed here - 100%
+    -- of any extra space goes to Name for free, purely from the anchors.
+    -- Requires rosterContent's own TOPRIGHT anchor (CreateWindow, below)
+    -- so headerRow/each row's RIGHT edge actually tracks a resize.
+    local COL_GAP = 8
+    local RANK_WIDTH = 26
+    local NAME_LEFT_GAP = 4
+    local TIER_WIDTH, POINTS_WIDTH, LIFETIME_WIDTH, LASTDON_WIDTH, CREDITS_WIDTH = 76, 76, 60, 86, 32
+
     local headerRow = CreateFrame("Frame", nil, content)
     headerRow:SetPoint("TOPLEFT", seedBtn, "BOTTOMLEFT", -2, -14)
-    headerRow:SetSize(1, 16)
+    headerRow:SetPoint("RIGHT", content, "RIGHT", -16, 0)
+    headerRow:SetHeight(16)
 
-    local function PlainHeader(text, xOffset)
+    local function HeaderCell(text, width)
         local fs = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        fs:SetPoint("LEFT", xOffset, 0)
+        fs:SetWidth(width)
+        fs:SetJustifyH("LEFT")
         fs:SetText(text)
+        return fs
     end
 
     -- Sortable header: a borderless Button (not UIPanelButtonTemplate -
     -- this needs to look like a column title, not a button) with a
     -- HIGHLIGHT texture for hover feedback and a label this file's
     -- Refresh() rewrites with a v/^ arrow when that column is the
-    -- active sort.
-    local function SortableHeader(text, xOffset, width, sortKey)
+    -- active sort. `width` is nil for Name - it's sized entirely by its
+    -- own two-sided anchor below, not by this function.
+    local function SortableHeaderCell(text, width, sortKey)
         local btn = CreateFrame("Button", nil, headerRow)
-        btn:SetPoint("LEFT", xOffset, 0)
-        btn:SetSize(width, 16)
+        if width then
+            btn:SetSize(width, 16)
+        else
+            btn:SetHeight(16)
+        end
         local label = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         label:SetAllPoints()
         label:SetJustifyH("LEFT")
@@ -599,13 +628,28 @@ local function BuildRosterTab(content)
         return btn
     end
 
-    PlainHeader("Rank", 0)
-    local nameHeader = SortableHeader("Name", 30, 76, "mainName")
-    PlainHeader("Tier", 110)
-    PlainHeader("Points", 190)
-    local lifetimeHeader = SortableHeader("Lifetime", 270, 60, "lifetimePoints")
-    local lastDonationHeader = SortableHeader("Last Donation", 334, 86, "lastDonationDate")
-    PlainHeader("Credits", 424)
+    local rankHeader = HeaderCell("Rank", RANK_WIDTH)
+    rankHeader:SetPoint("LEFT", 0, 0)
+
+    local creditsHeader = HeaderCell("Credits", CREDITS_WIDTH)
+    creditsHeader:SetPoint("RIGHT", headerRow, "RIGHT", 0, 0)
+
+    local lastDonationHeader = SortableHeaderCell("Last Donation", LASTDON_WIDTH, "lastDonationDate")
+    lastDonationHeader:SetPoint("RIGHT", creditsHeader, "LEFT", -COL_GAP, 0)
+
+    local lifetimeHeader = SortableHeaderCell("Lifetime", LIFETIME_WIDTH, "lifetimePoints")
+    lifetimeHeader:SetPoint("RIGHT", lastDonationHeader, "LEFT", -COL_GAP, 0)
+
+    local pointsHeader = HeaderCell("Points", POINTS_WIDTH)
+    pointsHeader:SetPoint("RIGHT", lifetimeHeader, "LEFT", -COL_GAP, 0)
+
+    local tierHeader = HeaderCell("Tier", TIER_WIDTH)
+    tierHeader:SetPoint("RIGHT", pointsHeader, "LEFT", -COL_GAP, 0)
+
+    -- The stretch column - see the block comment above.
+    local nameHeader = SortableHeaderCell("Name", nil, "mainToon")
+    nameHeader:SetPoint("LEFT", rankHeader, "RIGHT", NAME_LEFT_GAP, 0)
+    nameHeader:SetPoint("RIGHT", tierHeader, "LEFT", -COL_GAP, 0)
 
     -- Row pool grows on demand (EnsureRowCount) instead of a fixed
     -- page size - each display entry is either a main (full row, with
@@ -620,16 +664,54 @@ local function BuildRosterTab(content)
         for i = #rows + 1, n do
             local prevAnchor = rows[i - 1] or headerRow
             local row = CreateFrame("Frame", nil, content)
-            row:SetSize(1, 16)
+            row:SetHeight(16)
+            row:SetPoint("RIGHT", content, "RIGHT", -16, 0)
             if i == 1 then
                 row:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 0, -4)
             else
                 row:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 0, -2)
             end
 
+            -- Same right-to-left build as the header row above - see
+            -- that block's comment. Rank first (fixed, far left), then
+            -- Credits/Last Donation/Lifetime/Points/Tier chained off the
+            -- row's own RIGHT edge, THEN Name last so it can anchor its
+            -- own RIGHT to row.tier's LEFT (needs that cell to already
+            -- exist).
+            local function Cell(width)
+                local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                fs:SetWidth(width)
+                fs:SetJustifyH("LEFT")
+                return fs
+            end
+
+            row.rank = Cell(RANK_WIDTH)
+            row.rank:SetPoint("LEFT", 0, 0)
+
+            row.credits = Cell(CREDITS_WIDTH)
+            row.credits:SetPoint("RIGHT", row, "RIGHT", 0, 0)
+
+            row.lastDonation = Cell(LASTDON_WIDTH)
+            row.lastDonation:SetPoint("RIGHT", row.credits, "LEFT", -COL_GAP, 0)
+
+            row.lifetime = Cell(LIFETIME_WIDTH)
+            row.lifetime:SetPoint("RIGHT", row.lastDonation, "LEFT", -COL_GAP, 0)
+
+            row.points = Cell(POINTS_WIDTH)
+            row.points:SetPoint("RIGHT", row.lifetime, "LEFT", -COL_GAP, 0)
+
+            row.tier = Cell(TIER_WIDTH)
+            row.tier:SetPoint("RIGHT", row.points, "LEFT", -COL_GAP, 0)
+
+            -- The stretch column, same trick as nameHeader above - no
+            -- SetWidth/SetSize for width, just two anchors. This is what
+            -- actually fixes the alt-name truncation Chris reported:
+            -- it grows or shrinks with the window instead of sitting at
+            -- a fixed number.
             local nameBtn = CreateFrame("Button", nil, row)
-            nameBtn:SetPoint("LEFT", 30, 0)
-            nameBtn:SetSize(76, 16)
+            nameBtn:SetHeight(16)
+            nameBtn:SetPoint("LEFT", row.rank, "RIGHT", NAME_LEFT_GAP, 0)
+            nameBtn:SetPoint("RIGHT", row.tier, "LEFT", -COL_GAP, 0)
             local nameLabel = nameBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             nameLabel:SetAllPoints()
             nameLabel:SetJustifyH("LEFT")
@@ -638,26 +720,13 @@ local function BuildRosterTab(content)
             nameHl:SetAllPoints()
             nameHl:SetColorTexture(1, 1, 1, 0.15)
             nameBtn:SetScript("OnClick", function()
-                if row.isExpandable and row.currentMain then
-                    expanded[row.currentMain] = not expanded[row.currentMain]
+                if row.isExpandable and row.currentAccount then
+                    expanded[row.currentAccount] = not expanded[row.currentAccount]
                     if Refresh then Refresh() end
                 end
             end)
             row.nameBtn = nameBtn
 
-            local function Cell(xOffset, width)
-                local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-                fs:SetPoint("LEFT", xOffset, 0)
-                fs:SetWidth(width)
-                fs:SetJustifyH("LEFT")
-                return fs
-            end
-            row.rank = Cell(0, 26)
-            row.tier = Cell(110, 76)
-            row.points = Cell(190, 76)
-            row.lifetime = Cell(270, 60)
-            row.lastDonation = Cell(334, 86)
-            row.credits = Cell(424, 32)
             row:Hide()
             rows[i] = row
         end
@@ -684,12 +753,12 @@ local function BuildRosterTab(content)
             elseif sortState.key == "lastDonationDate" then
                 av, bv = a.lastDonationDate or "", b.lastDonationDate or ""
             else
-                av, bv = (a.mainName or ""):lower(), (b.mainName or ""):lower()
+                av, bv = (a.mainToon or ""):lower(), (b.mainToon or ""):lower()
             end
             if av ~= bv then
                 if sortState.ascending then return av < bv else return av > bv end
             end
-            return (a.mainName or "") < (b.mainName or "")
+            return (a.mainToon or "") < (b.mainToon or "")
         end)
         return list
     end
@@ -709,11 +778,11 @@ local function BuildRosterTab(content)
         table.sort(list, function(a, b)
             local av, bv = a.lifetimePoints or 0, b.lifetimePoints or 0
             if av ~= bv then return av > bv end
-            return (a.mainName or "") < (b.mainName or "")
+            return (a.mainToon or "") < (b.mainToon or "")
         end)
         local ranks = {}
         for i, rec in ipairs(list) do
-            ranks[rec.mainName] = i
+            ranks[rec.discordName] = i
         end
         return ranks
     end
@@ -724,10 +793,10 @@ local function BuildRosterTab(content)
         local mains = SortedLedger()
         local display = {}
         for _, rec in ipairs(mains) do
-            local alts = ns.CreditsAltRoster and ns.CreditsAltRoster[rec.mainName]
+            local alts = rec.alts
             local hasAlts = alts ~= nil and #alts > 0
             table.insert(display, { kind = "main", rec = rec, hasAlts = hasAlts })
-            if hasAlts and expanded[rec.mainName] then
+            if hasAlts and expanded[rec.discordName] then
                 for _, altName in ipairs(alts) do
                     table.insert(display, { kind = "alt", name = altName })
                 end
@@ -744,7 +813,7 @@ local function BuildRosterTab(content)
                 btn.label:SetText(btn.baseText)
             end
         end
-        HeaderText(nameHeader, "mainName")
+        HeaderText(nameHeader, "mainToon")
         HeaderText(lifetimeHeader, "lifetimePoints")
         HeaderText(lastDonationHeader, "lastDonationDate")
 
@@ -765,10 +834,10 @@ local function BuildRosterTab(content)
                 if entry.kind == "main" then
                     local rec = entry.rec
                     row.isExpandable = entry.hasAlts
-                    row.currentMain = rec.mainName
-                    row.rank:SetText(tostring(ranks[rec.mainName] or "?"))
-                    local marker = entry.hasAlts and (expanded[rec.mainName] and "[-] " or "[+] ") or "      "
-                    row.nameBtn.label:SetText(marker .. (rec.mainName or "?"))
+                    row.currentAccount = rec.discordName
+                    row.rank:SetText(tostring(ranks[rec.discordName] or "?"))
+                    local marker = entry.hasAlts and (expanded[rec.discordName] and "[-] " or "[+] ") or "      "
+                    row.nameBtn.label:SetText(marker .. (rec.mainToon or "?"))
                     row.nameBtn:EnableMouse(entry.hasAlts)
                     local tierText = rec.tier or "?"
                     if (rec.prestige or 0) > 0 then
@@ -787,7 +856,7 @@ local function BuildRosterTab(content)
                     row.credits:SetText(tostring(rec.credits or 0))
                 else
                     row.isExpandable = false
-                    row.currentMain = nil
+                    row.currentAccount = nil
                     row.rank:SetText("")
                     row.nameBtn.label:SetText("      - " .. (entry.name or "?"))
                     row.nameBtn:EnableMouse(false)
@@ -816,7 +885,7 @@ local function BuildRosterTab(content)
         end
         Refresh()
     end
-    nameHeader:SetScript("OnClick", function() SetSort("mainName", true) end)
+    nameHeader:SetScript("OnClick", function() SetSort("mainToon", true) end)
     lifetimeHeader:SetScript("OnClick", function() SetSort("lifetimePoints", false) end)
     lastDonationHeader:SetScript("OnClick", function() SetSort("lastDonationDate", false) end)
 
@@ -824,27 +893,34 @@ local function BuildRosterTab(content)
 end
 
 --------------------------------------------------------------------------
--- Conflicts tab (CM2, 2026-09-25) - Step 0's unresolved/ambiguous donor
--- names (ReviewQueue.lua, GENERATED from review-queue.csv), sortable by
--- Name and by Latest Donation date (Chris, 2026-09-25 - asked for this
--- on "the unresolved donators list"), filterable by typed substring,
--- with a per-row manual-link control that writes straight to the live
--- altOverrides table (ns.Credits_SetAltOverride/RemoveAltOverride,
--- Credits.lua). This list itself is static reference data - linking a
--- row doesn't remove it here, it just shows the row as resolved; the
--- list only shrinks on the next Step 0 + import-review-queue.ps1 pass.
+-- Review Queue tab (CM2, renamed from "Conflicts" 2026-09-25 - Chris:
+-- "\"Conflicts\" ... is a terrible name ... it is not conflicts - only
+-- unresolved data"). Combines Step 0's static unresolved/ambiguous
+-- donor names (ReviewQueue.lua, GENERATED from review-queue.csv) with
+-- any names Credits_UnlinkAlt has sent back here at runtime
+-- (ns.creditsDb.dynamicReviewQueue - Loopi, 2026-09-25: "When an alt is
+-- removed - it should go back into the review queue so it can be
+-- re-associated with the correct main"), via Credits.lua's
+-- ns.Credits_ReviewQueueRows(). Sortable by Name and by Latest Donation
+-- date, filterable by typed substring, with a per-row manual-link
+-- control that writes straight into the live ledger
+-- (ns.Credits_LinkAlt/UnlinkAlt, Credits.lua - Identity model v2). The
+-- static half of the source list doesn't shrink here - only the next
+-- Step 0 + import-review-queue.ps1 pass changes it - but a row still
+-- reflects its live resolved state (linked-as-alt, or promoted to its
+-- own account) immediately.
 --------------------------------------------------------------------------
-local function BuildConflictsTab(content)
+local function BuildReviewQueueTab(content)
     local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 16, -16)
-    title:SetText("Conflicts")
+    title:SetText("Review Queue")
 
     local hint = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     hint:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
-    hint:SetText("Donor names Step 0 couldn't map to a main, as of its last run (see review-queue.csv). Linking or setting as a new main here is Designated Officer/author only and takes effect immediately for live crediting - it doesn't shrink this list, which only refreshes on the next Step 0 pass. \"New Main\" seeds the row's real historical lifetime total (raw gold x10, same convention as everywhere else).")
+    hint:SetText("Donor names that aren't tied to an account yet - either Step 0 couldn't map them as of its last run, or an officer removed them from an account's alt list. Linking or setting as a new main here is Designated Officer/author only and takes effect immediately for live crediting. \"New Main\" seeds the row's real historical lifetime total (raw gold x10, same convention as everywhere else).")
 
     local filterLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     filterLabel:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", -2, -12)
@@ -893,6 +969,92 @@ local function BuildConflictsTab(content)
     nextPageBtn:SetPoint("LEFT", pageLabel, "RIGHT", 8, 0)
     nextPageBtn:SetSize(60, 20)
     nextPageBtn:SetText("Next >")
+
+    -- Type-ahead suggestions for the "Link to:" box (2026-09-25, Chris:
+    -- narrow the field as you type instead of typing a full name blind).
+    -- ONE shared popup, repositioned under whichever row's linkEdit
+    -- currently has focus, rather than one per row (there can be dozens
+    -- of rows on a page). Parented to the top-level `frame`, not this
+    -- tab's scrolling content, so it draws above the row list and is
+    -- never clipped by the ScrollFrame's own viewport.
+    local SUGGEST_MAX = 8
+    local suggestBox = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    suggestBox:SetFrameStrata("TOOLTIP")
+    suggestBox:SetWidth(150)
+    suggestBox:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        edgeSize = 12,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    suggestBox:SetBackdropColor(0, 0, 0, 0.9)
+    suggestBox:Hide()
+
+    local suggestButtons = {}
+    for i = 1, SUGGEST_MAX do
+        local btn = CreateFrame("Button", nil, suggestBox)
+        btn:SetHeight(16)
+        btn:SetPoint("TOPLEFT", 4, -4 - (i - 1) * 16)
+        btn:SetPoint("RIGHT", -4, 0)
+        local label = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        label:SetAllPoints()
+        label:SetJustifyH("LEFT")
+        btn.label = label
+        local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints()
+        hl:SetColorTexture(1, 1, 1, 0.2)
+        btn:Hide()
+        suggestButtons[i] = btn
+    end
+
+    -- Candidates are every account's CURRENT mainToon (Identity model
+    -- v2) - never an alt name, since this box's whole job is picking
+    -- which MAIN to link to. Re-scanned on every keystroke rather than
+    -- cached - the ledger is small enough (hundreds, not thousands of
+    -- rows) that this isn't worth extra bookkeeping.
+    local function MainToonCandidates(typed)
+        local matches = {}
+        if typed == "" or not ns.creditsDb or not ns.creditsDb.ledger then return matches end
+        local needle = typed:lower()
+        for _, rec in pairs(ns.creditsDb.ledger) do
+            if rec.mainToon and rec.mainToon:lower():find(needle, 1, true) then
+                table.insert(matches, rec.mainToon)
+                if #matches >= SUGGEST_MAX then break end
+            end
+        end
+        table.sort(matches)
+        return matches
+    end
+
+    local function HideSuggestions()
+        suggestBox:Hide()
+    end
+
+    local function UpdateSuggestions(editBox)
+        local matches = MainToonCandidates(editBox:GetText() or "")
+        if #matches == 0 then
+            HideSuggestions()
+            return
+        end
+        suggestBox:ClearAllPoints()
+        suggestBox:SetPoint("TOPLEFT", editBox, "BOTTOMLEFT", 0, -2)
+        suggestBox:SetHeight(8 + #matches * 16)
+        for i, btn in ipairs(suggestButtons) do
+            local name = matches[i]
+            if name then
+                btn.label:SetText(name)
+                btn:SetScript("OnClick", function()
+                    editBox:SetText(name)
+                    editBox:ClearFocus()
+                    HideSuggestions()
+                end)
+                btn:Show()
+            else
+                btn:Hide()
+            end
+        end
+        suggestBox:Show()
+    end
 
     -- Row pool still grows on demand (EnsureRowCount), but the caller
     -- below never hands it more than CONFLICTS_ROWS_PER_PAGE records,
@@ -952,7 +1114,19 @@ local function BuildConflictsTab(content)
             row.linkEdit:SetPoint("LEFT", row.linkArrow, "RIGHT", 6, -2)
             row.linkEdit:SetAutoFocus(false)
             row.linkEdit:SetMaxLetters(24)
-            row.linkEdit:SetScript("OnEscapePressed", row.linkEdit.ClearFocus)
+            row.linkEdit:SetScript("OnEscapePressed", function(self)
+                HideSuggestions()
+                self:ClearFocus()
+            end)
+            row.linkEdit:SetScript("OnTextChanged", function(self) UpdateSuggestions(self) end)
+            row.linkEdit:SetScript("OnEditFocusGained", function(self) UpdateSuggestions(self) end)
+            -- A click on a suggestion button is itself a focus-loss event
+            -- for the edit box, which would otherwise hide the popup
+            -- before the button's own OnClick runs. Deferring one frame
+            -- lets that click land first.
+            row.linkEdit:SetScript("OnEditFocusLost", function()
+                C_Timer.After(0.15, HideSuggestions)
+            end)
 
             row.linkBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
             row.linkBtn:SetSize(50, 18)
@@ -989,7 +1163,7 @@ local function BuildConflictsTab(content)
     local function FilteredSortedRows()
         local typed = (filterEdit:GetText() or ""):lower()
         local list = {}
-        local source = ns.CreditsReviewQueue or {}
+        local source = (ns.Credits_ReviewQueueRows and ns.Credits_ReviewQueueRows()) or ns.CreditsReviewQueue or {}
         for _, rec in ipairs(source) do
             if typed == "" or (rec.name or ""):lower():find(typed, 1, true) then
                 table.insert(list, rec)
@@ -1049,11 +1223,28 @@ local function BuildConflictsTab(content)
                 row:Hide()
             else
                 row:Show()
-                local tag = rec.issue == "identity_conflict" and "|cffffcc00conflict|r" or "|cff999999unmapped|r"
+                local tag
+                if rec.issue == "identity_conflict" then
+                    tag = "|cffffcc00conflict|r"
+                elseif rec.issue == "removed_alt" then
+                    tag = "|cff66ccffremoved alt|r"
+                else
+                    tag = "|cff999999unmapped|r"
+                end
                 local dateText = (rec.latestDonation and rec.latestDonation ~= "") and rec.latestDonation or "no date"
                 row.info:SetText(("%s  (%s, last donation %s)"):format(rec.name or "?", tag, dateText))
 
-                local linkedMain = ns.Credits_GetAltOverride and ns.Credits_GetAltOverride(rec.name) or nil
+                -- Resolved either as an alt of another account
+                -- (Credits_GetAltMain) or as its own account (a
+                -- toonIndex hit that Credits_GetAltMain deliberately
+                -- excludes - see Credits.lua). Only the alt case gets
+                -- an Unlink button here; un-doing a "New Main" account
+                -- is deferred to the future unified account editor.
+                local linkedMain = ns.Credits_GetAltMain and ns.Credits_GetAltMain(rec.name) or nil
+                local isOwnMain = false
+                if not linkedMain and ns.creditsDb and ns.creditsDb.toonIndex then
+                    isOwnMain = ns.creditsDb.toonIndex[(rec.name or ""):lower()] ~= nil
+                end
                 if linkedMain then
                     row.linkedText:SetText("|cff33ff99-> " .. linkedMain .. "|r")
                     row.linkedText:Show()
@@ -1065,10 +1256,19 @@ local function BuildConflictsTab(content)
                     row.setMainBtn:Hide()
                     row.status:Hide()
                     row.unlinkBtn:SetScript("OnClick", function()
-                        if ns.Credits_RemoveAltOverride(rec.name) then
+                        if ns.Credits_UnlinkAlt(rec.name) then
                             ns.CreditsConfig_Refresh()
                         end
                     end)
+                elseif isOwnMain then
+                    row.linkedText:SetText("|cff33ff99Own main|r")
+                    row.linkedText:Show()
+                    row.unlinkBtn:Hide()
+                    row.linkArrow:Hide()
+                    row.linkEdit:Hide()
+                    row.linkBtn:Hide()
+                    row.setMainBtn:Hide()
+                    row.status:Hide()
                 else
                     row.linkedText:Hide()
                     row.unlinkBtn:Hide()
@@ -1083,8 +1283,9 @@ local function BuildConflictsTab(content)
                     row.linkBtn:SetScript("OnClick", function()
                         local typedMain = row.linkEdit:GetText()
                         row.linkEdit:ClearFocus()
+                        HideSuggestions()
                         if typedMain == "" then return end
-                        if ns.Credits_SetAltOverride(rec.name, typedMain) then
+                        if ns.Credits_LinkAlt(rec.name, typedMain) then
                             row.linkEdit:SetText("")
                             ns.CreditsConfig_Refresh()
                         else
@@ -1167,15 +1368,19 @@ end
 -- Frame construction (built once, first time the window is opened)
 --------------------------------------------------------------------------
 local TAB_DEFS = {
-    { key = "settings",  label = "Settings" },
-    { key = "roster",    label = "Roster" },
-    { key = "conflicts", label = "Conflicts" },
-    { key = "audit",     label = "Audit Log" },
+    { key = "settings",    label = "Settings" },
+    { key = "roster",      label = "Roster" },
+    { key = "reviewQueue", label = "Review Queue" },
+    { key = "audit",       label = "Audit Log" },
 }
 
 local function CreateWindow()
     frame = CreateFrame("Frame", "DHBavinCreditsConfigFrame", UIParent, "BasicFrameTemplateWithInset")
-    frame:SetSize(480, 620)
+    -- Widened 480 -> 580 (2026-09-25) to match the Roster tab's Name
+    -- column widening above - still well inside SetResizeBounds' 720
+    -- max below, and the window was already user-resizable before this,
+    -- so this only changes what it opens at by default.
+    frame:SetSize(580, 620)
     frame:SetPoint("CENTER")
     if frame.TitleText then
         frame.TitleText:SetText("Bavin Rep & Credit Config")
@@ -1270,6 +1475,11 @@ local function CreateWindow()
 
     local rosterContent = CreateFrame("Frame", nil, scrollFrame)
     rosterContent:SetPoint("TOPLEFT", scrollFrame, "TOPLEFT", 0, 0)
+    -- TOPRIGHT added too (2026-09-25) so this tab's width tracks the
+    -- window instead of staying at whatever SetSize below happened to
+    -- say - BuildRosterTab's Name column is anchored off this frame's
+    -- real RIGHT edge and needs it to actually move when resized.
+    rosterContent:SetPoint("TOPRIGHT", scrollFrame, "TOPRIGHT", 0, 0)
     -- Generous fixed pre-first-refresh estimate (title/hint/seed button +
     -- sort/page controls + a full 20-row page) - trimmed to the real
     -- content height on every refresh, same as Settings tab.
@@ -1277,14 +1487,14 @@ local function CreateWindow()
     tabs.roster.refresh = BuildRosterTab(rosterContent)
     tabs.roster.content = rosterContent
 
-    local conflictsContent = CreateFrame("Frame", nil, scrollFrame)
-    conflictsContent:SetPoint("TOPLEFT", scrollFrame, "TOPLEFT", 0, 0)
+    local reviewQueueContent = CreateFrame("Frame", nil, scrollFrame)
+    reviewQueueContent:SetPoint("TOPLEFT", scrollFrame, "TOPLEFT", 0, 0)
     -- Generous fixed pre-first-refresh estimate (title/hint/filter/sort/
     -- page controls + a full 15-row page, each row 2 lines) - trimmed to
     -- the real content height on every refresh, same as the other tabs.
-    conflictsContent:SetSize(1, 650)
-    tabs.conflicts.refresh = BuildConflictsTab(conflictsContent)
-    tabs.conflicts.content = conflictsContent
+    reviewQueueContent:SetSize(1, 650)
+    tabs.reviewQueue.refresh = BuildReviewQueueTab(reviewQueueContent)
+    tabs.reviewQueue.content = reviewQueueContent
 
     local auditContent = CreateFrame("Frame", nil, scrollFrame)
     auditContent:SetPoint("TOPLEFT", scrollFrame, "TOPLEFT", 0, 0)

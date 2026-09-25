@@ -167,7 +167,7 @@ _G.DHTools = {
 --------------------------------------------------------------------------
 
 local ADDON_ROOT = "C:\\AIProjects-NOSYNC\\WoW\\src\\DH-Tools\\Modules\\DHBavin\\"
-local FILES = { "Core.lua", "Sync.lua", "ItemPoints.lua" }
+local FILES = { "Core.lua", "Sync.lua", "ItemPoints.lua", "Credits.lua", "CreditsSeed.lua" }
 
 for _, filename in ipairs(FILES) do
     local chunk, err = loadfile(ADDON_ROOT .. filename)
@@ -189,6 +189,11 @@ end
 
 -- Simulate PLAYER_LOGIN (Sync_Init, RequestGuildRoster).
 ns.frame:Fire("PLAYER_LOGIN")
+-- Credits.lua owns its own frame (ns.creditsFrame, separate from
+-- ns.frame - see that file's Wall 1 header) - PLAYER_LOGIN there is
+-- what calls InitCreditsDB(), so ns.creditsDb doesn't exist until this
+-- fires too.
+ns.creditsFrame:Fire("PLAYER_LOGIN")
 
 --------------------------------------------------------------------------
 -- Test helpers
@@ -226,6 +231,26 @@ local function resetState()
     -- start each section from a genuinely "no history" client.
     ns.db.recipientEditorsUpdatedAt = 0
     authorAccountFlag = false
+    -- Credits system (Identity model v2) - reset IN PLACE, same reasoning
+    -- as ns.priorityList above: ns.creditsDb IS DHBavinCreditsDB, and
+    -- nothing else holds a separate reference to it, but reassigning the
+    -- field tables themselves (rather than DHBavinCreditsDB) keeps this
+    -- symmetric with every other reset here and avoids depending on
+    -- InitCreditsDB's own "only if missing" guards to do the clearing.
+    if ns.creditsDb then
+        ns.creditsDb.ledger = {}
+        ns.creditsDb.toonIndex = {}
+        ns.creditsDb.dynamicReviewQueue = {}
+        ns.creditsDb.transactionLog = {}
+        ns.creditsDb.officers = {}
+        ns.creditsDb.masterToggle = false
+        ns.creditsDb.creditTestReceivers = {}
+        ns.creditsDb.creditTestSenders = {}
+        ns.creditsDb.configUpdatedAt = 0
+    end
+    ns.CreditsSeedData = nil
+    ns.CreditsAltRoster = nil
+    ns.CreditsReviewQueue = nil
 end
 
 local function outboxOfType(msgType)
@@ -955,6 +980,288 @@ ns.Sync_OnAddonMessage("DHBavinV4", ptsSet[1].text, "GUILD", "OtherEditor")
 check("PTSSET wording survives the round trip intact",
     ns.db.itemPointsOverrides["Wire Test Item"]
     and ns.db.itemPointsOverrides["Wire Test Item"].detail == nastyDetail)
+
+--------------------------------------------------------------------------
+-- Credits (CM1/CM2, Identity model v2, 2026-09-25) - new coverage,
+-- flagged as a gap in claude\DH-Bavin\STATUS.md ("harness currently has
+-- no Credits/CreditsSeed/CreditsConfig coverage"). CreditsConfig.lua
+-- itself stays excluded (UI-template heavy, same exclusion category as
+-- everything else in the header comment) - this covers the pure-logic
+-- layer underneath it: permission gates, tier-cap arithmetic, seed
+-- import, and the Link/Unlink/Review Queue mechanics.
+--------------------------------------------------------------------------
+print("== Credits: tier-cap arithmetic ==")
+resetState()
+do
+    local tier, prestige, points = ns.Credits_TierStateForLifetime(0)
+    check("0 lifetime points is Neutral, prestige 0, 0 points", tier == "Neutral" and prestige == 0 and points == 0)
+end
+do
+    local tier, _, points = ns.Credits_TierStateForLifetime(2999)
+    check("Just under Neutral's cap stays Neutral", tier == "Neutral" and points == 2999)
+end
+do
+    local tier, _, points = ns.Credits_TierStateForLifetime(3000)
+    check("Exactly at Neutral's cap rolls into Friendly at 0", tier == "Friendly" and points == 0)
+end
+do
+    local tier, prestige, points = ns.Credits_TierStateForLifetime(3000 + 6000 + 12000 + 21000)
+    check("Sum of Neutral..Revered caps lands exactly on Exalted at 0",
+        tier == "Exalted" and prestige == 0 and points == 0)
+end
+do
+    local exaltedStart = 3000 + 6000 + 12000 + 21000
+    local tier, prestige, points = ns.Credits_TierStateForLifetime(exaltedStart + 50000)
+    check("One full Exalted lap (50000) bumps prestige to 1, resets points to 0",
+        tier == "Exalted" and prestige == 1 and points == 0)
+end
+do
+    local exaltedStart = 3000 + 6000 + 12000 + 21000
+    local tier, prestige, points = ns.Credits_TierStateForLifetime(exaltedStart + 50000 * 3 + 12345)
+    check("Exalted keeps looping uncapped - prestige 3, remainder as points",
+        tier == "Exalted" and prestige == 3 and points == 12345)
+end
+do
+    local tier, _, points = ns.Credits_TierStateForLifetime(-500)
+    check("Negative input clamps to 0, not an error", tier == "Neutral" and points == 0)
+end
+
+--------------------------------------------------------------------------
+print("== Credits: permission gates ==")
+resetState()
+check("Refused when not in the guild at all", ns.CanManageCreditsConfigLocal() == false)
+check("Officer-list management also refused when not in the guild", ns.CanManageCreditsOfficers() == false)
+
+inGuild = true
+guildRosterEntries = {
+    { name = "GLeader", rankIndex = 0 },
+    { name = "PlainMember", rankIndex = 5 },
+}
+ns.UpdateGuildRosterCache()
+currentPlayerName = "PlainMember"
+check("In guild but neither officer nor author is still refused", ns.CanManageCreditsConfigLocal() == false)
+check("A plain member cannot manage the officers list either", ns.CanManageCreditsOfficers() == false)
+
+currentPlayerName = "GLeader"
+check("The guild leader can manage the officers list", ns.CanManageCreditsOfficers() == true)
+check("Being guild leader alone does not grant config access (not an officer)",
+    ns.CanManageCreditsConfigLocal() == false)
+
+ns.creditsDb.officers = { "PlainMember" }
+currentPlayerName = "PlainMember"
+check("A listed Designated Officer can manage local config", ns.CanManageCreditsConfigLocal() == true)
+check("A Designated Officer is not thereby able to manage the officers list itself",
+    ns.CanManageCreditsOfficers() == false)
+
+ns.creditsDb.officers = {}
+authorAccountFlag = true
+check("Author-account override grants config access even with no officer entry",
+    ns.CanManageCreditsConfigLocal() == true)
+check("Author-account override also grants officer-list management",
+    ns.CanManageCreditsOfficers() == true)
+
+inGuild = false
+check("Author override does not bypass the guild-membership gate", ns.CanManageCreditsConfigLocal() == false)
+
+--------------------------------------------------------------------------
+print("== Credits: CreditsSeed_Import ==")
+resetState()
+inGuild = true
+guildRosterEntries = { { name = "Officer1", rankIndex = 3 } }
+ns.UpdateGuildRosterCache()
+currentPlayerName = "Officer1"
+ns.creditsDb.officers = { "Officer1" }
+
+check("Import refuses with no SeedData.lua loaded", ns.CreditsSeed_Import() == false)
+
+ns.CreditsSeedData = {
+    MainOne = { lifetimePoints = 1500, latestDonation = "2026-09-01" },
+    MainTwo = { lifetimePoints = 3200, latestDonation = "2026-08-15" },
+}
+ns.CreditsAltRoster = { MainOne = { "AltOne", "AltTwo" } }
+
+local ok, count = ns.CreditsSeed_Import()
+check("Import succeeds and reports 2 seeded mains", ok == true and count == 2)
+local seedRec = ns.creditsDb.ledger["MainOne"]
+check("Seeded row is keyed by discordName == mainToon at seed time",
+    seedRec and seedRec.discordName == "MainOne" and seedRec.mainToon == "MainOne")
+check("Seeded row copies AltRoster's alt list",
+    seedRec and #seedRec.alts == 2 and seedRec.alts[1] == "AltOne" and seedRec.alts[2] == "AltTwo")
+check("Credits always seed at 0 regardless of lifetime points (go-live rule)", seedRec and seedRec.credits == 0)
+local expTier, expPrestige, expPoints = ns.Credits_TierStateForLifetime(1500)
+check("Seeded tier/prestige/points match Credits_TierStateForLifetime exactly",
+    seedRec.tier == expTier and seedRec.prestige == expPrestige and seedRec.points == expPoints)
+check("A main with no AltRoster entry seeds an empty (not nil) alts list",
+    ns.creditsDb.ledger["MainTwo"] and type(ns.creditsDb.ledger["MainTwo"].alts) == "table"
+    and #ns.creditsDb.ledger["MainTwo"].alts == 0)
+check("toonIndex is rebuilt so both a main and its alt resolve",
+    ns.creditsDb.toonIndex["mainone"] == "MainOne" and ns.creditsDb.toonIndex["altone"] == "MainOne")
+
+--------------------------------------------------------------------------
+print("== Credits: Link/Unlink alt resolution and Review Queue ==")
+resetState()
+inGuild = true
+guildRosterEntries = { { name = "Officer1", rankIndex = 3 } }
+ns.UpdateGuildRosterCache()
+currentPlayerName = "Officer1"
+ns.creditsDb.officers = { "Officer1" }
+ns.CreditsSeedData = { MainA = { lifetimePoints = 100 }, MainB = { lifetimePoints = 200 } }
+ns.CreditsSeed_Import()
+
+check("A name with no account resolves to itself (self-fallback)",
+    ns.Credits_ResolveMain("NobodyKnown") == "NobodyKnown")
+check("A seeded main resolves to itself", ns.Credits_ResolveMain("MainA") == "MainA")
+
+check("Linking without permission is refused", (function()
+    local prior = ns.creditsDb.officers
+    ns.creditsDb.officers = {}
+    local result = ns.Credits_LinkAlt("SomeAlt", "MainA")
+    ns.creditsDb.officers = prior
+    return result
+end)() == false)
+
+check("Cannot link an alt to an unknown main toon name", ns.Credits_LinkAlt("SomeAlt", "NoSuchMain") == false)
+check("Cannot link a name to itself", ns.Credits_LinkAlt("MainA", "MainA") == false)
+
+check("Linking a fresh alt to MainA succeeds", ns.Credits_LinkAlt("SideKick", "MainA") == true)
+check("The linked alt now resolves to MainA's current mainToon", ns.Credits_ResolveMain("SideKick") == "MainA")
+check("Credits_GetAltMain reports the owning main for a linked alt", ns.Credits_GetAltMain("SideKick") == "MainA")
+check("Credits_GetAltMain returns nil for an account's own main toon (not \"linked to itself\")",
+    ns.Credits_GetAltMain("MainA") == nil)
+
+check("Re-linking the same alt to MainB moves it (no duplicate ownership)",
+    ns.Credits_LinkAlt("SideKick", "MainB") == true)
+check("SideKick now resolves to MainB, not MainA", ns.Credits_ResolveMain("SideKick") == "MainB")
+check("MainA's alts array no longer contains SideKick", (function()
+    for _, a in ipairs(ns.creditsDb.ledger["MainA"].alts) do
+        if a == "SideKick" then return false end
+    end
+    return true
+end)())
+
+check("Unlinking SideKick releases it from MainB", ns.Credits_UnlinkAlt("SideKick") == true)
+check("After unlink, SideKick resolves back to itself", ns.Credits_ResolveMain("SideKick") == "SideKick")
+check("Unlinking a name that belongs to no account is refused (nothing to remove)",
+    ns.Credits_UnlinkAlt("SideKick") == false)
+
+local rq = ns.Credits_ReviewQueueRows()
+local reopened = false
+for _, r in ipairs(rq) do
+    if r.name == "SideKick" and r.issue == "removed_alt" then reopened = true end
+end
+check("Unlinking reopens the name in the (dynamic) Review Queue as removed_alt", reopened)
+
+check("Re-linking a reopened name clears it back out of the Review Queue",
+    ns.Credits_LinkAlt("SideKick", "MainA") == true)
+rq = ns.Credits_ReviewQueueRows()
+local stillQueued = false
+for _, r in ipairs(rq) do
+    if r.name == "SideKick" then stillQueued = true end
+end
+check("SideKick no longer appears in the Review Queue once re-linked", not stillQueued)
+
+--------------------------------------------------------------------------
+print("== Credits: Review Queue static+dynamic merge ==")
+resetState()
+inGuild = true
+guildRosterEntries = { { name = "Officer1", rankIndex = 3 } }
+ns.UpdateGuildRosterCache()
+currentPlayerName = "Officer1"
+ns.creditsDb.officers = { "Officer1" }
+
+ns.CreditsReviewQueue = {
+    { name = "StaticOnly", issue = "no_identity_mapping", latestDonation = "2026-07-01", rawGoldAmount = 40 },
+    { name = "Overlap", issue = "identity_conflict", latestDonation = "2026-07-15", rawGoldAmount = 10 },
+}
+ns.Credits_AddToReviewQueue("DynamicOnly")
+ns.Credits_AddToReviewQueue("Overlap") -- same name as a static row
+
+local rows = ns.Credits_ReviewQueueRows()
+local byName = {}
+for _, r in ipairs(rows) do byName[r.name] = r end
+
+check("Static-only row is present", byName["StaticOnly"] ~= nil)
+check("Dynamic-only row is present", byName["DynamicOnly"] ~= nil)
+check("A name in both lists appears exactly once", #rows == 3)
+check("On overlap, the dynamic (runtime) row wins over the static one", byName["Overlap"].issue == "removed_alt")
+
+ns.Credits_RemoveFromReviewQueue("DynamicOnly")
+rows = ns.Credits_ReviewQueueRows()
+byName = {}
+for _, r in ipairs(rows) do byName[r.name] = r end
+check("Removing a dynamic row drops it from the merged view", byName["DynamicOnly"] == nil)
+check("Removing one dynamic row leaves the others untouched", #rows == 2)
+
+--------------------------------------------------------------------------
+print("== Credits: Credits_SetAsNewMain ==")
+resetState()
+inGuild = true
+guildRosterEntries = { { name = "Officer1", rankIndex = 3 } }
+ns.UpdateGuildRosterCache()
+currentPlayerName = "Officer1"
+ns.creditsDb.officers = { "Officer1" }
+ns.CreditsSeedData = { ExistingMain = { lifetimePoints = 500 } }
+ns.CreditsSeed_Import()
+ns.Credits_AddToReviewQueue("NewGuy")
+
+check("Cannot promote a name that already resolves to an existing account",
+    ns.Credits_SetAsNewMain("ExistingMain", 100, "2026-09-20") == false)
+
+check("Promoting a fresh Review Queue name to its own account succeeds",
+    ns.Credits_SetAsNewMain("NewGuy", 250, "2026-09-20") == true)
+local newRec = ns.creditsDb.ledger["NewGuy"]
+check("New account is its own discordName/mainToon with no alts",
+    newRec and newRec.discordName == "NewGuy" and newRec.mainToon == "NewGuy" and #newRec.alts == 0)
+check("Lifetime total is rawGoldAmount * 10, the same convention as seed-dataset.csv",
+    newRec and newRec.lifetimePoints == 2500)
+check("Credits seed at 0 here too, same go-live rule as CreditsSeed_Import", newRec and newRec.credits == 0)
+check("The new account resolves via Credits_ResolveMain", ns.Credits_ResolveMain("NewGuy") == "NewGuy")
+
+rows = ns.Credits_ReviewQueueRows()
+local stillThere = false
+for _, r in ipairs(rows) do
+    if r.name == "NewGuy" then stillThere = true end
+end
+check("Promoting a name removes it from the Review Queue", not stillThere)
+
+check("Cannot promote the same name twice now that it resolves to its own account",
+    ns.Credits_SetAsNewMain("NewGuy", 999, "2026-09-21") == false)
+
+check("Promotion without permission is refused", (function()
+    local prior = ns.creditsDb.officers
+    ns.creditsDb.officers = {}
+    local result = ns.Credits_SetAsNewMain("AnotherGuy", 50, "")
+    ns.creditsDb.officers = prior
+    return result
+end)() == false)
+
+--------------------------------------------------------------------------
+print("== Credits: Credits_ResetTestData ==")
+resetState()
+inGuild = true
+guildRosterEntries = { { name = "Officer1", rankIndex = 3 } }
+ns.UpdateGuildRosterCache()
+currentPlayerName = "Officer1"
+ns.creditsDb.officers = { "Officer1" }
+ns.CreditsSeedData = { MainA = { lifetimePoints = 100 } }
+ns.CreditsSeed_Import()
+ns.Credits_AddToReviewQueue("Whoever")
+
+check("Reset without permission is refused and leaves data intact", (function()
+    local prior = ns.creditsDb.officers
+    ns.creditsDb.officers = {}
+    local result = ns.Credits_ResetTestData()
+    ns.creditsDb.officers = prior
+    return result == false and ns.creditsDb.ledger["MainA"] ~= nil
+end)())
+
+check("Reset with permission wipes ledger, toonIndex, dynamic Review Queue, transaction log",
+    ns.Credits_ResetTestData() == true
+    and next(ns.creditsDb.ledger) == nil
+    and next(ns.creditsDb.toonIndex) == nil
+    and next(ns.creditsDb.dynamicReviewQueue) == nil
+    and next(ns.creditsDb.transactionLog) == nil)
+check("A name resolves back to self-fallback after reset", ns.Credits_ResolveMain("MainA") == "MainA")
 
 --------------------------------------------------------------------------
 -- Summary
