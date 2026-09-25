@@ -1,6 +1,6 @@
 # DH-Tools
 
-**Version 2.1.0** | Author: **Loopi** | For: *Death Happens* Hardcore guild
+**Version 2.1.1** | Author: **Loopi** | For: *Death Happens* Hardcore guild
 
 ---
 
@@ -57,6 +57,14 @@ you actually want running, all managed from one place.
 ---
 
 ## Changelog
+
+### 2.1.1
+- **New: DH-Air summon counters for Warlocks.** The Air Service Board
+  now shows how many characters you've summoned this session and over
+  your addon's lifetime, right next to World Buff Mode (Summoner-only,
+  same as that checkbox). A "Reset" button clears the session count on
+  its own - it's never cleared automatically, since a play session
+  isn't always tied to logging in and out.
 
 ### 2.1.0
 - **Fixed: DH-Air summon queue joins weren't reaching anyone else.**

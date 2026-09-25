@@ -244,8 +244,30 @@ function DHAir:FinishSummon(entry)
         self:QueueMarkSummoned(entry.name)
         if self.ClearClaim then self:ClearClaim(entry.name) end
         if self.Sync_BroadcastSummoned then self:Sync_BroadcastSummoned(entry.name) end
+        -- Summon counters (2026-09-25, Chris) - counts here, not deduped
+        -- by character: this is "how many summons did I do", same as a
+        -- re-summon of the same person (@kb:manual-override-two-click)
+        -- is genuinely a second use of a shard and a second cast. Both
+        -- the real channel-stop path and the timeout-fallback path reach
+        -- here with a non-nil entry, so both count - see the defaults
+        -- comment in Core.lua for why.
+        if self.db then
+            self.db.summonCountSession = (self.db.summonCountSession or 0) + 1
+            self.db.summonCountLifetime = (self.db.summonCountLifetime or 0) + 1
+        end
     end
     self:AdvanceQueue()
+end
+
+-- Board's manual "Reset Session" button (2026-09-25, Chris: a "session"
+-- may not be exactly contiguous with login/logout, so this is never
+-- automatic - only an explicit click zeroes it). Lifetime is untouched;
+-- there is deliberately no reset path for it at all.
+function DHAir:ResetSummonCountSession()
+    if not self.db then return false end
+    self.db.summonCountSession = 0
+    if self.Board_Refresh then self:Board_Refresh() end
+    return true
 end
 
 -- Called after a summon finishes successfully or times out (i.e. NOT a

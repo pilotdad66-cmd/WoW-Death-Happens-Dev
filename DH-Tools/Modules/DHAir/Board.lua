@@ -556,6 +556,15 @@ function DHAir:Board_Refresh()
     frame.worldBuffCheck:SetShown(autoSummonReady)
     frame.worldBuffCheck:SetChecked(self.db.worldBuffMode and true or false)
 
+    -- Summon counters (2026-09-25, Chris) - same summoner-only gate as
+    -- everything else on this row.
+    frame.summonCountText:SetShown(autoSummonReady)
+    frame.resetSessionBtn:SetShown(autoSummonReady)
+    if autoSummonReady then
+        frame.summonCountText:SetText(("Summoned: %d session / %d lifetime")
+            :format(self.db.summonCountSession or 0, self.db.summonCountLifetime or 0))
+    end
+
     frame.clearAllBtn:SetShown(self:HasPermission("clear_all"))
     frame.clearRosterBtn:SetShown(self:HasPermission("clear_roster"))
 
@@ -885,6 +894,30 @@ local function CreateBoardFrame()
             DHAir:Sync_BroadcastWBM(on)
         end
         DHAir:Board_Refresh()
+    end)
+
+    -- Summon counters + session reset (2026-09-25, Chris: "number of
+    -- characters summoned this session and lifetime"; up here to the
+    -- right of World Buff Mode per his preference - there's ~190px of
+    -- room left in this row at the default window width). Gated to the
+    -- same autoSummonReady (summoner-only) flag as World Buff Mode/
+    -- Broadcast to Guild/Auto Summons in Board_Refresh below. Anchored to
+    -- worldBuffLabel (the checkbox's TEXT), same reasoning as
+    -- worldBuffCheck's own anchor comment above.
+    frame.summonCountText = roleGroup:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.summonCountText:SetPoint("LEFT", worldBuffLabel, "RIGHT", 16, 0)
+    frame.summonCountText:SetJustifyH("LEFT")
+
+    -- Single click, not a two-click confirm like Bavin's officer/shared-
+    -- data resets - this is a purely local, unsynced personal counter
+    -- (never touches anyone else's data), so the stakes don't call for
+    -- the extra friction.
+    frame.resetSessionBtn = CreateFrame("Button", nil, roleGroup, "UIPanelButtonTemplate")
+    frame.resetSessionBtn:SetSize(70, 18)
+    frame.resetSessionBtn:SetPoint("LEFT", frame.summonCountText, "RIGHT", 8, 0)
+    frame.resetSessionBtn:SetText("Reset")
+    frame.resetSessionBtn:SetScript("OnClick", function()
+        if DHAir.ResetSummonCountSession then DHAir:ResetSummonCountSession() end
     end)
 
     frame.clickerCheck = CreateFrame("CheckButton", "DHAirBoardClickerCheck", roleGroup, "UICheckButtonTemplate")

@@ -84,6 +84,21 @@ local defaults = {
     -- ignorable prompt, and he simply doesn't click Confirm until his
     -- current ritual is done.
     summonTimeout = 4,      -- seconds; stuck-summon fallback ONLY
+    -- Summon counters (2026-09-25, Chris: "number of characters summoned
+    -- this session and lifetime"). Account-wide, same scope as everything
+    -- else in DHAirDB - if more than one Warlock alt on this account ever
+    -- summons, they share one running total, same as db.worldBuffMode's
+    -- account-wide storage (even though it's conceptually "this Warlock's"
+    -- setting). Both incremented together in Summon.lua's FinishSummon(),
+    -- the single unified completion path (real channel-stop AND the rare
+    -- no-channel-detected timeout fallback both count - Chris's call,
+    -- matching the addon's existing "assume success, don't block
+    -- progress" philosophy rather than under-counting). summonCountSession
+    -- is NEVER auto-reset (a "session" isn't tied to login/logout - see
+    -- ResetSummonCountSession in Summon.lua, the Board's own manual reset
+    -- button); summonCountLifetime has no reset path at all by design.
+    summonCountSession = 0,
+    summonCountLifetime = 0,
     minShards = 2,          -- pause auto-summon if Soul Shards drop below this
     shareQueue = true,      -- share the summon queue with other DH-Air Warlocks in the raid/group
     guildOnly = true,       -- only auto-invite/auto-summon players in your guild

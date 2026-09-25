@@ -2,7 +2,7 @@
 ## Title: DH-Tools
 ## Notes: Death Happens master addon - toggle individual modules (Mob Marker, and more to come) from one addon.
 ## Author: Loopi
-## Version: 2.1.0
+## Version: 2.1.1
 ## SavedVariablesPerCharacter: DHToolsDB
 ## SavedVariablesPerCharacter: DHQuestsDB
 ## SavedVariables: DHBavinDB
@@ -31,6 +31,20 @@ Modules\DHQuests\Board.lua
 Modules\DHBavin\Core.lua
 Modules\DHBavin\Sync.lua
 Modules\DHBavin\Credits.lua
+# CM2 historical seed (GENERATED data file - claude\DH-Bavin\import-seed-data.ps1,
+# source claude\DH-Bavin\intake\seed-dataset.csv). Loaded before
+# CreditsSeed.lua purely for read order; CreditsSeed_Import reads
+# ns.CreditsSeedData at call time, not at load time.
+Modules\DHBavin\SeedData.lua
+# Conflicts tab reference data (GENERATED - claude\DH-Bavin\import-review-queue.ps1,
+# source claude\DH-Bavin\intake\review-queue.csv). Same read-at-call-time
+# note as SeedData.lua above - load order here is cosmetic grouping only.
+Modules\DHBavin\ReviewQueue.lua
+# Roster tab per-main alt list (GENERATED - claude\DH-Bavin\import-alt-roster.ps1,
+# source claude\DH-Bavin\intake\alt-roster.csv). Same read-at-call-time
+# note as SeedData.lua above - load order here is cosmetic grouping only.
+Modules\DHBavin\AltRoster.lua
+Modules\DHBavin\CreditsSeed.lua
 Modules\DHBavin\CreditsConfig.lua
 Modules\DHBavin\ItemPoints.lua
 Modules\DHBavin\PointsEditor.lua
