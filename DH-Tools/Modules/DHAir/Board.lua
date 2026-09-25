@@ -695,7 +695,20 @@ local function CreateBoardFrame()
     -- (Set/Change Destination moved to its own line - see setDestBtn's
     -- creation below), so the minimum needs 30 more px of headroom than
     -- before to avoid the two footer rows crowding the row list.
-    ApplyResizeBounds(frame, 520, 330, 1000, 700)
+    -- Min width floor raised 520 -> DEFAULT_FRAME_WIDTH (2026-09-25,
+    -- Chris-reported bug): the Summoner/Clicker/World Buff Mode row,
+    -- and the summon-count text + Reset button added onto its right end
+    -- this session, are a plain left-to-right anchor chain with no
+    -- width awareness at all - unlike the queue rows below them (see
+    -- Board_Refresh's column-growth calc), nothing here reflows or
+    -- shrinks on resize. The counter+button were placed based on "~190px
+    -- of room... at the default window width" - true at
+    -- DEFAULT_FRAME_WIDTH, but the old 520 floor let the window narrow
+    -- well past that, running the chain off the visible edge with no
+    -- way to click Reset. Tying the floor to the same constant the
+    -- default width uses (rather than a second hardcoded number) means
+    -- they can't drift apart again if DEFAULT_FRAME_WIDTH ever changes.
+    ApplyResizeBounds(frame, DEFAULT_FRAME_WIDTH, 330, 1000, 700)
     if frame.TitleText then
         frame.TitleText:SetText("DH-Air - Air Service Board")
     end
