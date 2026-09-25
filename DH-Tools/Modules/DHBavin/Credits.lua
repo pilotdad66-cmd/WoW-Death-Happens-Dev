@@ -156,6 +156,88 @@ end
 -- revisiting if that turns out to matter in practice.
 
 --------------------------------------------------------------------------
+-- Alt resolution (CM2, ongoing - see DH-Bavin-Credits-Design.md's "Data
+-- model" section for the algorithm this implements verbatim)
+--------------------------------------------------------------------------
+-- character name (bare or realm-qualified) -> that person's mainName
+-- (always returned bare, no "-Realm" suffix - matches how the ledger and
+-- SeedData.lua key their entries; SkullRock is the guild's only realm,
+-- so a realm suffix on the key would only add noise). Tries, in order:
+-- (1) the manual-override table (ns.creditsDb.altOverrides, set via
+-- Credits_SetAltOverride below - CM2's historical import doesn't write
+-- to this table itself, only the ledger; this is for CM2's future
+-- manual-link UI and any case GRM can't resolve), (2) GRM.GetPlayerMain
+-- wrapped in pcall (GRM may not be loaded, or may not have learned this
+-- character yet - confirmed 2026-09-25 via GRM-Probe that an unknown
+-- name returns nil rather than erroring), (3) self-fallback - a
+-- character with no linked alts is trivially its own main.
+function ns.Credits_ResolveMain(characterName)
+    if not characterName or characterName == "" then return nil end
+    local bareName = ns.NormalizeName(characterName)
+
+    -- altOverrides is keyed lower-cased (see Credits_SetAltOverride) -
+    -- review-queue.csv's names (the Conflicts tab's link source) are
+    -- stored lowercase from Step 0's reconciliation, but a live
+    -- character name off GRM/mail is properly cased, so the lookup key
+    -- itself must fold case even though NormalizeName above doesn't.
+    if ns.creditsDb and ns.creditsDb.altOverrides then
+        local override = ns.creditsDb.altOverrides[bareName:lower()]
+        if override and override ~= "" then
+            return override
+        end
+    end
+
+    if GRM and GRM.GetPlayerMain then
+        local realmQualified = bareName .. "-" .. GetRealmName()
+        local ok, main = pcall(GRM.GetPlayerMain, realmQualified)
+        if ok and type(main) == "string" and main ~= "" then
+            return main:match("^([^%-]+)") or main
+        end
+    end
+
+    return bareName
+end
+
+-- Manual alt-link overrides: LOCAL ONLY for now, same as
+-- Credits_ResetTestData below - the officer-only ledger/alt-override
+-- sync wire format is still CM3's job (design doc: "TBD there"), so
+-- this doesn't guess at one. Each Designated Officer who adds/edits a
+-- manual override does so on their own client until that sync exists;
+-- officers coordinate verbally during the test phase, same as the reset
+-- utility. Gated the same as the rest of this file's local config
+-- writes (CanManageCreditsConfigLocal), not the stricter
+-- CanManageCreditsOfficers - resolving alt-identity conflicts is
+-- Designated Officer work, not guild-leader-only (design doc's Access
+-- tiers: "Designated Officer... resolves alt/identity conflicts").
+-- Key is lower-cased bare name (see Credits_ResolveMain's comment on
+-- why) - the VALUE (mainName) keeps whatever casing the caller passed,
+-- since that needs to match the ledger's own key exactly (SeedData.lua/
+-- the ledger are properly-cased).
+function ns.Credits_SetAltOverride(altName, mainName)
+    if not ns.CanManageCreditsConfigLocal() then return false end
+    if not altName or altName == "" or not mainName or mainName == "" then return false end
+    ns.creditsDb.altOverrides[ns.NormalizeName(altName):lower()] = ns.NormalizeName(mainName)
+    return true
+end
+
+function ns.Credits_RemoveAltOverride(altName)
+    if not ns.CanManageCreditsConfigLocal() then return false end
+    if not altName or altName == "" then return false end
+    local key = ns.NormalizeName(altName):lower()
+    if ns.creditsDb.altOverrides[key] == nil then return false end
+    ns.creditsDb.altOverrides[key] = nil
+    return true
+end
+
+-- Read-only lookup for UI (Conflicts tab) - whether `altName` already
+-- has a manual override, and what it points to.
+function ns.Credits_GetAltOverride(altName)
+    if not ns.creditsDb or not ns.creditsDb.altOverrides then return nil end
+    if not altName or altName == "" then return nil end
+    return ns.creditsDb.altOverrides[ns.NormalizeName(altName):lower()]
+end
+
+--------------------------------------------------------------------------
 -- Officers / config: local set + broadcast
 --------------------------------------------------------------------------
 local function ListContains(list, name)

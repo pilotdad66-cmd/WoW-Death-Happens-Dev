@@ -172,9 +172,119 @@ names (plus the 325 weak prefix-siblings) are Chris's call for CM2:
 eyeball what's worth linking, then likely make the rest their own
 mains at the Step 9.5 reseed rather than leaving them in permanent
 limbo.)
+updated: 2026-09-25 (same session, CM2 build: Chris confirmed credits
+seed at 0 for everyone at go-live and signed off on a 5-phase CM2
+plan. Built Phase 1 (historical seed import - `import-seed-data.ps1`
+generates `Modules\DHBavin\SeedData.lua` from seed-dataset.csv;
+`CreditsSeed.lua`'s `Credits_TierStateForLifetime` is the shared tier/
+prestige math this AND CM4's future live crediting both use, verified
+standalone against every cap-crossing point; officer-gated
+`CreditsSeed_Import()` seeds credits at 0, everything else from
+history), Phase 2 (ongoing alt resolution - `Credits.lua`'s new
+`Credits_ResolveMain()` implements the Data model section's algorithm
+verbatim: manual override -> GRM.GetPlayerMain via pcall -> self-
+fallback; added `Credits_SetAltOverride`/`RemoveAltOverride`/
+`GetAltOverride`, local-only for now like the CM1 reset utility since
+the ledger/override sync wire format is still CM3's. Override keys
+are lower-cased - review-queue.csv's names are stored lowercase but a
+live character name off GRM/mail is properly cased; the stored
+mainName itself keeps proper casing to match the ledger), and Phase 4
+(Conflicts tab real: `import-review-queue.ps1` ships review-queue.csv
+as `Modules\DHBavin\ReviewQueue.lua`, static reference data; the tab
+is paginated/filterable/sortable by Name or Latest Donation - Chris's
+own ask for this list - with a per-row Link/Unlink control wired to
+the live altOverrides table). Roster tab is also real now: paginated,
+sortable by Name/Lifetime Points, plus the seed-import button (same
+two-click-confirm idiom as Reset Test Data). Also fixed
+`CreditsConfig_Refresh()`, which only ever called the Settings tab's
+refresh closure (hardcoded check) - generalized so every tab's own
+closure fires, which Roster/Conflicts now depend on. All touched/new
+files pass `luac5.4 -p`. Phase 3 wasn't separately named in the
+5-phase plan as written; Phase 5 (self-service `/dhb linkalt` +
+officer-approval queue) is intentionally deferred to a follow-up, not
+part of this pass. NOTHING in this update has been run in-game yet,
+and nothing is committed yet - see STATUS.md's "Current task" for the
+specific things to check before either.)
+updated: 2026-09-25 (same session, round 2: Chris's first in-game pass
+on the CM2 Phase 1/2/4 build above found 1 real bug and asked for 2 UX
+changes. Roster sorting moved off separate buttons onto clickable
+column headers (Name/Lifetime/Last Donation), which toggle ascending/
+descending on repeat clicks. Added Last Donation as a sortable Roster
+column - required a data-model addition: `step0-reconcile.ps1` now
+tracks a per-MAIN latest-donation date separately from the existing
+per-raw-donor-key one that already fed review-queue.csv; SeedData.lua
+entries changed shape from a flat number to `{ lifetimePoints,
+latestDonation }`; the ledger gained a `lastDonationDate` field (a
+Step 0 snapshot value, not something CM4's live crediting touches).
+Real bug: Conflicts tab showed the Link-to controls in every row with
+no name/issue/date text - root cause was a literal 1px-wide row frame
+with no RIGHT anchor of its own, so `row.info`'s RIGHT-anchored layout
+resolved to negative width; fixed by anchoring the row's own RIGHT
+edge to `content`, same stretch pattern used elsewhere in the file.)
+updated: 2026-09-25 (same session, round 3: Chris sent 5 more Roster/
+Conflicts requests before round 2 was re-tested in-game. Prestige
+folded into Tier's own text (e.g. "Exalted P1") instead of its own
+column. Points now shows `current/cap` for the main's tier, reading
+the cap from `ns.CreditsTierCaps` (CreditsSeed.lua). Realized the
+tab's existing outer ScrollFrame already handles a tall list, so both
+Roster's pagination (20/page) and Conflicts' (15/page) were removed
+in favor of a row pool that just grows to fit the full sorted/
+filtered list. Roster names are now click-to-expand: a main with
+known alts shows a `[+]`/`[-]` marker; clicking it inserts indented
+alt-name sub-rows (bare names, no per-alt numbers, per Chris) beneath
+it in the same list. New data layer for this: `step0-reconcile.ps1`
+captures each alt's first-seen proper-cased spelling and, once
+`$resolved` is finalized, groups it into a main -> alts map exported
+as `alt-roster.csv` (429 mains with alts); new `import-alt-roster.ps1`
+(same GENERATED-file convention, plain string concatenation for the
+Lua table literal) emits `Modules\DHBavin\AltRoster.lua`
+(`ns.CreditsAltRoster`), added to `DH-Tools.toc`. Re-ran Step 0 end to
+end - seed-dataset.csv/review-queue.csv outputs unchanged, confirming
+the new export didn't disturb anything else. All touched/generated
+files pass `luac5.4 -p`. NEITHER round 2 nor round 3 has been run
+in-game yet, and nothing is committed - see STATUS.md's "Current
+task" for the specific things to check before either.)
+updated: 2026-09-25 (round 4/5, same day. Round 4: Conflicts crash
+fixed by reinstating pagination (100/page, Chris's call) rather than
+the staggered-build/lazy-widget alternatives; "Set as New Main" built
+(rawGoldAmount is now a structured review-queue.csv/ReviewQueue.lua
+column, sourced from step0-reconcile.ps1's own $conflictGold/
+$unresolvedGold, so it can seed a real lifetime total - x10, same
+convention as everywhere else - instead of $0); Conflicts name-row
+font bumped for readability. DH-Tools v2.1.1 (DH-Air summon counters
+only) staged as a GitHub draft release + CurseForge pending-release in
+between, per Chris's explicit go-ahead to run those staging scripts
+without asking each time - neither one publishes anything on its own.
+Round 4 syntax/harness-clean but not yet in-game tested. Same day,
+round 5 (design only, no code written for this part): Chris raised
+three real gaps - no way to fix a wrong main assignment without
+migrating the ledger's own key, no clean way to correct a bad alt
+association after the fact (manual link or Step 0-sourced), and
+"Conflicts" conflating identity conflicts with plain unmapped donors
+under a name that doesn't fit either - and proposed a single
+click-a-name detail/edit window reused across Roster and the renamed
+queue tab. Resolved the resulting data-model fork: ledger re-keyed by
+Discord username (stable, unobtainable in-game, seeded = current
+main's name at seed time, editable - Chris wants it preserved for
+Bavin's own external scripts even though nothing in-game can fill it
+in); main-toon and alts become editable fields on that account rather
+than the ledger's own key. Manual override still wins over GRM for
+live resolution, unchanged from today - "GRM remains authoritative"
+was about never writing INTO GRM's own database, not resolution
+order; a disagreement is surfaced (new on-demand Audit Log GRM-check)
+rather than auto-corrected either direction. Self-service (member
+edits own data, officer approves) explicitly deferred to its own
+later milestone - needs a sync channel that doesn't exist yet.
+"Conflicts" renamed "Review Queue" (matches ReviewQueue.lua).
+Removing an alt reopens it as a new Review Queue entry so it can be
+re-linked correctly, rather than just vanishing. See the new
+"Identity model v2" section below for the full spec - not yet built.)
 status: STEP 0 COMPLETE (including a 2026-09-25 review-queue triage
 pass - alias corrections applied, GRM-Probe run and retired), CM1
-CODE-COMPLETE INCLUDING REAL UI, FIRST IN-GAME TEST PASS DONE - scoped
+CODE-COMPLETE INCLUDING REAL UI, FIRST IN-GAME TEST PASS DONE, CM2
+PHASE 1/2/4 CODE-COMPLETE THROUGH 3 ROUNDS OF ROSTER/CONFLICTS UI
+WORK BUT NOT YET IN-GAME TESTED (ROUND 2 OR 3) OR COMMITTED
+(2026-09-25 - see the updates above) - scoped
 with Chris 2026-08-31, test strategy
 added 2026-09-03, four more discussion topics added 2026-09-22,
 contributors data processed and milestone plan finalized 2026-09-23,
@@ -188,6 +298,12 @@ working with no changes. One known cosmetic issue remains (add-box-to-
 list gap still larger than ideal in the three CreditsConfig.lua list
 sections) - Chris said he can work with it, not scheduled. Committed
 and pushed to collab-dev 2026-09-25. Syntax/harness-clean throughout.
+ROUND 4 (Conflicts pagination fix, Set as New Main, font) CODE-COMPLETE,
+SYNTAX/HARNESS-CLEAN, NOT YET IN-GAME TESTED. DH-Tools v2.1.1 staged
+(GitHub draft + CurseForge pending) but not yet published by Chris.
+IDENTITY MODEL V2 (Discord-keyed accounts, unified account editor,
+Review Queue rename) DESIGNED WITH CHRIS 2026-09-25, NOT YET BUILT -
+see "Identity model v2" section below.
 
 ## Concept
 
@@ -602,6 +718,104 @@ of SavedVariables, which WoW handles but which is worth actually
 measuring after the first few months rather than assuming. An
 export-and-purge button stays available in CM7 as an escape hatch
 even though the standing instruction is never to delete.
+
+## Identity model v2 (Discord-keyed accounts) - designed 2026-09-25, not yet built
+
+Supersedes the record shape in "Data model (proposal)" above (`{
+mainName, points, credits, tier, prestige, lifetimePoints,
+lastUpdated }`, keyed by main-character name - that section also
+predates the real implementation, which already added
+`lastDonationDate`). Motivated by three gaps Chris raised: no way to
+fix a wrong main assignment without migrating the ledger's own key,
+no clean way to correct a bad alt association after the fact (whether
+from a manual Link or from Step 0's historical import), and no
+account-level view at all - Roster only ever showed a read-only main
+plus its alt names.
+
+**Why Discord-keyed.** A toon's name isn't stable - a player can
+retire a main and promote an alt, or rename a character - but their
+Discord identity is. Keying the ledger by Discord username instead of
+by whichever toon currently happens to be "main" makes a main-swap a
+field edit instead of a ledger-row migration, and lets alts/points/
+credits/tier live on the person, not on a name string that can go
+stale. Discord username can't be read in-game by any addon API, so it
+is never auto-populated - it's seeded at `CreditsSeed_Import` time as
+a copy of whatever the main toon's name was, and from then on is
+purely a manually-maintained field (Chris wants it preserved so
+Bavin's own external/offline scripts can use it later, even though
+nothing in-game can fill it in for him).
+
+Account record (ledger, keyed by `discordName`):
+```
+{ discordName, mainToon, alts = { ... }, points, credits, tier,
+  prestige, lifetimePoints, lastDonationDate, lastUpdated }
+```
+`discordName` is the stable key. `mainToon` is the currently-flagged
+main character name - editable, and the only field the rest of the
+addon (tooltips, mail crediting, priority lists) ever needs to see,
+since `Credits_ResolveMain(toonName)` keeps its existing contract
+(toon name in, toon name out unchanged) - it just gains an internal
+toon-name -> discordName lookup so it can hand back the account's
+current `mainToon` instead of a name baked into the ledger's own key.
+Resolution PRIORITY IS UNCHANGED from today: manual account data is
+still checked before GRM, then self-fallback. Chris confirmed a
+manual edit stays authoritative for future donations even where GRM
+disagrees - "GRM remains authoritative" was about never writing INTO
+GRM's own database (a separate addon's data, not ours to touch), not
+about resolution order.
+
+No migration script planned: since nothing has gone live yet and the
+ledger gets reset/reseeded after every round of testing anyway, the
+plan is to update `CreditsSeed_Import` and `Credits_ResolveMain` to
+the new shape and have Chris reseed, rather than write one-time
+migration code for test data that's thrown away regardless.
+
+**Unified account detail/edit window.** Clicking any name in Roster
+(a main, and eventually an alt sub-row too) opens a window showing
+that account's Discord name, current main, full alt list, points/
+tier/credits/lifetime total - editable by an officer: reassign main,
+add or remove an alt, fix a spelling error in the Discord name field.
+Review Queue's existing Link control opens this same window
+pre-filled rather than staying its own inline mini-form - one editing
+surface, not two. Self-service (a member editing their own account,
+subject to officer approval) is explicitly DEFERRED to a later
+milestone - it needs a new sync channel to get a pending edit from a
+member's client to an officer's, which doesn't exist yet (this
+document's own Data model section already flags the officer ledger
+sync itself as unbuilt, CM3's job) - so this window ships
+officer-only first.
+
+**"Conflicts" renamed "Review Queue".** Matches the underlying file
+(`ReviewQueue.lua`) and reads correctly once the tab isn't only Step
+0's unresolved names. Removing an alt from an account (via the edit
+window) reopens that name as a new Review Queue entry - issue tag
+something like `removed_alt` - so it can be re-linked to the correct
+main rather than just vanishing. Because per-alt gold isn't tracked
+separately at runtime (only Step 0's offline contribution_data.csv
+has that breakdown, and it isn't loaded into the addon), a reopened
+entry has no `rawGoldAmount`; "Set as New Main" on one seeds a 0
+lifetime total until the next real Step 0 pass recomputes it. This
+reopen-list needs to be local, runtime-appendable state (alongside
+`ns.creditsDb.ledger`/`altOverrides`, same LOCAL ONLY scoping as
+everything else pre-sync) rather than the GENERATED, Step-0-only
+`ReviewQueue.lua` it is today - the tab's data becomes the union of
+the static Step 0 list and this new local list.
+
+**GRM mismatch check (Audit Log tab's first real feature).** On
+demand only (a "Check GRM" button - GRM's own data can change any
+time officers touch it there, so this shouldn't run silently or on a
+timer): walk every account's main + alts, call `GRM.GetPlayerMain` on
+each, and list any case where GRM's answer disagrees with what our
+own account data says. Nothing is auto-corrected - it's a worklist.
+An officer resolves a real mismatch either through the account edit
+window (if our data was wrong) or by fixing GRM directly (if GRM was
+wrong); our data stays authoritative for live resolution either way -
+this check exists purely so a disagreement doesn't go unnoticed.
+
+Not yet built - this section is the confirmed plan, to implement next
+in whatever order Chris wants once round 4 (Conflicts pagination/Set
+as New Main/font, see the updates above) is in-game tested and
+committed.
 
 ## Permission model addition
 

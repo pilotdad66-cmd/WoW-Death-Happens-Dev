@@ -487,9 +487,668 @@ local function BuildSettingsTab(content)
 end
 
 --------------------------------------------------------------------------
--- Placeholder tabs - Roster/Conflicts/Audit Log own no real data yet
--- (CM2/CM7). The shell exists now so those milestones fill in a tab
--- rather than re-architecting the window later.
+-- Roster tab (CM2, 2026-09-25) - read-only view of the seeded ledger
+-- plus the officer-gated "Seed from Historical Data" trigger
+-- (ns.CreditsSeed_Import, CreditsSeed.lua). Same two-click confirm
+-- idiom as Settings tab's Reset Test Data button - seeding overwrites
+-- any existing ledger row for every name in SeedData.lua, so it's not
+-- a no-consequence click. Conflicts/Audit Log stay placeholders (CM2's
+-- alt-identity UI, CM7) - this tab is read-only, no per-row editing.
+--------------------------------------------------------------------------
+local function BuildRosterTab(content)
+    local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 16, -16)
+    title:SetText("Roster")
+
+    local hint = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    hint:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
+    hint:SetPoint("RIGHT", -16, 0)
+    hint:SetJustifyH("LEFT")
+    hint:SetWordWrap(true)
+    hint:SetText("Every main's seeded reputation/credit standing. Rank is always by Lifetime Points, regardless of the active sort. Click a column title (Name/Lifetime/Last Donation) to sort by it - click again to flip direction. Click a name marked [+] to show its alts. Seeding is Designated Officer/author only; re-running it overwrites the row for any name in the historical data (SeedData.lua) without touching rows for names outside that dataset.")
+
+    -- Seed button - two-click confirm, mirrors Settings tab's Reset Test Data.
+    local seedBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    seedBtn:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", -2, -12)
+    seedBtn:SetSize(180, 22)
+    seedBtn:SetText("Seed from Historical Data")
+
+    local seedStatus = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    seedStatus:SetPoint("LEFT", seedBtn, "RIGHT", 8, 0)
+
+    local seedArmed = false
+    local seedArmedTimer
+    local function DisarmSeed()
+        seedArmed = false
+        seedBtn:SetText("Seed from Historical Data")
+        seedStatus:SetText("")
+    end
+    seedBtn:SetScript("OnClick", function()
+        if not seedArmed then
+            seedArmed = true
+            seedBtn:SetText("Click again to confirm")
+            seedStatus:SetText("|cffffcc00Overwrites matching ledger rows|r")
+            if seedArmedTimer then seedArmedTimer:Cancel() end
+            seedArmedTimer = C_Timer.NewTimer(6, DisarmSeed)
+            return
+        end
+        if seedArmedTimer then seedArmedTimer:Cancel() end
+        DisarmSeed()
+        if not ns.CreditsSeed_Import then
+            seedStatus:SetText("|cffff3333CreditsSeed.lua not loaded|r")
+            return
+        end
+        local ok, count = ns.CreditsSeed_Import()
+        if ok then
+            seedStatus:SetText(("|cff33ff99Seeded %d.|r"):format(count or 0))
+            C_Timer.After(3, function() seedStatus:SetText("") end)
+            ns.CreditsConfig_Refresh()
+        else
+            seedStatus:SetText("|cffff3333Refused|r")
+        end
+    end)
+
+    -- Sorting lives on the column headers themselves (2026-09-25, Chris:
+    -- "activated by clicking on the column title, not by a separate
+    -- box"). No page controls - the tab's outer ScrollFrame already
+    -- handles a tall list (2026-09-25, Chris: "just one scrollable
+    -- list"), so the row pool below simply grows to fit.
+    local sortState = { key = "mainName", ascending = true }
+    local expanded = {}   -- mainName -> true when its alts are shown
+
+    -- Column header line - fixed x-offsets matching each row's
+    -- FontStrings below, sized to fit the window's default ~480px
+    -- frame width (no monospace font, so alignment is offset-based,
+    -- not padded text). Name/Lifetime/Last Donation are clickable
+    -- Buttons (sortable); Rank/Tier/Points/Credits are plain
+    -- FontStrings (Tier/Points aren't sortable - both derive from
+    -- Lifetime, so sorting by Lifetime already orders them; Rank is
+    -- deliberately never sortable - it's always lifetime-based
+    -- regardless of the active sort, see RankMap() below). Tier folds
+    -- Prestige into its own text ("Exalted P1") instead of a separate
+    -- column, and Points shows "current/cap" for the main's tier
+    -- (2026-09-25, Chris). Lifetime widened 2026-09-25 (Chris: header
+    -- text was clipping against the Last Donation column).
+    local headerRow = CreateFrame("Frame", nil, content)
+    headerRow:SetPoint("TOPLEFT", seedBtn, "BOTTOMLEFT", -2, -14)
+    headerRow:SetSize(1, 16)
+
+    local function PlainHeader(text, xOffset)
+        local fs = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("LEFT", xOffset, 0)
+        fs:SetText(text)
+    end
+
+    -- Sortable header: a borderless Button (not UIPanelButtonTemplate -
+    -- this needs to look like a column title, not a button) with a
+    -- HIGHLIGHT texture for hover feedback and a label this file's
+    -- Refresh() rewrites with a v/^ arrow when that column is the
+    -- active sort.
+    local function SortableHeader(text, xOffset, width, sortKey)
+        local btn = CreateFrame("Button", nil, headerRow)
+        btn:SetPoint("LEFT", xOffset, 0)
+        btn:SetSize(width, 16)
+        local label = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        label:SetAllPoints()
+        label:SetJustifyH("LEFT")
+        btn.label = label
+        btn.baseText = text
+        local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints()
+        hl:SetColorTexture(1, 1, 1, 0.15)
+        return btn
+    end
+
+    PlainHeader("Rank", 0)
+    local nameHeader = SortableHeader("Name", 30, 76, "mainName")
+    PlainHeader("Tier", 110)
+    PlainHeader("Points", 190)
+    local lifetimeHeader = SortableHeader("Lifetime", 270, 60, "lifetimePoints")
+    local lastDonationHeader = SortableHeader("Last Donation", 334, 86, "lastDonationDate")
+    PlainHeader("Credits", 424)
+
+    -- Row pool grows on demand (EnsureRowCount) instead of a fixed
+    -- page size - each display entry is either a main (full row, with
+    -- a clickable Name for expand/collapse when it has alts) or an alt
+    -- sub-row (indented Name only, other cells blank). Rows are never
+    -- destroyed, only hidden, so the TOPLEFT->BOTTOMLEFT anchor chain
+    -- built at creation time stays valid across refreshes.
+    local rows = {}
+    local Refresh   -- forward-declared: row click handlers call it
+
+    local function EnsureRowCount(n)
+        for i = #rows + 1, n do
+            local prevAnchor = rows[i - 1] or headerRow
+            local row = CreateFrame("Frame", nil, content)
+            row:SetSize(1, 16)
+            if i == 1 then
+                row:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 0, -4)
+            else
+                row:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 0, -2)
+            end
+
+            local nameBtn = CreateFrame("Button", nil, row)
+            nameBtn:SetPoint("LEFT", 30, 0)
+            nameBtn:SetSize(76, 16)
+            local nameLabel = nameBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            nameLabel:SetAllPoints()
+            nameLabel:SetJustifyH("LEFT")
+            nameBtn.label = nameLabel
+            local nameHl = nameBtn:CreateTexture(nil, "HIGHLIGHT")
+            nameHl:SetAllPoints()
+            nameHl:SetColorTexture(1, 1, 1, 0.15)
+            nameBtn:SetScript("OnClick", function()
+                if row.isExpandable and row.currentMain then
+                    expanded[row.currentMain] = not expanded[row.currentMain]
+                    if Refresh then Refresh() end
+                end
+            end)
+            row.nameBtn = nameBtn
+
+            local function Cell(xOffset, width)
+                local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                fs:SetPoint("LEFT", xOffset, 0)
+                fs:SetWidth(width)
+                fs:SetJustifyH("LEFT")
+                return fs
+            end
+            row.rank = Cell(0, 26)
+            row.tier = Cell(110, 76)
+            row.points = Cell(190, 76)
+            row.lifetime = Cell(270, 60)
+            row.lastDonation = Cell(334, 86)
+            row.credits = Cell(424, 32)
+            row:Hide()
+            rows[i] = row
+        end
+    end
+
+    local function GetBottomAnchor()
+        for i = #rows, 1, -1 do
+            if rows[i]:IsShown() then return rows[i] end
+        end
+        return headerRow
+    end
+
+    local function SortedLedger()
+        local list = {}
+        if ns.creditsDb and ns.creditsDb.ledger then
+            for _, rec in pairs(ns.creditsDb.ledger) do
+                table.insert(list, rec)
+            end
+        end
+        table.sort(list, function(a, b)
+            local av, bv
+            if sortState.key == "lifetimePoints" then
+                av, bv = a.lifetimePoints or 0, b.lifetimePoints or 0
+            elseif sortState.key == "lastDonationDate" then
+                av, bv = a.lastDonationDate or "", b.lastDonationDate or ""
+            else
+                av, bv = (a.mainName or ""):lower(), (b.mainName or ""):lower()
+            end
+            if av ~= bv then
+                if sortState.ascending then return av < bv else return av > bv end
+            end
+            return (a.mainName or "") < (b.mainName or "")
+        end)
+        return list
+    end
+
+    -- Rank is always by Lifetime Points descending, regardless of the
+    -- column currently driving the sort (2026-09-25, Chris: "based on
+    -- lifetime points total regardless of sort order"). Computed fresh
+    -- each Refresh() rather than reusing SortedLedger()'s order, which
+    -- can be sorted by Name or Last Donation instead.
+    local function RankMap()
+        local list = {}
+        if ns.creditsDb and ns.creditsDb.ledger then
+            for _, rec in pairs(ns.creditsDb.ledger) do
+                table.insert(list, rec)
+            end
+        end
+        table.sort(list, function(a, b)
+            local av, bv = a.lifetimePoints or 0, b.lifetimePoints or 0
+            if av ~= bv then return av > bv end
+            return (a.mainName or "") < (b.mainName or "")
+        end)
+        local ranks = {}
+        for i, rec in ipairs(list) do
+            ranks[rec.mainName] = i
+        end
+        return ranks
+    end
+
+    -- Interleaves each main with its alt sub-rows (only when expanded)
+    -- into a single flat list the row pool renders in order.
+    local function BuildDisplayList()
+        local mains = SortedLedger()
+        local display = {}
+        for _, rec in ipairs(mains) do
+            local alts = ns.CreditsAltRoster and ns.CreditsAltRoster[rec.mainName]
+            local hasAlts = alts ~= nil and #alts > 0
+            table.insert(display, { kind = "main", rec = rec, hasAlts = hasAlts })
+            if hasAlts and expanded[rec.mainName] then
+                for _, altName in ipairs(alts) do
+                    table.insert(display, { kind = "alt", name = altName })
+                end
+            end
+        end
+        return display, #mains
+    end
+
+    Refresh = function()
+        local function HeaderText(btn, key)
+            if sortState.key == key then
+                btn.label:SetText(btn.baseText .. (sortState.ascending and " v" or " ^"))
+            else
+                btn.label:SetText(btn.baseText)
+            end
+        end
+        HeaderText(nameHeader, "mainName")
+        HeaderText(lifetimeHeader, "lifetimePoints")
+        HeaderText(lastDonationHeader, "lastDonationDate")
+
+        if not ns.creditsDb then
+            for _, row in ipairs(rows) do row:Hide() end
+            return
+        end
+
+        local display = BuildDisplayList()
+        local ranks = RankMap()
+        EnsureRowCount(#display)
+        for i, row in ipairs(rows) do
+            local entry = display[i]
+            if not entry then
+                row:Hide()
+            else
+                row:Show()
+                if entry.kind == "main" then
+                    local rec = entry.rec
+                    row.isExpandable = entry.hasAlts
+                    row.currentMain = rec.mainName
+                    row.rank:SetText(tostring(ranks[rec.mainName] or "?"))
+                    local marker = entry.hasAlts and (expanded[rec.mainName] and "[-] " or "[+] ") or "      "
+                    row.nameBtn.label:SetText(marker .. (rec.mainName or "?"))
+                    row.nameBtn:EnableMouse(entry.hasAlts)
+                    local tierText = rec.tier or "?"
+                    if (rec.prestige or 0) > 0 then
+                        tierText = tierText .. " P" .. tostring(rec.prestige)
+                    end
+                    row.tier:SetText(tierText)
+                    local cap = ns.CreditsTierCaps and ns.CreditsTierCaps[rec.tier]
+                    local curPts = math.floor((rec.points or 0) + 0.5)
+                    if cap then
+                        row.points:SetText(("%d/%d"):format(curPts, cap))
+                    else
+                        row.points:SetText(tostring(curPts))
+                    end
+                    row.lifetime:SetText(tostring(math.floor((rec.lifetimePoints or 0) + 0.5)))
+                    row.lastDonation:SetText((rec.lastDonationDate and rec.lastDonationDate ~= "") and rec.lastDonationDate or "-")
+                    row.credits:SetText(tostring(rec.credits or 0))
+                else
+                    row.isExpandable = false
+                    row.currentMain = nil
+                    row.rank:SetText("")
+                    row.nameBtn.label:SetText("      - " .. (entry.name or "?"))
+                    row.nameBtn:EnableMouse(false)
+                    row.tier:SetText("")
+                    row.points:SetText("")
+                    row.lifetime:SetText("")
+                    row.lastDonation:SetText("")
+                    row.credits:SetText("")
+                end
+            end
+        end
+
+        local bottom = GetBottomAnchor()
+        local top, bot = content:GetTop(), bottom:GetBottom()
+        if top and bot then
+            content:SetHeight(math.max(200, top - bot + 20))
+        end
+    end
+
+    local function SetSort(key, defaultAscending)
+        if sortState.key == key then
+            sortState.ascending = not sortState.ascending
+        else
+            sortState.key = key
+            sortState.ascending = defaultAscending
+        end
+        Refresh()
+    end
+    nameHeader:SetScript("OnClick", function() SetSort("mainName", true) end)
+    lifetimeHeader:SetScript("OnClick", function() SetSort("lifetimePoints", false) end)
+    lastDonationHeader:SetScript("OnClick", function() SetSort("lastDonationDate", false) end)
+
+    return Refresh
+end
+
+--------------------------------------------------------------------------
+-- Conflicts tab (CM2, 2026-09-25) - Step 0's unresolved/ambiguous donor
+-- names (ReviewQueue.lua, GENERATED from review-queue.csv), sortable by
+-- Name and by Latest Donation date (Chris, 2026-09-25 - asked for this
+-- on "the unresolved donators list"), filterable by typed substring,
+-- with a per-row manual-link control that writes straight to the live
+-- altOverrides table (ns.Credits_SetAltOverride/RemoveAltOverride,
+-- Credits.lua). This list itself is static reference data - linking a
+-- row doesn't remove it here, it just shows the row as resolved; the
+-- list only shrinks on the next Step 0 + import-review-queue.ps1 pass.
+--------------------------------------------------------------------------
+local function BuildConflictsTab(content)
+    local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 16, -16)
+    title:SetText("Conflicts")
+
+    local hint = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    hint:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
+    hint:SetPoint("RIGHT", -16, 0)
+    hint:SetJustifyH("LEFT")
+    hint:SetWordWrap(true)
+    hint:SetText("Donor names Step 0 couldn't map to a main, as of its last run (see review-queue.csv). Linking or setting as a new main here is Designated Officer/author only and takes effect immediately for live crediting - it doesn't shrink this list, which only refreshes on the next Step 0 pass. \"New Main\" seeds the row's real historical lifetime total (raw gold x10, same convention as everywhere else).")
+
+    local filterLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    filterLabel:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", -2, -12)
+    filterLabel:SetText("Filter:")
+
+    local filterEdit = CreateFrame("EditBox", nil, content, "InputBoxTemplate")
+    filterEdit:SetSize(140, 20)
+    filterEdit:SetPoint("LEFT", filterLabel, "RIGHT", 8, -2)
+    filterEdit:SetAutoFocus(false)
+    filterEdit:SetMaxLetters(24)
+    filterEdit:SetScript("OnEscapePressed", filterEdit.ClearFocus)
+
+    local sortState = { key = "name", ascending = true }
+
+    local sortNameBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    sortNameBtn:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", 2, -12)
+    sortNameBtn:SetSize(100, 20)
+
+    local sortDateBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    sortDateBtn:SetPoint("LEFT", sortNameBtn, "RIGHT", 6, 0)
+    sortDateBtn:SetSize(150, 20)
+
+    -- Pagination REINSTATED (2026-09-25 round 4, Chris: "Reinstall
+    -- pagination for Conflicts - maybe 100 per page to try that
+    -- first"), reversing the round-3 "just one scrollable list" change.
+    -- An unbounded row pool tried to build all ~1121 rows (~18 UI
+    -- objects each, ~20,000 objects) in one execution tick and tripped
+    -- WoW's "script ran too long" watchdog (in-game crash trace at
+    -- CreditsConfig.lua:924; root-caused against Roster's own
+    -- ~652-row/~8-object pool, which works fine). Capping the live row
+    -- pool to one page's worth keeps EnsureRowCount's per-refresh
+    -- object count small regardless of how large the full filtered
+    -- list is.
+    local CONFLICTS_ROWS_PER_PAGE = 100
+    local pageState = { page = 1 }
+
+    local prevPageBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    prevPageBtn:SetPoint("TOPLEFT", sortNameBtn, "BOTTOMLEFT", 2, -10)
+    prevPageBtn:SetSize(60, 20)
+    prevPageBtn:SetText("< Prev")
+
+    local pageLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    pageLabel:SetPoint("LEFT", prevPageBtn, "RIGHT", 8, 0)
+
+    local nextPageBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    nextPageBtn:SetPoint("LEFT", pageLabel, "RIGHT", 8, 0)
+    nextPageBtn:SetSize(60, 20)
+    nextPageBtn:SetText("Next >")
+
+    -- Row pool still grows on demand (EnsureRowCount), but the caller
+    -- below never hands it more than CONFLICTS_ROWS_PER_PAGE records,
+    -- so the pool itself never grows past 100 rows regardless of list
+    -- size. Rows are never destroyed, only hidden, so the anchor chain
+    -- built at creation time stays valid across refreshes and page
+    -- changes.
+    local rows = {}
+    local function EnsureRowCount(n)
+        for i = #rows + 1, n do
+            local prevAnchor = rows[i - 1] or prevPageBtn
+            local row = CreateFrame("Frame", nil, content)
+            -- 34 -> 40 (2026-09-25 round 4): room for row.info's larger
+            -- font below (concern #5: "character names row is too
+            -- small, hard to read") without overlapping the next row -
+            -- the row-to-row anchor gap isn't driven by rendered text
+            -- height, only by this declared SetHeight.
+            row:SetHeight(40)
+            if i == 1 then
+                row:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", -2, -24)
+            else
+                row:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 0, -6)
+            end
+            -- BUG FIX (2026-09-25, Chris: "no actual data in any row"): this
+            -- row frame previously only got SetSize(1, 34) - a literal
+            -- 1px-wide frame - with no RIGHT anchor of its own, so
+            -- row.info's own TOPLEFT+RIGHT anchors below (relative to THIS
+            -- row, not content) resolved to a negative-width region and
+            -- rendered nothing. Anchoring row's own RIGHT to content gives
+            -- it real width, same as every other stretched element in this
+            -- file (hint, etc.) - row.info's RIGHT anchor below now has
+            -- something real to stretch against.
+            row:SetPoint("RIGHT", -16, 0)
+
+            -- GameFontHighlightSmall -> GameFontHighlight (2026-09-25
+            -- round 4, Chris concern #5: "character names row is too
+            -- small (hard to read)").
+            row.info = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            row.info:SetPoint("TOPLEFT", 0, 0)
+            row.info:SetPoint("RIGHT", 0, 0)
+            row.info:SetJustifyH("LEFT")
+
+            row.linkedText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            row.linkedText:SetPoint("TOPLEFT", row.info, "BOTTOMLEFT", 0, -4)
+
+            row.unlinkBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            row.unlinkBtn:SetSize(60, 18)
+            row.unlinkBtn:SetPoint("LEFT", row.linkedText, "RIGHT", 8, 0)
+            row.unlinkBtn:SetText("Unlink")
+
+            row.linkArrow = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            row.linkArrow:SetPoint("TOPLEFT", row.info, "BOTTOMLEFT", 0, -4)
+            row.linkArrow:SetText("Link to:")
+
+            row.linkEdit = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
+            row.linkEdit:SetSize(120, 18)
+            row.linkEdit:SetPoint("LEFT", row.linkArrow, "RIGHT", 6, -2)
+            row.linkEdit:SetAutoFocus(false)
+            row.linkEdit:SetMaxLetters(24)
+            row.linkEdit:SetScript("OnEscapePressed", row.linkEdit.ClearFocus)
+
+            row.linkBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            row.linkBtn:SetSize(50, 18)
+            row.linkBtn:SetPoint("LEFT", row.linkEdit, "RIGHT", 6, 0)
+            row.linkBtn:SetText("Link")
+
+            -- "Set as New Main" (2026-09-25 round 4, Chris concern #6:
+            -- "In addition to 'link' there needs to be a 'set as new
+            -- main' option too"). Only meaningful alongside Link in the
+            -- unlinked state - promotes this name straight to being its
+            -- own main (ns.Credits_SetAsNewMain, CreditsSeed.lua),
+            -- seeded with the real lifetime total it already earned
+            -- (rec.rawGoldAmount, Step 0's own figure for this row).
+            row.setMainBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            row.setMainBtn:SetSize(80, 18)
+            row.setMainBtn:SetPoint("LEFT", row.linkBtn, "RIGHT", 6, 0)
+            row.setMainBtn:SetText("New Main")
+
+            row.status = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            row.status:SetPoint("LEFT", row.setMainBtn, "RIGHT", 6, 0)
+
+            row:Hide()
+            rows[i] = row
+        end
+    end
+
+    local function GetBottomAnchor()
+        for i = #rows, 1, -1 do
+            if rows[i]:IsShown() then return rows[i] end
+        end
+        return prevPageBtn
+    end
+
+    local function FilteredSortedRows()
+        local typed = (filterEdit:GetText() or ""):lower()
+        local list = {}
+        local source = ns.CreditsReviewQueue or {}
+        for _, rec in ipairs(source) do
+            if typed == "" or (rec.name or ""):lower():find(typed, 1, true) then
+                table.insert(list, rec)
+            end
+        end
+        table.sort(list, function(a, b)
+            if sortState.key == "latestDonation" then
+                local av, bv = a.latestDonation or "", b.latestDonation or ""
+                if av ~= bv then
+                    if sortState.ascending then return av < bv else return av > bv end
+                end
+                return (a.name or "") < (b.name or "")
+            else
+                local an, bn = (a.name or ""):lower(), (b.name or ""):lower()
+                if an ~= bn then
+                    if sortState.ascending then return an < bn else return an > bn end
+                end
+                return false
+            end
+        end)
+        return list
+    end
+
+    local function Refresh()
+        sortNameBtn:SetText(sortState.key == "name" and (sortState.ascending and "Name v" or "Name ^") or "Name")
+        sortDateBtn:SetText(sortState.key == "latestDonation" and (sortState.ascending and "Latest Donation v" or "Latest Donation ^") or "Latest Donation")
+
+        local canManage = ns.CanManageCreditsConfigLocal and ns.CanManageCreditsConfigLocal() or false
+        local list = FilteredSortedRows()
+
+        -- Pagination (2026-09-25 round 4) - see the CONFLICTS_ROWS_PER_PAGE
+        -- comment above for why. Page is clamped rather than reset on
+        -- every refresh so sorting/relinking doesn't bounce the officer
+        -- back to page 1; filtering DOES reset it (see filterEdit's
+        -- OnTextChanged below), since a filter change usually shrinks
+        -- the list enough that the current page number stops meaning
+        -- the same thing.
+        local totalPages = math.max(1, math.ceil(#list / CONFLICTS_ROWS_PER_PAGE))
+        if pageState.page > totalPages then pageState.page = totalPages end
+        if pageState.page < 1 then pageState.page = 1 end
+
+        local pageStart = (pageState.page - 1) * CONFLICTS_ROWS_PER_PAGE
+        local pageList = {}
+        for i = 1, math.min(CONFLICTS_ROWS_PER_PAGE, #list - pageStart) do
+            pageList[i] = list[pageStart + i]
+        end
+
+        pageLabel:SetText(("Page %d/%d (%d total)"):format(pageState.page, totalPages, #list))
+        if pageState.page <= 1 then prevPageBtn:Disable() else prevPageBtn:Enable() end
+        if pageState.page >= totalPages then nextPageBtn:Disable() else nextPageBtn:Enable() end
+
+        EnsureRowCount(#pageList)
+
+        for i, row in ipairs(rows) do
+            local rec = pageList[i]
+            if not rec then
+                row:Hide()
+            else
+                row:Show()
+                local tag = rec.issue == "identity_conflict" and "|cffffcc00conflict|r" or "|cff999999unmapped|r"
+                local dateText = (rec.latestDonation and rec.latestDonation ~= "") and rec.latestDonation or "no date"
+                row.info:SetText(("%s  (%s, last donation %s)"):format(rec.name or "?", tag, dateText))
+
+                local linkedMain = ns.Credits_GetAltOverride and ns.Credits_GetAltOverride(rec.name) or nil
+                if linkedMain then
+                    row.linkedText:SetText("|cff33ff99-> " .. linkedMain .. "|r")
+                    row.linkedText:Show()
+                    row.unlinkBtn:Show()
+                    if canManage then row.unlinkBtn:Enable() else row.unlinkBtn:Disable() end
+                    row.linkArrow:Hide()
+                    row.linkEdit:Hide()
+                    row.linkBtn:Hide()
+                    row.setMainBtn:Hide()
+                    row.status:Hide()
+                    row.unlinkBtn:SetScript("OnClick", function()
+                        if ns.Credits_RemoveAltOverride(rec.name) then
+                            ns.CreditsConfig_Refresh()
+                        end
+                    end)
+                else
+                    row.linkedText:Hide()
+                    row.unlinkBtn:Hide()
+                    row.linkArrow:Show()
+                    row.linkEdit:Show()
+                    row.linkBtn:Show()
+                    row.setMainBtn:Show()
+                    row.status:Show()
+                    if canManage then row.linkEdit:Enable() else row.linkEdit:Disable() end
+                    if canManage then row.linkBtn:Enable() else row.linkBtn:Disable() end
+                    if canManage then row.setMainBtn:Enable() else row.setMainBtn:Disable() end
+                    row.linkBtn:SetScript("OnClick", function()
+                        local typedMain = row.linkEdit:GetText()
+                        row.linkEdit:ClearFocus()
+                        if typedMain == "" then return end
+                        if ns.Credits_SetAltOverride(rec.name, typedMain) then
+                            row.linkEdit:SetText("")
+                            ns.CreditsConfig_Refresh()
+                        else
+                            row.status:SetText("|cffff3333Refused|r")
+                            C_Timer.After(2, function() row.status:SetText("") end)
+                        end
+                    end)
+                    row.setMainBtn:SetScript("OnClick", function()
+                        if ns.Credits_SetAsNewMain(rec.name, rec.rawGoldAmount, rec.latestDonation) then
+                            ns.CreditsConfig_Refresh()
+                        else
+                            row.status:SetText("|cffff3333Refused|r")
+                            C_Timer.After(2, function() row.status:SetText("") end)
+                        end
+                    end)
+                end
+            end
+        end
+
+        local bottom = GetBottomAnchor()
+        local top, bot = content:GetTop(), bottom:GetBottom()
+        if top and bot then
+            content:SetHeight(math.max(200, top - bot + 20))
+        end
+    end
+
+    filterEdit:SetScript("OnTextChanged", function()
+        pageState.page = 1
+        Refresh()
+    end)
+    sortNameBtn:SetScript("OnClick", function()
+        if sortState.key == "name" then
+            sortState.ascending = not sortState.ascending
+        else
+            sortState.key = "name"
+            sortState.ascending = true
+        end
+        Refresh()
+    end)
+    sortDateBtn:SetScript("OnClick", function()
+        if sortState.key == "latestDonation" then
+            sortState.ascending = not sortState.ascending
+        else
+            sortState.key = "latestDonation"
+            sortState.ascending = false -- most recent donation first by default
+        end
+        Refresh()
+    end)
+    prevPageBtn:SetScript("OnClick", function()
+        pageState.page = pageState.page - 1
+        Refresh()
+    end)
+    nextPageBtn:SetScript("OnClick", function()
+        pageState.page = pageState.page + 1
+        Refresh()
+    end)
+
+    return Refresh
+end
+
+--------------------------------------------------------------------------
+-- Placeholder tab - Audit Log owns no real data yet (CM7). The shell
+-- exists now so that milestone fills in a tab rather than
+-- re-architecting the window later.
 --------------------------------------------------------------------------
 local function BuildPlaceholderTab(content, titleText, message)
     local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -611,14 +1270,20 @@ local function CreateWindow()
 
     local rosterContent = CreateFrame("Frame", nil, scrollFrame)
     rosterContent:SetPoint("TOPLEFT", scrollFrame, "TOPLEFT", 0, 0)
-    rosterContent:SetSize(1, 140)
-    BuildPlaceholderTab(rosterContent, "Roster", "Available once CM2 seeds the ledger from Step 0's reconciled data (seed-dataset.csv - 651 mains). Will list every member's points, credits, tier, and prestige.")
+    -- Generous fixed pre-first-refresh estimate (title/hint/seed button +
+    -- sort/page controls + a full 20-row page) - trimmed to the real
+    -- content height on every refresh, same as Settings tab.
+    rosterContent:SetSize(1, 550)
+    tabs.roster.refresh = BuildRosterTab(rosterContent)
     tabs.roster.content = rosterContent
 
     local conflictsContent = CreateFrame("Frame", nil, scrollFrame)
     conflictsContent:SetPoint("TOPLEFT", scrollFrame, "TOPLEFT", 0, 0)
-    conflictsContent:SetSize(1, 140)
-    BuildPlaceholderTab(conflictsContent, "Conflicts", "Available once CM2's alt-identity view/edit UI lands. Designated Officers will resolve identity conflicts here (currently: 1 conflict and 1129 unmapped donor names in review-queue.csv from Step 0).")
+    -- Generous fixed pre-first-refresh estimate (title/hint/filter/sort/
+    -- page controls + a full 15-row page, each row 2 lines) - trimmed to
+    -- the real content height on every refresh, same as the other tabs.
+    conflictsContent:SetSize(1, 650)
+    tabs.conflicts.refresh = BuildConflictsTab(conflictsContent)
     tabs.conflicts.content = conflictsContent
 
     local auditContent = CreateFrame("Frame", nil, scrollFrame)
@@ -663,8 +1328,13 @@ function ns.CreditsConfig_Refresh()
     if content then
         content:SetWidth(math.max(1, frame.scrollFrame:GetWidth() - 24))
     end
-    if activeTabKey == "settings" and tabs.settings.refresh then
-        tabs.settings.refresh()
+    -- Generalized (was hardcoded to "settings" only, from before Roster
+    -- had a real refresh closure) - every tab's builder returns its own
+    -- refresh closure the same way BuildSettingsTab does, so whichever
+    -- tab is active gets it called here.
+    local activeTab = tabs[activeTabKey]
+    if activeTab and activeTab.refresh then
+        activeTab.refresh()
     end
 end
 
