@@ -63,22 +63,23 @@ outcome only depends on the item, not on who answers:
    caution as this module's other unverified-API notes; needs in-game
    confirmation like everything else here). Overrides any `ItemPoints`
    entry, since a value is moot if it can't be traded.
-   Reply: `<item link> [item] is not tradable and has no value other
-   than using it or vendoring it.`
+   Reply: `DH-Tools: cannot be traded. Use it, Vendor it, or DE it.`
 2. **Has data** - item's exact name is a key in `ns.ITEM_POINTS` with a
    non-nil `detail`.
-   Reply: `<item link> <detail text>` (the existing spreadsheet-sourced
+   Reply: `DH-Tools: <detail text>` (the existing spreadsheet-sourced
    string, e.g. "47 Pound Grouper: 0 pts to Bavin; n/a from a
    @Fisher").
 3. **No data** - name not found, or found with `detail = nil`.
-   Reply: `<item link> Bavin has no data for [item]. Please message him
-   to let him know.`
+   Reply: `DH-Tools: Bavin has no data for [item].`
 
-All three lead with the clickable item link for context, consistent
-with Chris's "link first, then text" instruction - including the
-no-data and not-tradable cases, which weren't explicitly specified;
-flagging this assumption in case a bare text reply is preferred there
-instead.
+**Changed 2026-09-25 (Chris):** all three used to lead with the
+clickable item link itself (Loopi's original 2026-09-13 call); dropped
+as redundant since the asker already posted that same link to trigger
+the lookup. Replaced with a plain "DH-Tools:" prefix so the reply reads
+as addon-generated rather than a guildmate typing the answer by hand.
+Same change also dropped the no-data reply's trailing "Please message
+him to let him know." sentence - it doesn't apply when there's
+genuinely no data on file.
 
 ## "Nobody's watching" fallback - lives in DH-Tools Core, not gated by the module toggle
 

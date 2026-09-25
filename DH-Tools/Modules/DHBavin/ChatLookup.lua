@@ -18,8 +18,12 @@
 --      non-nil `detail` line (ns.GetItemPoints already resolves override
 --      vs. baseline - see Core.lua's own comment on that function).
 --   3. No data - known or unknown item, but no detail text on file.
--- All three lead with the clickable item link (Loopi's explicit call,
--- 2026-09-13), then the message text.
+-- All three lead with "DH-Tools:" (2026-09-25, Chris's explicit call -
+-- was the clickable item link itself, 2026-09-13, but the asker already
+-- posted that same link to trigger the lookup, so repeating it back was
+-- redundant; "DH-Tools:" instead marks the reply as addon-generated
+-- rather than a guildmate typing the info out by hand), then the message
+-- text.
 --
 -- 2026-09-13 (Loopi): classID 12 = Quest item, bindType 1 = Bind on
 -- Pickup, read via GetItemInfo's 12th/14th return values. UNVERIFIED on
@@ -37,8 +41,9 @@ local ns = DHTools.Bavin
 local ITEM_CLASS_QUEST = 12
 local BIND_ON_PICKUP = 1
 
--- Returns a fully-formed guild-chat reply (item link already prepended),
--- or nil if this client has nothing to say - either because the item
+-- Returns a fully-formed guild-chat reply ("DH-Tools:" already
+-- prepended, no item link - see the file-header comment for why), or
+-- nil if this client has nothing to say - either because the item
 -- isn't cached yet (GetItemInfo cache miss; no retry here, this is
 -- best-effort client-local coordination, not worth delaying the whole
 -- claim race for) or, in principle, any other reason a future change
@@ -56,7 +61,7 @@ function ns.TryClassifyLookup(link)
         -- 2026-09-13 (Loopi): wording changed at Loopi's request - was
         -- "is not tradable and has no value other than using it or
         -- vendoring it."
-        return link .. " cannot be traded. Use it, Vendor it, or DE it."
+        return "DH-Tools: cannot be traded. Use it, Vendor it, or DE it."
     end
 
     -- 2026-09-13 (Loopi): pcall safety net - a hidden Lua error here
@@ -73,8 +78,11 @@ function ns.TryClassifyLookup(link)
     end
 
     if entry and entry.detail then
-        return link .. " " .. entry.detail
+        return "DH-Tools: " .. entry.detail
     end
 
-    return link .. " Bavin has no data for " .. itemName .. ". Please message him to let him know."
+    -- 2026-09-25 (Chris): dropped the "Please message him to let him
+    -- know." sentence - it doesn't apply when there's genuinely no data
+    -- on file yet.
+    return "DH-Tools: Bavin has no data for " .. itemName .. "."
 end
