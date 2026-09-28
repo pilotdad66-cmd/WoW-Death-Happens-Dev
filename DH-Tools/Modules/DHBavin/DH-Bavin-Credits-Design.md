@@ -704,20 +704,25 @@ last one (mail-session push boundary) was confirmed 2026-08-31:
 
 **2026-09-28 additions (DH-Store design conversation) - three math
 questions for Bavin, per Chris:**
-- **Credit/reputation-point multiplier (earning side).** Already built
-  and defaulting to 0.60 credits/point (Credits.lua, CM1, officer-
-  editable) - not a from-scratch open question, but worth reconfirming
-  with Bavin now that Store gives credits a real spending use, not
-  just a recognition number.
-- **Credit/gold ratio (spending side) - genuinely new, not built.**
-  Converts a store item's gold price into its credit price (see
-  DH-Store-Design.md's Pricing resolution) - needs its own new
-  officer-configurable value, likely alongside the existing multiplier
-  on CreditsConfig.lua's Settings tab.
-- **Does the tier discount apply to gold spend, credit spend, or
-  both?** Chris's working answer to Claude (2026-09-28) was both, but
-  he's routing this to Bavin as a real economic-design question before
-  treating it as final - see DH-Store-Design.md.
+- **RESOLVED 2026-09-28 (Chris) - Credit/reputation-point multiplier
+  (earning side).** Reconfirmed at 0.60 credits/point (Credits.lua,
+  CM1, officer-editable) - no change for the Store era.
+- **RESOLVED 2026-09-28 (Chris), starting value only - Credit/gold
+  ratio (spending side) - genuinely new, not built.** Converts a store
+  item's gold price into its credit price (see DH-Store-Design.md's
+  Pricing resolution). Starting point: use the same ratio as the
+  existing Reputation Points/Gold relationship - Chris's recollection
+  is 10 rep points per gold, but this needs verifying against the
+  actual raw data/points formula (`_build-itempoints.ps1`'s source,
+  not assumed) before it's wired in as the default. Still needs its
+  own new officer-configurable value on CreditsConfig.lua's Settings
+  tab, alongside the existing multiplier - a starting number isn't the
+  same as making it officer-editable.
+- **RESOLVED 2026-09-28 (Chris) - Does the tier discount apply to gold
+  spend, credit spend, or both?** Both, confirmed as the launch
+  behavior. Chris flagged this could change to gold-only in the
+  future, so the discount scope must be an officer-configurable
+  setting (per-currency on/off), not hardcoded to "both" in code.
 
 All prior decisions (2026-08-31, 2026-09-03, 2026-09-22, 2026-09-23)
 are settled; Step 0/CM1/CM2 are ready to start (Chris picking up with

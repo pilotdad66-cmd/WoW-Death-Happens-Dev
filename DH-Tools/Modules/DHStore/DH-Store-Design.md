@@ -51,11 +51,13 @@ claude\DH-Store\PROFILE.md - not repeated here.
    (assumed default - not explicitly stated, flag if wrong), Friendly
    10%, Honored 20%, Revered 30%, Exalted 40%, then +10% per Prestige
    level past Exalted, capped at 80% (reached at Prestige 4:
-   40+10x4=80, further prestige stays at 80%). Applies to **both** the
-   gold price and the credit price, though this is now itself one of
-   the questions routed to Bavin for confirmation - see
-   DH-Bavin-Credits-Design.md's 2026-09-28 Open Questions addition.
-   Consequence: Store's gold-price column is tier-personalized per
+   40+10x4=80, further prestige stays at 80%). **CONFIRMED 2026-09-28
+   (Chris) - applies to both** the gold price and the credit price at
+   launch - see DH-Bavin-Credits-Design.md's 2026-09-28 Open Questions
+   resolution. Chris flagged this could change to gold-only in the
+   future, so the discount scope must be an officer-configurable
+   setting (per-currency on/off), not hardcoded. Consequence: Store's
+   gold-price column is tier-personalized per
    viewer too, same as the credit column - there's no single "the gold
    price" to show, both are computed per-buyer at display time. CM5's
    officer-side checkout needs the same computed discounted gold
@@ -79,7 +81,13 @@ claude\DH-Store\PROFILE.md - not repeated here.
    from ItemPoints.lua's points value directly, as first assumed - the
    points value only ever fed the *earning* side of Credits, never
    pricing. (Original gap note, now resolved: gold DOES have a data
-   source, it just wasn't wired through yet.)
+   source, it just wasn't wired through yet.) The new credit/gold
+   ratio's starting value (RESOLVED 2026-09-28, Chris): use the same
+   ratio as the existing Reputation Points/Gold relationship - Chris's
+   recollection is 10 rep points per gold, but needs verifying against
+   the actual raw data/points formula before it's wired in as the
+   default - see DH-Bavin-Credits-Design.md's 2026-09-28 Open
+   Questions resolution.
 6. **RESOLVED 2026-09-28 (Chris) - Officer role, full 5-tier
    hierarchy.** Supersedes DH-Bavin-Credits-Design.md's older
    2026-09-25 "Access tiers" (4 tiers) - see that doc's superseding
@@ -98,12 +106,17 @@ claude\DH-Store\PROFILE.md - not repeated here.
       subtree). Same removal-before-offering-to-another-guild
       checklist as today (ROADMAP.md's "Author-account admin
       override" section) applies to DH-Store too.
-   2. **Guild Leader** - full access, keyed to in-game guild rank 0
-      (rank index 0 = Guild Master; numbers increase as rank
-      decreases - confirmed by this doc's own existing "any rank<=3
-      officer" convention for editors). Chris believes this is Bavin
-      but is not certain ("I think") - needs verifying against the
-      real roster, not assumed.
+   2. **Guild Leader** - full access, keyed dynamically to in-game
+      guild rank 0 (rank index 0 = Guild Master; numbers increase as
+      rank decreases - confirmed by this doc's own existing "any
+      rank<=3 officer" convention for editors). **RESOLVED 2026-09-28
+      (Chris) - whether Bavin specifically holds rank 0 is moot and
+      doesn't need verifying.** The rank-0 check works automatically
+      for whichever character is currently logged in with that rank
+      (Bavin is only one of several alts belonging to the guild
+      leader, a real person) - this tier stays purely rank-keyed as
+      designed. Donation Recipient (tier 3, below) is a separate,
+      independently-configured assignment and does not depend on this.
    3. **Donation Recipient** - the existing DH-Bavin `recipient` role,
       renamed for clarity now that Store Officer exists as a separate
       thing. Configurable by tier 1 or 2, same as today
@@ -115,23 +128,23 @@ claude\DH-Store\PROFILE.md - not repeated here.
       designated PRIMARY Store Officer receives all of Store's purchase-
       request mail (not every Store Officer) - who's primary is itself
       configurable, not hardcoded.
-   5. **Designated Distribution Officer(s)** - configurable by tier 1,
-      2, or 3. Sends the fulfillment mail, collects CoD and/or deducts
-      Credits (CM5's engine). Very likely this is exactly the existing
-      "Designated Officer" role from the Access tiers section above,
-      just renamed now that "Store Officer" needs its own distinct name -
-      not yet confirmed with Chris; if it's meant to be narrower than
-      the existing Designated Officer (e.g. can send/charge but not
-      view the full ledger or edit alt-links), that's a genuinely new,
-      more limited tier rather than a rename.
+   5. **RESOLVED 2026-09-28 (Chris) - Designated Distribution
+      Officer(s)** - configurable by tier 1, 2, or 3. Sends the
+      fulfillment mail, collects CoD and/or deducts Credits (CM5's
+      engine). Confirmed: this is exactly the existing "Designated
+      Officer" role from the Access tiers section above, simply
+      renamed now that "Store Officer" has its own distinct name - no
+      permission changes, not a new/narrower tier.
 7. **Shared scroll-list widget** - new src\DH-Tools\Widgets\ folder,
    native HybridScrollFrame-based (matches the real Auction House's own
    chrome; explicitly not AceGUI - see STATUS.md's Last session). Built first
    against DH-Store, Bavin's Roster/Conflicts tabs backported later
    only if it proves out. Not yet started.
-8. **UI layout specifics** - filter/search bar, category/quality
-   dropdowns, whether they're needed at guild-catalog scale (hundreds,
-   not thousands, of items) - sketched in conversation, not specced.
+8. **RESOLVED 2026-09-28 (Chris) - UI layout specifics.** Full
+   filtering, matching the real Auction House: a search bar plus
+   category and quality dropdowns, even at guild-catalog scale
+   (hundreds, not thousands, of items). Not yet specced further
+   (exact dropdown values, layout).
 9. **RESOLVED 2026-09-28 (Chris) - Build sequencing relative to the
    Credits CM plan.** Store's actual checkout is just CM5's
    outgoing-mail debit engine, used the same way regardless of whether
@@ -146,10 +159,12 @@ claude\DH-Store\PROFILE.md - not repeated here.
    tag (see DH-Bavin-Credits-Design.md's Data model update) lets a
    Store-originated purchase be distinguished from any other, cheaply,
    if that ever proves useful.
-10. **Prominent discount display** (Chris, 2026-09-28) - the viewer's
-    current tier discount % needs to show prominently near the
-    lower-left gold/Credits balance readout, not just be silently
-    baked into each row's price. Not yet laid out.
+10. **RESOLVED 2026-09-28 (Chris) - Prominent discount display.** The
+    viewer's current tier discount % shows as an always-visible
+    badge/pill next to the gold/Credits balance readout (e.g. "Honored:
+    20% off"), plus a richer hover tooltip on that same area with tier
+    name, points, next-tier target, and lifetime points - not one or
+    the other, both.
 11. **RESOLVED 2026-09-28 (Chris) - Price-column real estate.** Chris
     agreed 4 full columns (gold, tier gold, credits, tier credits) is
     too many, but wants the "full price" still visible alongside the
@@ -164,15 +179,20 @@ claude\DH-Store\PROFILE.md - not repeated here.
     the badge explains *why* the price differs, the struck-through
     column reinforces it row by row. Superseded a prior list-only-
     shows-final-total / base-price-in-details-panel-only proposal.
-12. **Stack pricing - open, new.** Some listings will be stacks (e.g.
-    20x Netherweave Cloth), needing both a per-unit price and a
-    stack-total price, times up to 2 currencies (gold/credits) x 2
-    states (base/discounted) - up to 8 numbers per listing if shown in
-    full. Whether the store lets a buyer purchase part of a stack or
-    always the whole listed lot (matching how the real Auction House
-    sells a listing as one indivisible lot) is undecided - affects both the
-    pricing math and whether "per-unit" needs to be buyer-facing at
-    all or is purely informational.
+12. **RESOLVED 2026-09-28 (Chris) - Stack pricing/purchase
+    granularity.** Whole lot only, matching the real Auction House - no
+    partial-stack buys. Simplifies the pricing math (no per-unit
+    figures needed as buyer-facing numbers, just a stack-total per
+    listing) and the UI (no quantity picker).
+    **New requirement surfaced by this same answer: multiple
+    simultaneous listings of the same item.** A seller can post several
+    stacks of different sizes of the same item at once (e.g. a 5-stack
+    and a 20-stack of Netherweave Cloth both live at the same time) -
+    this rules out an item-ID-keyed catalog (one entry per item, like
+    Bavin's priority want-list). #2's catalog sync wire format needs a
+    per-listing ID (not itemId) as the catalog's actual key, with
+    itemId as just a field on each listing - multiple listings can
+    share an itemId.
 
 ## Status
 Scaffolded 2026-09-28: folder structure and design docs only
