@@ -409,6 +409,26 @@ will have.
    this system's "mail recipient" and the credit system's "Designated
    Officers" are two different lists, never conflated in code or UI).
 
+**SUPERSEDED 2026-09-28 (Chris, DH-Store design conversation) - see
+`src\DH-Tools\Modules\DHStore\DH-Store-Design.md`'s Officer roles
+resolution for the full replacement model.** The 4 tiers above split
+into 5, adding DH-Store's own AH Officer role: (1) Hidden author
+override (Loopi + alts, `IsAuthorAccount()` - undocumented outside
+this PC, same as today) and (2) Guild Leader (in-game rank 0) are now
+TWO separate tiers instead of one combined "Guild leader + Loopi";
+(3) Mail recipient (Bavin) is renamed **Donation Recipient**, same
+role; (4) **AH Officer(s)** is new - Store-specific, manages the
+catalog and price overrides; (5) **Designated Distribution
+Officer(s)** is very likely this section's existing "Designated
+Officer" role just renamed for clarity now that "AH Officer" exists as
+a separate thing - not yet confirmed with Chris, see DH-Store-Design.md.
+Each tier grants everything every tier below it grants (tier 1 has
+everyone's rights; tier 5 has only its own); membership per tier is
+tracked independently (a member can hold any combination, removal from
+one doesn't remove any other) - matches this doc's own existing
+"mail recipient / Designated Officers are two different lists, never
+conflated" precedent directly above.
+
 CreditsConfig.lua (CM1, 2026-09-25) is where tiers 2 and 4 actually
 live today: a standalone "Bavin Rep & Credit Config" window, opened via
 a button in Config.lua's existing Bavin officer section (that page is
@@ -682,6 +702,23 @@ last one (mail-session push boundary) was confirmed 2026-08-31:
   the missing-bonus-points theory. Not investigated further; revisit
   if they turn out to matter once Bavin's answer is in.
 
+**2026-09-28 additions (DH-Store design conversation) - three math
+questions for Bavin, per Chris:**
+- **Credit/reputation-point multiplier (earning side).** Already built
+  and defaulting to 0.60 credits/point (Credits.lua, CM1, officer-
+  editable) - not a from-scratch open question, but worth reconfirming
+  with Bavin now that Store gives credits a real spending use, not
+  just a recognition number.
+- **Credit/gold ratio (spending side) - genuinely new, not built.**
+  Converts a store item's gold price into its credit price (see
+  DH-Store-Design.md's Pricing resolution) - needs its own new
+  officer-configurable value, likely alongside the existing multiplier
+  on CreditsConfig.lua's Settings tab.
+- **Does the tier discount apply to gold spend, credit spend, or
+  both?** Chris's working answer to Claude (2026-09-28) was both, but
+  he's routing this to Bavin as a real economic-design question before
+  treating it as final - see DH-Store-Design.md.
+
 All prior decisions (2026-08-31, 2026-09-03, 2026-09-22, 2026-09-23)
 are settled; Step 0/CM1/CM2 are ready to start (Chris picking up with
 Step 0 in a new session) once Bavin's point-bonus question is answered
@@ -755,6 +792,17 @@ Retention differs by role (see Audit trail decision):
 - **Credit processor** - uncapped, never pruned.
 - **Designated Officers** - rolling 12 months, pruned locally.
 - **Regular members** - own rows only, capped at the most recent 50.
+
+**2026-09-28 (Chris, DH-Store design conversation):** the raw data
+that `_build-itempoints.ps1` generates `ItemPoints.lua` from already
+includes a gold value per item - it's just not currently carried
+through into `ItemPoints.lua`'s own output (points only). DH-Store's gold
+base price needs that value, so `_build-itempoints.ps1` (and/or
+`ItemPoints.lua`'s shape) likely needs updating to surface it -
+resolves what was earlier thought to be a missing-data-source gap; see
+DH-Store-Design.md's Pricing resolution for the full chain (gold from
+raw data -> credit price derived via a configurable ratio, not from
+the points value directly as first assumed).
 
 Size note: the processor's uncapped log is the one table that grows
 without bound. At a rough guess - a few hundred transactions a week
@@ -1532,9 +1580,11 @@ whether to pull in more officers or go straight to CM9 cutover.
   arranged via Discord - see Data model's transaction-log update for
   how the result is logged, and
   src\DH-Tools\Modules\DHStore\DH-Store-Design.md for the store side.
-  **2026-09-28, tier-discount schedule resolved:** the discount
-  (Friendly 10% through Exalted 40%, +5%/Prestige level capped at 75%)
-  applies to BOTH currencies, not just credits - so a CoD sale of a
+  **2026-09-28, tier-discount schedule resolved (changed same day -
+  Prestige rate corrected from +5%/75% to +10%/80%):** Neutral 0%,
+  Friendly 10%, Honored 20%, Revered 30%, Exalted 40%, then +10% per
+  Prestige level, capped at 80% (reached at Prestige 4: 40+10x4=80).
+  Applies to BOTH currencies, not just credits - so a CoD sale of a
   store item needs the officer's client to compute the buyer's
   discounted gold figure and set THAT as the CoD amount on send
   (WoW's SendMail API takes an exact copper value up front, it can't
