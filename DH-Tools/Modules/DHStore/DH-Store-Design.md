@@ -223,11 +223,28 @@ claude\DH-Store\PROFILE.md - not repeated here.
       Officer" role from the Access tiers section above, simply
       renamed now that "Store Officer" has its own distinct name - no
       permission changes, not a new/narrower tier.
-7. **Shared scroll-list widget** - new src\DH-Tools\Widgets\ folder,
-   native HybridScrollFrame-based (matches the real Auction House's own
-   chrome; explicitly not AceGUI - see STATUS.md's Last session). Built first
-   against DH-Store, Bavin's Roster/Conflicts tabs backported later
-   only if it proves out. Not yet started.
+7. **RESOLVED 2026-09-28 (Chris) - Shared scroll-list widget.** New
+   `src\DH-Tools\Widgets\ScrollList.lua`, new `DHTools.Widgets`
+   namespace. Uses Blizzard's real `HybridScrollFrameTemplate` (stock,
+   zero new XML) for scrollbar/container mechanics, with hand-built
+   Lua rows wired into `scrollFrame.buttons` plus a custom `update`
+   function - not `HybridScrollFrame_CreateButtons`, which needs an
+   XML button template, so this keeps the codebase's existing
+   zero-XML convention (confirmed via a full read of DH-Tools.toc: no
+   `.xml` files exist anywhere in this addon today). Generic API:
+   `ns.Widgets.CreateScrollList(parent, opts) -> scrollList` where
+   `opts = { rowHeight = 32, createRow = function(rowFrame,
+   poolIndex) ... end, updateRow = function(rowFrame, dataItem,
+   dataIndex) ... end, emptyText = "..." (optional) }`.
+   `scrollList:SetData(dataArray)` loads a new dataset;
+   `scrollList:Refresh()` re-renders the current dataset in place.
+   Column headers and filter/search controls (#8) are the caller's
+   job, built above the widget - not part of it. No row-selection or
+   details-panel support in v1 (dropped per #11's inline-strikethrough
+   resolution, which removed the need for a details panel). `.toc`
+   line placed right after the `Libs\` block and before `Core.lua`.
+   Built first against DH-Store; Bavin's Roster/Conflicts tabs
+   backported later only if it proves out. Not yet built.
 8. **RESOLVED 2026-09-28 (Chris) - UI layout specifics.** Full
    filtering, matching the real Auction House: a search bar plus
    category and quality dropdowns, even at guild-catalog scale
@@ -285,9 +302,13 @@ claude\DH-Store\PROFILE.md - not repeated here.
 ## Status
 Scaffolded 2026-09-28: folder structure and design docs. Core.lua's
 module-dependency mechanism (question #1) is BUILT and harness-tested
-(52/52) as of 2026-09-28, in Core.lua/Config.lua. Question #2's
-catalog sync wire format is fully designed (2026-09-28) but not yet
-built. DH-Store's own module code (Modules\DHStore\Core.lua,
-Sync.lua, registering with `requires = "bavin"`) does not exist yet -
-only #7 (shared scroll-list widget) remains open before Milestone 1.
-See claude\DH-Store\STATUS.md for current task.
+(52/52) as of 2026-09-28, in Core.lua/Config.lua. Questions #2
+(catalog sync wire format) and #7 (shared scroll-list widget) are
+fully designed (2026-09-28) but not yet built. All 12 originally-open
+design questions are now RESOLVED, DESIGNED, or BUILT - nothing
+remains open. DH-Store's own module code (Modules\DHStore\Core.lua,
+Sync.lua, registering with `requires = "bavin"`; Widgets\ScrollList.lua;
+.toc updates; Config.lua's new Store page; Minimap.lua's "Open DH
+Store" entry; the `/dhs` slash command) does not exist yet - next step
+is scaffolding and building DH-Store's whole module in one pass, per
+Chris's sign-off. See claude\DH-Store\STATUS.md for current task.
