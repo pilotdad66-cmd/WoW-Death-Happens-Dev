@@ -46,9 +46,20 @@ claude\DH-Store\PROFILE.md - not repeated here.
    timestamp/sequence the addon embeds in the generated mail itself
    (WoW's own mail metadata isn't granular enough for this). No DH-Air-
    style claim/self-heal machinery needed.
-4. **Tier-discount formula** - what discount each reputation tier
-   (Neutral/Friendly/Honored/Revered/Exalted/Prestige) actually gets
-   off the credit price. Not discussed yet.
+4. **RESOLVED 2026-09-28 (Chris) - Tier-discount formula.** Neutral
+   0% (assumed default - not explicitly stated, flag if wrong),
+   Friendly 10%, Honored 20%, Revered 30%, Exalted 40%, then +5% per
+   Prestige level past Exalted, capped at 75% (reached at Prestige 7:
+   40 + 5x7 = 75, further prestige stays at 75%). Applies to **both**
+   the gold price and the credit price - not credit-only as first
+   assumed. Consequence: Store's gold-price column is tier-
+   personalized per viewer too, same as the credit column - there's no
+   single "the gold price" to show, both are computed per-buyer at
+   display time. CM5's officer-side checkout needs the same computed
+   discounted gold figure to actually set as the CoD amount when
+   sending (WoW's SendMail API takes an exact copper CoD value, not
+   something a discount can be applied to after the officer sends) -
+   see DH-Bavin-Credits-Design.md's CM5 scope update.
 5. **RESOLVED 2026-09-28 (Chris) - Credit-price vs point-value
    relationship.** Layered, not either/or: a store item's price
    defaults to ItemPoints.lua's existing value, then can be overridden
@@ -57,7 +68,15 @@ claude\DH-Store\PROFILE.md - not repeated here.
    chain CM5's outgoing-mail checkout now uses (see
    DH-Bavin-Credits-Design.md's CM5 scope update) - Store doesn't need
    its own separate pricing data model, just an optional per-item
-   override on top of what Bavin already maintains.
+   override on top of what Bavin already maintains. **Gap this
+   surfaces:** that layered default only covers the CREDIT price -
+   ItemPoints.lua has no gold-equivalent value to default a gold price
+   from (points and gold are unrelated units), so a store listing's
+   gold base price has no existing data source and must always be
+   set manually per-listing. Every store listing therefore needs two
+   independent base numbers (gold, and points/credits-via-ItemPoints-
+   or-override), not one price converted into two currencies - not yet
+   confirmed with Chris.
 6. **Officer role** - is "AH officer" the same role as DH-Bavin's
    existing mail recipient/Designated Officer roles, or a new,
    separate permission list? Not discussed yet.

@@ -1532,6 +1532,16 @@ whether to pull in more officers or go straight to CM9 cutover.
   arranged via Discord - see Data model's transaction-log update for
   how the result is logged, and
   src\DH-Tools\Modules\DHStore\DH-Store-Design.md for the store side.
+  **2026-09-28, tier-discount schedule resolved:** the discount
+  (Friendly 10% through Exalted 40%, +5%/Prestige level capped at 75%)
+  applies to BOTH currencies, not just credits - so a CoD sale of a
+  store item needs the officer's client to compute the buyer's
+  discounted gold figure and set THAT as the CoD amount on send
+  (WoW's SendMail API takes an exact copper value up front, it can't
+  be discounted after the fact). A plain non-store outgoing mail
+  (donation-priority item, no store listing) has no gold price or
+  discount to apply at all - this pricing chain only exists for
+  store-originated sends.
 - **CM6 - Balance visibility + member transaction push.** Batched
   targeted push (flush on `MAIL_CLOSED`/per-send) + login-time pull;
   own-balance window opened from the minimap left-click quick-actions
