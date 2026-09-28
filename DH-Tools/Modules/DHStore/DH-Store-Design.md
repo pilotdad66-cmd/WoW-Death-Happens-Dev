@@ -307,9 +307,14 @@ own instruction. Widgets\ScrollList.lua (#7), Modules\DHStore\Sync.lua
 (#2's DHStoreV1 protocol), Modules\DHStore\Core.lua (permissions,
 pricing, purchase mail, browse window, `/dhs` slash commands,
 `requires = "bavin"` registration), a new Store page in Config.lua, and
-"Open DH Store" entries in Minimap.lua all exist now. Syntax-clean
-(whole src\DH-Tools\ tree) and the existing 52-check harness still
-passes. See claude\DH-Store\STATUS.md for the full build list,
-deliberate v1 scope decisions (manual gold pricing, chat-command-only
-officer listing management, unset credit/gold ratio by default), and
-the in-game test plan - nothing here has touched a real client yet.
+"Open DH Store" entries in Minimap.lua all exist now. A same-day pass 2
+(2026-09-28) then wired `/dhs list` to auto-source gold from
+ItemPoints.lua's new `goldValue` field (manual entry kept only as an
+override), set `creditGoldRatio`'s default to the confirmed 10:1, and
+added a left-side category browser mirroring the real in-game AH's
+class/subclass tree - a different taxonomy from DH-Bavin's own
+donation/points categories. Syntax-clean (whole src\DH-Tools\ tree) and
+the existing 52-check harness still passes. See claude\DH-Store\STATUS.md
+for the full build list, remaining v1 scope decisions (chat-command-only
+officer listing management, local-only tier-discount lookup), and the
+in-game test plan - nothing here has touched a real client yet.
