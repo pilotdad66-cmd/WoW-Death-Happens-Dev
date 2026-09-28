@@ -26,8 +26,11 @@ claude\DH-Store\PROFILE.md - not repeated here.
    to auto-check Bavin, how unchecking Bavin cascades to auto-uncheck
    Store, and how the Tools config page greys out/disables a
    dependent module's checkbox when its dependency is off. This
-   blocks everything else - Store can't be registered at all until
-   this exists.
+   blocks everything else - Store can't be registered as a DH-Tools
+   module at all until this exists. This is a separate blocker from
+   the Credits-system sequencing question below (#9) - it gates
+   Store's very existence as a toggleable module, not just its
+   checkout feature.
 2. **Catalog sync wire format** - mirrors DH-Bavin's priority-list
    ITEM/ITEMGONE broadcast + SYNCREQ/SYNCDATA pattern, but needs its
    own message prefix/payload shape (item, quantity, gold price, base
@@ -36,27 +39,25 @@ claude\DH-Store\PROFILE.md - not repeated here.
    - presumably the same recipient/editor-style guild-roster-verified
    model DH-Bavin already uses, but not yet decided for Store
    specifically).
-3. **Purchase/claim flow** - exact message(s) for a buy action: does a
-   client broadcast a claim/decrement the instant "Buy" is clicked (so
-   other online clients see it disappear immediately), or does the
-   addon only generate the mail and rely on the officer to manually
-   decrement stock afterward? Chris's call (2026-09-28): races are
-   rare enough at this guild's scale to tolerate, resolved by the
-   officer FIFO via a precise timestamp/sequence the addon embeds in
-   the mail itself (not WoW's own mail metadata, which isn't granular
-   enough). Still need to decide whether the addon also does the fast
-   client-side broadcast-claim as a first line of defense, or skips it
-   entirely and leans on the officer resolution alone.
+3. **RESOLVED 2026-09-28 (Chris) - Purchase/claim flow.** No
+   client-side claim-broadcast - races are rare enough at this guild's
+   scale (hundreds of items, infrequent buys) to tolerate. The AH
+   officer resolves any double-claim manually, FIFO, using a precise
+   timestamp/sequence the addon embeds in the generated mail itself
+   (WoW's own mail metadata isn't granular enough for this). No DH-Air-
+   style claim/self-heal machinery needed.
 4. **Tier-discount formula** - what discount each reputation tier
    (Neutral/Friendly/Honored/Revered/Exalted/Prestige) actually gets
    off the credit price. Not discussed yet.
-5. **Credit-price vs point-value relationship** - does a store item's
-   credit price come from the existing ItemPoints.lua lookup (like the
-   outgoing credit-debit mail flow already uses), or is it a
-   store-specific price Bavin/the officer sets independently per
-   listing? Not discussed yet - affects whether Store needs its own
-   catalog-authoring data at all or just prices on top of data Bavin
-   already maintains.
+5. **RESOLVED 2026-09-28 (Chris) - Credit-price vs point-value
+   relationship.** Layered, not either/or: a store item's price
+   defaults to ItemPoints.lua's existing value, then can be overridden
+   manually per-listing (Store-specific), then the tier discount (#4
+   above) is applied on top at display/purchase time. Same pricing
+   chain CM5's outgoing-mail checkout now uses (see
+   DH-Bavin-Credits-Design.md's CM5 scope update) - Store doesn't need
+   its own separate pricing data model, just an optional per-item
+   override on top of what Bavin already maintains.
 6. **Officer role** - is "AH officer" the same role as DH-Bavin's
    existing mail recipient/Designated Officer roles, or a new,
    separate permission list? Not discussed yet.
@@ -68,6 +69,20 @@ claude\DH-Store\PROFILE.md - not repeated here.
 8. **UI layout specifics** - filter/search bar, category/quality
    dropdowns, whether they're needed at guild-catalog scale (hundreds,
    not thousands, of items) - sketched in conversation, not specced.
+9. **RESOLVED 2026-09-28 (Chris) - Build sequencing relative to the
+   Credits CM plan.** Store's actual checkout is just CM5's
+   outgoing-mail debit engine, used the same way regardless of whether
+   the item came from the store, an in-game request, or a Discord
+   post - the store is "more of a shopping tool than anything else...
+   a catalog of available items." So DH-Store's catalog/browsing UI
+   and the officer's item-listing UI can be designed and built almost
+   any time, independent of DH-Bavin's CM3/CM5 sequencing - only the
+   live debit-on-purchase step needs CM5 to actually exist first. (#1
+   above, Core.lua's dependency mechanism, is the one real blocker on
+   Store being toggleable at all.) The audit trail's optional `origin`
+   tag (see DH-Bavin-Credits-Design.md's Data model update) lets a
+   Store-originated purchase be distinguished from any other, cheaply,
+   if that ever proves useful.
 
 ## Status
 Scaffolded 2026-09-28: folder structure and design docs only

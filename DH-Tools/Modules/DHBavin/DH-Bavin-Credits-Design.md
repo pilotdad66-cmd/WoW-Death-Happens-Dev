@@ -722,13 +722,34 @@ A transaction-log entry (audit trail):
 
 ```
 { timestamp, direction (earn/spend), character, resolvedMain,
-  itemId, pointsValue, creditDelta, processedBy }
+  itemId, pointsValue, currency (credits|gold), creditDelta,
+  goldAmount, origin (manual|store), processedBy }
 ```
 
 `itemName` is deliberately NOT stored or transmitted - it's resolved
 at display time from `itemId` via `GetItemInfo`, which keeps rows
 small enough for the member-side push to fit the existing chunking
 convention.
+
+**2026-09-28 update (Chris, in the DH-Store design conversation):**
+the original schema above (`pointsValue`/`creditDelta` only) assumed
+every spend is credit-denominated. Once CM5's outgoing flow lets a
+sender choose CoD (native WoW mail gold) instead of a Credits
+deduction, a transaction can be gold-priced instead - the log now
+carries `currency` to say which, and `goldAmount` for the gold case.
+The CoD amount is logged as sender intent at send time, same
+guild-social-trust posture as the rest of this system - WoW gives the
+sender's addon no reliable hook into the recipient's later payment
+actually completing, so this is a paper trail, not a confirmed-receipt
+ledger, exactly like the credit-deduction side already is. The
+optional `origin` tag (manual officer mail vs. DH-Store) is cheap to
+carry and lets the audit trail distinguish a Store purchase from a
+hand-arranged one - not required for anything today, added now because
+it costs nothing and would be a schema migration to add later. Every
+row still always carries what was bought (`itemId`), for how much
+(`pointsValue`/`creditDelta` or `goldAmount`), and in which currency -
+per Chris, this is a hard requirement of the audit trail, not
+optional.
 
 Retention differs by role (see Audit trail decision):
 - **Credit processor** - uncapped, never pruned.
@@ -1497,19 +1518,46 @@ whether to pull in more officers or go straight to CM9 cutover.
   pull-in hook, point/credit/lifetime crediting, tier/prestige-crossing
   logic.
 - **CM5 - Outgoing mail processing.** Checkbox UI on SendMailFrame,
-  pre-send credit check + block, deduction on send.
+  pre-send credit check + block, deduction on send. **Scope clarified
+  2026-09-28 (Chris, DH-Store design conversation):** the charged price
+  is resolved from ItemPoints.lua's base value, then adjusted by any
+  manual DH-Store price override for that item, then by the buyer's own
+  tier discount if the item came from the store - not a flat
+  ItemPoints.lua lookup as originally scoped. The checkbox UI also
+  needs a currency choice: sender picks WoW's native CoD (gold, no
+  addon involvement in the actual transfer) or a Credits deduction -
+  previously assumed to always be a Credits deduction. This is the
+  same engine DH-Store's "buy" action uses for checkout regardless of
+  whether the item was found in the store, requested in-game, or
+  arranged via Discord - see Data model's transaction-log update for
+  how the result is logged, and
+  src\DH-Tools\Modules\DHStore\DH-Store-Design.md for the store side.
 - **CM6 - Balance visibility + member transaction push.** Batched
   targeted push (flush on `MAIL_CLOSED`/per-send) + login-time pull;
   own-balance window opened from the minimap left-click quick-actions
   menu. The push payload also carries that session's new transaction
   rows for the affected member (`itemId`, not item name); the login
   pull returns balance ONLY and does not backfill history. Member-side
-  local cap of 50 rows applied here.
+  local cap of 50 rows applied here. **Confirmed 2026-09-28 (Chris):**
+  this stays its own window and its own separate minimap menu entry,
+  distinct from DH-Store - it shows reputation tier, tier points, next-
+  tier target, and lifetime points, none of which belong in a shopping
+  UI. DH-Store's own corner readout (gold + Credits, no tier detail)
+  is a much lighter, separate thing living alongside it, not a
+  replacement for it.
 - **CM7 - Audit trail UI, three views.** (a) Processor: full log,
   uncapped, plus an export-and-purge escape hatch. (b) Designated
   Officer: full replica plus a "what I sent" filter on
   `processedBy == self`, with 12-month local pruning. (c) Regular
   member: own last 50, in the same window as their balance.
+  **Confirmed 2026-09-28 (Chris):** every row must always show what
+  was bought, for how much, and in which currency (gold or credits) -
+  this is a hard requirement, not optional. See Data model's
+  transaction-log update above (`currency`/`goldAmount`/`origin`
+  fields) - the checkout process is identical regardless of whether
+  the item came from DH-Store, an in-game request, or a Discord post,
+  so this UI needs no store-specific branch beyond the optional
+  `origin` tag.
 - **CM8 - Test & package.** Extend the headless harness (permission
   gates, tier/prestige math, report-parser edge cases, ledger sync,
   the forced-multi-chunk case) the same way M6 did for v1; in-game
