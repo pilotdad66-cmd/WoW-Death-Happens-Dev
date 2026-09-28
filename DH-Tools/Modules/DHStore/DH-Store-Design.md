@@ -300,15 +300,16 @@ claude\DH-Store\PROFILE.md - not repeated here.
     share an itemId.
 
 ## Status
-Scaffolded 2026-09-28: folder structure and design docs. Core.lua's
-module-dependency mechanism (question #1) is BUILT and harness-tested
-(52/52) as of 2026-09-28, in Core.lua/Config.lua. Questions #2
-(catalog sync wire format) and #7 (shared scroll-list widget) are
-fully designed (2026-09-28) but not yet built. All 12 originally-open
-design questions are now RESOLVED, DESIGNED, or BUILT - nothing
-remains open. DH-Store's own module code (Modules\DHStore\Core.lua,
-Sync.lua, registering with `requires = "bavin"`; Widgets\ScrollList.lua;
-.toc updates; Config.lua's new Store page; Minimap.lua's "Open DH
-Store" entry; the `/dhs` slash command) does not exist yet - next step
-is scaffolding and building DH-Store's whole module in one pass, per
-Chris's sign-off. See claude\DH-Store\STATUS.md for current task.
+**BUILT 2026-09-28, NOT YET IN-GAME TESTED.** Every item in this list
+is now RESOLVED, DESIGNED-and-built, or BUILT - the whole module was
+scaffolded and built in one combined pass this session, per Chris's
+own instruction. Widgets\ScrollList.lua (#7), Modules\DHStore\Sync.lua
+(#2's DHStoreV1 protocol), Modules\DHStore\Core.lua (permissions,
+pricing, purchase mail, browse window, `/dhs` slash commands,
+`requires = "bavin"` registration), a new Store page in Config.lua, and
+"Open DH Store" entries in Minimap.lua all exist now. Syntax-clean
+(whole src\DH-Tools\ tree) and the existing 52-check harness still
+passes. See claude\DH-Store\STATUS.md for the full build list,
+deliberate v1 scope decisions (manual gold pricing, chat-command-only
+officer listing management, unset credit/gold ratio by default), and
+the in-game test plan - nothing here has touched a real client yet.
