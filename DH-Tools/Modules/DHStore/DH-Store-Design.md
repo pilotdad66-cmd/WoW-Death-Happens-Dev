@@ -43,21 +43,97 @@ claude\DH-Store\PROFILE.md - not repeated here.
    This was a separate blocker from the Credits-system sequencing
    question (#9, resolved) - it gated Store's very existence as a
    toggleable module, not just its checkout feature.
-2. **Catalog sync wire format** - mirrors DH-Bavin's priority-list
-   ITEM/ITEMGONE broadcast + SYNCREQ/SYNCDATA pattern, but needs its
-   own message prefix/payload shape (item, quantity, gold price, base
-   credit price - NOT per-tier prices, those are computed client-side)
-   and its own permission gate (who can add/edit/remove store listings
-   - presumably the same recipient/editor-style guild-roster-verified
-   model DH-Bavin already uses, but not yet decided for Store
-   specifically).
+2. **RESOLVED 2026-09-28 (Chris) - Catalog sync wire format.** New
+   file `Modules\DHStore\Sync.lua`, own prefix `"DHStoreV1"` (separate
+   channel from Bavin's `DHBavinV4` - own module, own sync channel,
+   matching the DH-Quests/DH-Air/DH-Bavin precedent), reusing
+   Sync.lua's 200-char chunk-cap idiom. Studied DH-Bavin's own
+   Sync.lua in full (ITEM/ITEMGONE + SYNCREQ/SYNCDATA, versioned
+   prefix, delta-broadcast + full-state-handshake, permission gates
+   only on state-changing messages, last-writer-wins via wall-clock
+   version stamps) as the direct precedent this mirrors.
+
+   **Message types:**
+   - `LISTING|listingId|itemId|itemLink|quantity|goldPrice` - a Store
+     Officer added/edited a listing. Keyed by a NEW `listingId` (not
+     itemId/name), since #12 allows several simultaneous listings of
+     the same item at different stack sizes. `goldPrice` is copper
+     units, the FINAL resolved total for the whole lot - computed once
+     on the officer's own client (ItemPoints.lua's raw gold value x
+     quantity, or their manual override, per #5) before broadcasting,
+     never recomputed by receivers. **No credit price goes on the
+     wire at all** - every viewer computes creditPrice = goldPrice x
+     the synced credit/gold ratio, then applies their own tier
+     discount, both at display time (matches #4/#5's per-viewer
+     resolution). This also corrects the OLD version of this question,
+     which still described a "base credit price" field - stale since
+     #5 reversed the pricing direction.
+   - `LISTINGPENDING|listingId|buyerName` - **RESOLVED 2026-09-28
+     (Chris) - the purchase lifecycle is 3 stages, not a single
+     removal.** The instant a buyer clicks Buy, their own client
+     broadcasts this (unconditional/self-asserted, same trust tier as
+     answering a sync request) AND separately generates the purchase-
+     request mail to the Primary Store Officer (not a wire message -
+     ordinary SendMail, same as Bavin's BagMail-style flow, carrying
+     the FIFO timestamp from #3). Receivers grey the listing out
+     ("pending") rather than removing it - visible but not buyable,
+     so it isn't silently vanishing while under review.
+   - `LISTINGSOLD|listingId` - the Store Officer's own explicit
+     "mark as sold" action (Chris's own words) after reviewing the
+     pending request - permanently removes the listing for everyone.
+     Gated to Store Officer or higher (tiers 1-4, since each tier
+     grants everything below it - this correctly excludes a tier-5-
+     only Designated Distribution Officer who isn't also a Store
+     Officer).
+   - `LISTINGUNPEND|listingId` - the officer's escape hatch when a
+     pending claim doesn't pan out (buyer backs out, can't actually be
+     fulfilled) - reverts the listing back to available. Same gate as
+     LISTINGSOLD - deliberately NOT the buyer, so nobody can un-pend
+     someone else's claim. **RESOLVED 2026-09-28 (Chris) - no
+     auto-revert/timeout**: a pending listing stays pending until an
+     officer manually marks it sold or unpends it - matches the
+     FIFO-resolved-by-officer philosophy already agreed for #3, no
+     extra timer/self-heal machinery.
+   - `STORESYNCREQ` / `STORESYNCDATA|i/total|chunk` - full-catalog
+     handshake for a late joiner, chunked+whispered, version-stamped
+     the same way Bavin's `priorityListUpdatedAt` works (last-writer-
+     wins on the whole snapshot). Each entry in the snapshot also
+     carries `pendingBy` (nil if available). Answered unconditionally,
+     same "relaying, not asserting" idiom as Bavin's SYNCDATA.
+   - `STOREOFFICERS|n1,n2,...` - the Store Officer roster itself,
+     delta-broadcast like Bavin's EDITORS. Settable by tier 1, 2, or 3
+     (author override, guild leader, or Donation Recipient - the
+     tiers #6 already named as able to configure Store Officers).
+
+   **Listing ID generation:** `senderShortName .. ":" ..
+   tostring(math.floor(GetTime()*1000)) .. ":" ..
+   tostring(math.random(0,999))` - collision-safe even for a rapid
+   double-click, no server authority needed, matches the name+time+
+   random idiom Core.lua's own guild-chat lookup tiebreak already
+   uses.
+
+   **Explicitly OUT of scope for this wire format:** the Designated
+   Distribution Officer's actual fulfillment (send mail, collect CoD,
+   or deduct Credits) - that's CM5's existing debit engine, a separate
+   mechanism this catalog sync only hands off to via the ordinary
+   purchase-request mail, never modeled on this wire.
+
+   Not yet built - Modules\DHStore\Sync.lua doesn't exist (no
+   DH-Store module scaffold at all yet). This is a documented design
+   resolution, same as #1 was before being built.
 3. **RESOLVED 2026-09-28 (Chris) - Purchase/claim flow.** No
-   client-side claim-broadcast - races are rare enough at this guild's
-   scale (hundreds of items, infrequent buys) to tolerate. The Store
-   officer resolves any double-claim manually, FIFO, using a precise
-   timestamp/sequence the addon embeds in the generated mail itself
-   (WoW's own mail metadata isn't granular enough for this). No DH-Air-
-   style claim/self-heal machinery needed.
+   client-side BIDDING/contest protocol (no DH-Air-style claim/self-
+   heal machinery, no BID/CLAIM tiebreak like Core.lua's guild-chat
+   lookup) - races are rare enough at this guild's scale (hundreds of
+   items, infrequent buys) to tolerate. The Store officer resolves any
+   double-claim manually, FIFO, using a precise timestamp/sequence the
+   addon embeds in the generated mail itself (WoW's own mail metadata
+   isn't granular enough for this). #2's `LISTINGPENDING` broadcast
+   (2026-09-28) doesn't change this - it's a simple, single flag
+   marking the catalog display "unavailable," not a contest for who
+   wins; a double-claim (two buyers clicking before either's
+   LISTINGPENDING propagates) still gets resolved the same
+   officer-FIFO-via-mail-timestamp way.
 4. **RESOLVED 2026-09-28 (Chris) - Tier-discount formula. Prestige
    rate corrected same day: +5%/75% cap -> +10%/80% cap.** Neutral 0%
    (assumed default - not explicitly stated, flag if wrong), Friendly
@@ -208,8 +284,10 @@ claude\DH-Store\PROFILE.md - not repeated here.
 
 ## Status
 Scaffolded 2026-09-28: folder structure and design docs. Core.lua's
-module-dependency mechanism (question 1) is now BUILT and harness-
-tested (52/52) as of 2026-09-28, in Core.lua/Config.lua - DH-Store's
-own module code (Modules\DHStore\Core.lua, registering with
-`requires = "bavin"`) does not exist yet. See claude\DH-Store\STATUS.md
-for current task.
+module-dependency mechanism (question #1) is BUILT and harness-tested
+(52/52) as of 2026-09-28, in Core.lua/Config.lua. Question #2's
+catalog sync wire format is fully designed (2026-09-28) but not yet
+built. DH-Store's own module code (Modules\DHStore\Core.lua,
+Sync.lua, registering with `requires = "bavin"`) does not exist yet -
+only #7 (shared scroll-list widget) remains open before Milestone 1.
+See claude\DH-Store\STATUS.md for current task.
