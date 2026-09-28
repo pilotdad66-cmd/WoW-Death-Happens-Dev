@@ -80,6 +80,11 @@ local function CreateToolsPanel(parent)
     local ROW_BLOCK_HEIGHT = 56 -- vertical space per row: checkbox + its description line
     local checks = {}
     local rowNum = 0
+    -- Rows whose module declares `requires` (2026-09-28, DH-Store
+    -- dependency mechanism) - key -> { check, requiresKey, normalColor }.
+    -- Tracked separately from `checks` (every real-module row) so
+    -- UpdateDependentGating below only touches the ones that need it.
+    local dependentRows = {}
 
     -- Adds one row (checkbox + a small description line below it).
     -- comingSoon greys out and disables the checkbox; tag controls the
@@ -124,8 +129,19 @@ local function CreateToolsPanel(parent)
         local check = AddRow(def.name, def.desc, false)
         check:SetScript("OnClick", function(self)
             DHTools.SetModuleEnabled(key, self:GetChecked() and true or false)
+            -- A click here can cascade OTHER rows too (enabling a
+            -- dependent auto-enables its requirement; disabling a
+            -- requirement auto-disables its dependents - see Core.lua's
+            -- SetModuleEnabled) - Refresh syncs every checkbox and re-
+            -- gates dependent rows immediately, not just this one.
+            panel.Refresh()
         end)
         checks[key] = check
+        if def.requires then
+            local checkText = _G[check:GetName() .. "Text"]
+            local r, g, b = checkText:GetTextColor()
+            dependentRows[key] = { check = check, requiresKey = def.requires, normalColor = { r, g, b } }
+        end
     end
 
     for _, ph in ipairs(PLACEHOLDER_MODULES) do
@@ -144,11 +160,38 @@ local function CreateToolsPanel(parent)
         end
     end
 
+    -- 2026-09-28 (DH-Store dependency mechanism): re-evaluated live, not
+    -- baked in once at row-creation time like AddRow's own static
+    -- `comingSoon` grey - a dependent row has to react the instant its
+    -- requirement's OWN checkbox is clicked on this same page, without a
+    -- close/reopen. Tag wording ("requires <Name>") is Chris's call
+    -- (2026-09-28).
+    local function UpdateDependentGating()
+        for key, row in pairs(dependentRows) do
+            local def = DHTools.modules[key]
+            local reqDef = DHTools.modules[row.requiresKey]
+            local checkText = _G[row.check:GetName() .. "Text"]
+            if DHTools.IsModuleEnabled(row.requiresKey) then
+                checkText:SetText(def.name)
+                checkText:SetTextColor(unpack(row.normalColor))
+                row.check:Enable()
+            else
+                checkText:SetText(def.name .. "  |cff888888(requires " ..
+                    (reqDef and reqDef.name or row.requiresKey) .. ")|r")
+                checkText:SetTextColor(0.5, 0.5, 0.5)
+                row.check:SetChecked(false)
+                row.check:Disable()
+            end
+        end
+    end
+
     panel.Refresh = function()
         for key, check in pairs(checks) do
             check:SetChecked(DHTools.IsModuleEnabled(key))
         end
+        UpdateDependentGating()
     end
+    panel.Refresh() -- correct greyed/enabled state on first paint, not just after the first click
 
     return panel
 end

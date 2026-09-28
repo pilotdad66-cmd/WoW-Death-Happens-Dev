@@ -33,6 +33,16 @@ ns.VERSION = (GetAddOnMetadata and GetAddOnMetadata(ADDON_NAME, "Version"))
 --                                -- the Tools config page (Config.lua) - keep
 --                                -- it to a single line, small print
 --   default = true/false,        -- state on a fresh install (no saved value yet)
+--   requires = "otherKey",       -- optional (2026-09-28, DH-Store) - this
+--                                -- module cannot be enabled unless `otherKey`
+--                                -- also is. Enabling this module auto-enables
+--                                -- `otherKey` first if it's off; disabling
+--                                -- `otherKey` auto-disables every module that
+--                                -- requires it (SetModuleEnabled below,
+--                                -- recursively - chains work even though
+--                                -- nothing uses one yet). A single key, not a
+--                                -- list - only add list support if a second
+--                                -- real dependency case shows up.
 --   OnEnable = function() end,   -- optional: called on enable (incl. at login if already on)
 --   OnDisable = function() end,  -- optional: called on disable
 -- }
@@ -648,6 +658,29 @@ function ns.IsModuleEnabled(key)
     return def ~= nil and def.default or false
 end
 
+-- Every registered module (if any) whose `requires` points at `key`,
+-- regardless of current enabled state - callers filter by
+-- IsModuleEnabled themselves. Cheap linear scan; module counts here are
+-- single digits, not worth a precomputed reverse index (2026-09-28,
+-- DH-Store dependency mechanism).
+local function DependentsOf(key)
+    local out = {}
+    for _, otherKey in ipairs(ns.moduleOrder) do
+        if ns.modules[otherKey].requires == key then
+            table.insert(out, otherKey)
+        end
+    end
+    return out
+end
+
+-- 2026-09-28 (DH-Store dependency mechanism, Chris sign-off same day):
+-- cascades a module's `requires` relationship both directions so this
+-- one function is the single choke point for it, reached identically
+-- from the Tools config page and /dht on|off. Enabling a module with an
+-- unmet dependency enables that dependency FIRST (recursing in case of
+-- a chain); disabling a module first disables every currently-enabled
+-- module that requires it. Each cascade step prints its own line so
+-- nothing toggles silently.
 function ns.SetModuleEnabled(key, enabled)
     local def = ns.modules[key]
     if not def then
@@ -655,21 +688,53 @@ function ns.SetModuleEnabled(key, enabled)
         return
     end
     local wasEnabled = ns.IsModuleEnabled(key)
+    if enabled == wasEnabled then return end -- also guards against a requires-cycle recursing forever
+
+    if enabled then
+        if def.requires and not ns.IsModuleEnabled(def.requires) then
+            local reqDef = ns.modules[def.requires]
+            ns.Print(def.name .. " requires " .. (reqDef and reqDef.name or def.requires) .. " - enabling that too.")
+            ns.SetModuleEnabled(def.requires, true)
+        end
+    else
+        for _, depKey in ipairs(DependentsOf(key)) do
+            if ns.IsModuleEnabled(depKey) then
+                local depDef = ns.modules[depKey]
+                ns.Print(depDef.name .. " requires " .. def.name .. " - disabling " .. depDef.name .. " too.")
+                ns.SetModuleEnabled(depKey, false)
+            end
+        end
+    end
+
     ns.db.modules[key] = enabled
-    if enabled and not wasEnabled then
+    if enabled then
         if def.OnEnable then def.OnEnable() end
         ns.Print(def.name .. " enabled.")
-    elseif not enabled and wasEnabled then
+    else
         if def.OnDisable then def.OnDisable() end
         ns.Print(def.name .. " disabled.")
     end
 end
 
+-- Boot-time self-heal (2026-09-28, DH-Store dependency mechanism): a
+-- module's saved "on" flag can drift out of a valid combination (a hand-
+-- edited SavedVariables file, an old profile from before a `requires`
+-- relationship existed) without ever going through the cascade in
+-- SetModuleEnabled above. Never trust a dependent's saved state blindly -
+-- same idiom this codebase already uses elsewhere for saved state that
+-- can go stale.
 local function ActivateEnabledModules()
     for _, key in ipairs(ns.moduleOrder) do
+        local def = ns.modules[key]
         if ns.IsModuleEnabled(key) then
-            local def = ns.modules[key]
-            if def.OnEnable then def.OnEnable() end
+            if def.requires and not ns.IsModuleEnabled(def.requires) then
+                ns.db.modules[key] = false
+                local reqDef = ns.modules[def.requires]
+                ns.Print(def.name .. " was saved as on, but its required module (" ..
+                    (reqDef and reqDef.name or def.requires) .. ") wasn't - disabled.")
+            elseif def.OnEnable then
+                def.OnEnable()
+            end
         end
     end
 end

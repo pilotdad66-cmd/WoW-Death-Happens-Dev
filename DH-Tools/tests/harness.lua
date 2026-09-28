@@ -199,6 +199,71 @@ check("SetModuleEnabled on an unknown key prints an error instead of erroring",
     #printLog == unknownCountBefore + 1 and printLog[#printLog]:find("Unknown module", 1, true) ~= nil)
 
 --------------------------------------------------------------------------
+-- Group A2: `requires` dependency cascade (2026-09-28, DH-Store module-
+-- dependency mechanism) - both directions, plus boot-time self-heal.
+-- depBase/depChild are dedicated fixtures (not gizmo/widget/bavin above)
+-- so these tests don't disturb Group B's own PLAYER_LOGIN assertions.
+--------------------------------------------------------------------------
+
+local depBaseEnableCount, depBaseDisableCount = 0, 0
+ns.RegisterModule("depBase", {
+    name = "Dep Base (test fixture)", default = false,
+    OnEnable = function() depBaseEnableCount = depBaseEnableCount + 1 end,
+    OnDisable = function() depBaseDisableCount = depBaseDisableCount + 1 end,
+})
+
+local depChildEnableCount, depChildDisableCount = 0, 0
+ns.RegisterModule("depChild", {
+    name = "Dep Child (test fixture)", default = false, requires = "depBase",
+    OnEnable = function() depChildEnableCount = depChildEnableCount + 1 end,
+    OnDisable = function() depChildDisableCount = depChildDisableCount + 1 end,
+})
+
+check("a module with an unmet dependency starts disabled like any other default-false module",
+    ns.IsModuleEnabled("depChild") == false)
+
+-- Cascade UP: enabling the dependent auto-enables its unmet requirement first.
+ns.SetModuleEnabled("depChild", true)
+check("enabling a dependent module also enables its unmet requirement",
+    ns.IsModuleEnabled("depBase") == true and ns.IsModuleEnabled("depChild") == true)
+check("the cascaded requirement's OnEnable actually fired", depBaseEnableCount == 1)
+check("the requested dependent's own OnEnable also fired", depChildEnableCount == 1)
+
+-- Cascade DOWN: disabling the requirement auto-disables the dependent.
+ns.SetModuleEnabled("depBase", false)
+check("disabling a requirement also disables everything that depends on it",
+    ns.IsModuleEnabled("depBase") == false and ns.IsModuleEnabled("depChild") == false)
+check("the cascaded dependent's OnDisable actually fired", depChildDisableCount == 1)
+check("the requirement's own OnDisable also fired", depBaseDisableCount == 1)
+
+-- Enabling the requirement directly (not via a dependent) does NOT
+-- auto-enable anything that depends on it - cascade only runs the
+-- direction each toggle actually needs.
+ns.SetModuleEnabled("depBase", true)
+check("enabling a requirement on its own does not auto-enable its dependents",
+    ns.IsModuleEnabled("depBase") == true and ns.IsModuleEnabled("depChild") == false)
+ns.SetModuleEnabled("depBase", false) -- reset
+
+-- Boot self-heal: a dependent saved as "on" with its requirement OFF
+-- (hand-edited SavedVariables, or a profile predating this `requires`
+-- relationship) must not run its OnEnable, and gets corrected in the DB
+-- rather than trusted.
+ns.db.modules.depBase = false
+ns.db.modules.depChild = true
+depChildEnableCount = 0
+playerName = "TestChar"
+ns.frame:Fire("PLAYER_LOGIN")
+check("boot self-heal forces a dependent's stale 'on' flag off when its requirement is off",
+    ns.IsModuleEnabled("depChild") == false)
+check("boot self-heal does not run the dependent's OnEnable when self-healing it off",
+    depChildEnableCount == 0)
+
+-- Clean slate so later groups (esp. Group B's own PLAYER_LOGIN checks)
+-- aren't affected by these fixtures.
+ns.db.modules.depBase = false
+ns.db.modules.depChild = false
+
+--------------------------------------------------------------------------
 -- Group B: PLAYER_LOGIN boot sequence (ActivateEnabledModules, CheckAuthorAccount)
 --------------------------------------------------------------------------
 

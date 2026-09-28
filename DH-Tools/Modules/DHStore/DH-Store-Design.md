@@ -19,18 +19,30 @@ model, fresh-install defaults, access points) is in
 claude\DH-Store\PROFILE.md - not repeated here.
 
 ## Open design questions (resolve before Milestone 1 - README section 14)
-1. **Core.lua inter-module dependency mechanism** - RegisterModule's
-   `def` has no concept of one module requiring another today (only
-   name/desc/default/OnEnable/OnDisable). Needs a real design: how
-   Store declares its dependency on Bavin, how checking Store cascades
-   to auto-check Bavin, how unchecking Bavin cascades to auto-uncheck
-   Store, and how the Tools config page greys out/disables a
-   dependent module's checkbox when its dependency is off. This
-   blocks everything else - Store can't be registered as a DH-Tools
-   module at all until this exists. This is a separate blocker from
-   the Credits-system sequencing question below (#9) - it gates
-   Store's very existence as a toggleable module, not just its
-   checkout feature.
+1. **BUILT 2026-09-28 (Chris sign-off same day) - Core.lua inter-
+   module dependency mechanism.** `RegisterModule`'s `def` now takes
+   an optional `requires = "otherKey"` (single key). Cascade logic
+   lives centrally in `SetModuleEnabled` (Core.lua) - enabling a
+   dependent auto-enables its requirement first (recursive, so a
+   chain would work even though nothing uses one yet); disabling a
+   requirement auto-disables every enabled module that requires it.
+   Both `/dht on|off` and the Tools config page route through this one
+   function, so the cascade applies uniformly everywhere. Boot-time
+   self-heal in `ActivateEnabledModules` forces a dependent off (and
+   skips its `OnEnable`) if its saved "on" flag doesn't match an
+   actually-enabled requirement (stale SavedVariables, an old
+   profile). Tools page: a gated checkbox greys out with
+   `(requires DH-Bavin)` (Chris's wording choice, 2026-09-28),
+   re-evaluated live via a new `UpdateDependentGating()` called from
+   `panel.Refresh()` and after every row's own click - no close/reopen
+   needed to see a cascade reflected. See claude\DH-Tools\PROFILE.md's
+   Module framework contract for the full `def` shape. Covered by 8
+   new harness.lua checks (Group A2); full suite 52/52, syntax-clean.
+   Not yet in-game tested - nothing exercises this path live until
+   DH-Store's own module file registers with `requires = "bavin"`.
+   This was a separate blocker from the Credits-system sequencing
+   question (#9, resolved) - it gated Store's very existence as a
+   toggleable module, not just its checkout feature.
 2. **Catalog sync wire format** - mirrors DH-Bavin's priority-list
    ITEM/ITEMGONE broadcast + SYNCREQ/SYNCDATA pattern, but needs its
    own message prefix/payload shape (item, quantity, gold price, base
@@ -195,8 +207,9 @@ claude\DH-Store\PROFILE.md - not repeated here.
     share an itemId.
 
 ## Status
-Scaffolded 2026-09-28: folder structure and design docs only
-(claude\DH-Store\PROFILE.md, claude\DH-Store\STATUS.md, this file). No
-code yet - Core.lua's module-dependency mechanism (question 1 above)
-has to be resolved before DH-Store can even be registered as a module.
-See claude\DH-Store\STATUS.md for current task.
+Scaffolded 2026-09-28: folder structure and design docs. Core.lua's
+module-dependency mechanism (question 1) is now BUILT and harness-
+tested (52/52) as of 2026-09-28, in Core.lua/Config.lua - DH-Store's
+own module code (Modules\DHStore\Core.lua, registering with
+`requires = "bavin"`) does not exist yet. See claude\DH-Store\STATUS.md
+for current task.
