@@ -28,31 +28,41 @@ local navButtons = {}
 -- below). checkInstalled-style entries are still supported for any future
 -- placeholder that needs the same pattern.
 
--- DH-Layers has no checkInstalled - there's no code or addon for it to
--- detect at all yet, so it stays a plain "coming soon" placeholder. No
--- DHTools.RegisterModule entry. Move an entry out of this list entirely
--- if it ever DOES become a real DH-Tools module.
-local PLACEHOLDER_MODULES = {
-    {
-        label = "DH-Layers",
-        desc = "Shows your current WoW layer in a minimap-corner box.",
-    },
-    -- DH-Danger was here until 2026-08-07, DH-Air until 2026-08-20's merge
-    -- into DH-Tools as a real module (RegisterModule("air") - see
-    -- DH-Air-Merge-Design.md decision 2). Both now have real runtime code
-    -- and render from the live module registry above like any other
-    -- module - having either in both places would list it twice.
-}
+-- 2026-09-28 (Chris): DH-Layers removed entirely - Blizzard doesn't
+-- expose the API calls this would have needed. See claude\archive\
+-- DH-Layers\ for the retired PROFILE.md/STATUS.md (it never had any
+-- runtime code to begin with - see ROADMAP.md's own "Shelved" row).
+--
+-- DH-Danger was here until 2026-08-07, DH-Air until 2026-08-20's merge
+-- into DH-Tools as a real module (RegisterModule("air") - see
+-- DH-Air-Merge-Design.md decision 2). Both now have real runtime code
+-- and render from the live module registry above like any other
+-- module - having either in both places would list it twice.
+local PLACEHOLDER_MODULES = {}
 
 local function CreateToolsPanel(parent)
     local panel = CreateFrame("Frame", nil, parent)
     panel:SetAllPoints()
 
-    local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    -- 2026-09-28: scrollable now, same pattern as every other populated
+    -- page (Mob Marker/Bavin/Danger/Store/About) - this is the FIRST
+    -- page shown on open, and its row count only grows as modules are
+    -- added (7 real modules already), so it's both the most likely
+    -- source of Chris's "rows appear outside the bottom of the window"
+    -- report and the one most likely to overflow again later.
+    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsToolsScroll", panel, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", 0, -8)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
+
+    local content = CreateFrame("Frame", nil, scrollFrame)
+    content:SetSize(1, 480) -- width set in Refresh; generous fixed estimate
+    scrollFrame:SetScrollChild(content)
+
+    local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 16, -16)
     title:SetText("Modules")
 
-    local hint = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    local hint = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     hint:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
@@ -98,7 +108,7 @@ local function CreateToolsPanel(parent)
         rowNum = rowNum + 1
         local yOffset = -14 - (rowNum - 1) * ROW_BLOCK_HEIGHT
 
-        local check = CreateFrame("CheckButton", "DHToolsToolsCheck" .. rowNum, panel, "UICheckButtonTemplate")
+        local check = CreateFrame("CheckButton", "DHToolsToolsCheck" .. rowNum, content, "UICheckButtonTemplate")
         check:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", 0, yOffset)
         local checkText = _G[check:GetName() .. "Text"]
 
@@ -115,7 +125,7 @@ local function CreateToolsPanel(parent)
             checkText:SetText(labelText)
         end
 
-        local desc = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        local desc = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
         desc:SetPoint("TOPLEFT", check, "BOTTOMLEFT", 22, -2)
         desc:SetPoint("RIGHT", -16, 0)
         desc:SetJustifyH("LEFT")
@@ -186,6 +196,10 @@ local function CreateToolsPanel(parent)
     end
 
     panel.Refresh = function()
+        -- -24 (not -4) to leave room for the scrollbar, same reasoning as
+        -- every other scrollable page here.
+        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 24))
+
         for key, check in pairs(checks) do
             check:SetChecked(DHTools.IsModuleEnabled(key))
         end
@@ -358,9 +372,17 @@ local function CreateMobMarkerPanel(parent)
 
     local rowsBottom = -26 - (MM_ROW_COUNT - 1) * MM_ROW_HEIGHT - 24 -- bottom edge of row 8
 
+    -- 2026-09-28 (Chris): Clear All and Update share one row instead of
+    -- stacking - saves a row of vertical space; the "not saved yet" note
+    -- moves above both buttons since it applies to either one.
+    local saveNote = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    saveNote:SetPoint("TOPLEFT", secTitle1, "BOTTOMLEFT", 8, rowsBottom - 14)
+    saveNote:SetTextColor(1, 0.65, 0.1)
+    saveNote:SetText("Changes to the icon list are not saved until you click Update.")
+
     local clearAllBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
     clearAllBtn:SetSize(100, 22)
-    clearAllBtn:SetPoint("TOPLEFT", secTitle1, "BOTTOMLEFT", 8, rowsBottom - 14)
+    clearAllBtn:SetPoint("TOPLEFT", saveNote, "BOTTOMLEFT", 0, -10)
     clearAllBtn:SetText("Clear All")
     clearAllBtn:SetScript("OnClick", function()
         for i = 1, MM_ROW_COUNT do
@@ -369,14 +391,9 @@ local function CreateMobMarkerPanel(parent)
         end
     end)
 
-    local saveNote = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    saveNote:SetPoint("TOPLEFT", clearAllBtn, "BOTTOMLEFT", 0, -10)
-    saveNote:SetTextColor(1, 0.65, 0.1)
-    saveNote:SetText("Changes to the icon list are not saved until you click Update.")
-
     local updateBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
     updateBtn:SetSize(100, 22)
-    updateBtn:SetPoint("TOPLEFT", saveNote, "BOTTOMLEFT", 0, -10)
+    updateBtn:SetPoint("LEFT", clearAllBtn, "RIGHT", 10, 0)
     updateBtn:SetText("Update")
 
     local statusText = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -1273,10 +1290,17 @@ local function CreateDangerPanel(parent)
     -- never stops you from hearing about someone else's sighting.
     -- Default ON (Loopi).
     --------------------------------------------------------------------
+    -- 2026-09-28 (Chris): was anchored off zoneHideGrayCheck (a RIGHT-side
+    -- checkbox whose own x depends on the "Exclude" label's rendered text
+    -- width) instead of the left-column baseline - every section from
+    -- here down inherited that unpredictable rightward drift. Anchored
+    -- to zoneWarnCheck instead (same row, true left-column x); its
+    -- BOTTOMLEFT y is identical either way since zoneHideGrayCheck sits
+    -- on zoneWarnCheck's own row, not below it.
     local shareDivider = content:CreateTexture(nil, "ARTWORK")
     shareDivider:SetColorTexture(1, 1, 1, 0.15)
     shareDivider:SetHeight(1)
-    shareDivider:SetPoint("TOPLEFT", zoneHideGrayCheck, "BOTTOMLEFT", -20, -18)
+    shareDivider:SetPoint("TOPLEFT", zoneWarnCheck, "BOTTOMLEFT", 0, -18)
     shareDivider:SetPoint("RIGHT", -16, 0)
 
     local shareTitle = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -1322,17 +1346,29 @@ local function CreateDangerPanel(parent)
     alertOnLabel:SetPoint("TOPLEFT", settingsCaveat, "BOTTOMLEFT", 0, -14)
     alertOnLabel:SetText("Alert On:")
 
+    -- 2026-09-28 (Chris): one row instead of three stacked - saves two
+    -- row-heights of vertical space. Each option after the first anchors
+    -- off the PREVIOUS option's own text (not its checkbox frame, which
+    -- is a fixed ~24px regardless of label length) so labels of
+    -- different widths ("Any Level" vs "My Level or Above") don't
+    -- overlap. firstAlertOnCheck is kept separately (not just the loop's
+    -- final value) so belowSlider below can anchor at the row's LEFT
+    -- edge, matching its original indent under the row rather than
+    -- trailing off the rightmost (3rd) option.
     local alertOnChecks = {}
     local belowSlider -- forward-declared: radio handler below shows/hides it
-    local prevAlertOnAnchor = alertOnLabel
+    local firstAlertOnCheck
+    local prevAlertOnText
     for i, opt in ipairs(DANGER_ALERT_ON_OPTIONS) do
         local check = CreateFrame("CheckButton", "DHToolsDangerAlertOn" .. opt.value, content, "UICheckButtonTemplate")
+        local checkText = _G[check:GetName() .. "Text"]
         if i == 1 then
-            check:SetPoint("TOPLEFT", prevAlertOnAnchor, "BOTTOMLEFT", -4, -6)
+            check:SetPoint("TOPLEFT", alertOnLabel, "BOTTOMLEFT", -4, -6)
+            firstAlertOnCheck = check
         else
-            check:SetPoint("TOPLEFT", prevAlertOnAnchor, "BOTTOMLEFT", 0, -4)
+            check:SetPoint("LEFT", prevAlertOnText, "RIGHT", 16, 0)
         end
-        _G[check:GetName() .. "Text"]:SetText(opt.label)
+        checkText:SetText(opt.label)
         check:SetScript("OnClick", function(self)
             if not self:GetChecked() then
                 -- Radio group, not an independent toggle - clicking the
@@ -1351,17 +1387,18 @@ local function CreateDangerPanel(parent)
             end
         end)
         alertOnChecks[opt.value] = check
-        prevAlertOnAnchor = check
+        prevAlertOnText = checkText
     end
 
-    -- Anchored tight under "X Levels Below Me" specifically (now the last
-    -- radio option, see DANGER_ALERT_ON_OPTIONS reorder above) rather
-    -- than a generic -20 gap, so it reads as belonging to that checkbox
-    -- (Loopi, 2026-08-14). Low/High/value text sized down to
-    -- GameFontHighlightSmall for the same reason - a smaller, tighter
-    -- control looks like it's part of the checkbox above it.
+    -- Anchored under the row's LEFT edge (firstAlertOnCheck), indented to
+    -- read as belonging to the row above rather than the window's left
+    -- margin (Loopi, 2026-08-14 - same indent amount, now relative to
+    -- the row's start instead of trailing the 3rd option specifically
+    -- now that all three sit on one row, 2026-09-28). Low/High/value
+    -- text sized down to GameFontHighlightSmall for the same reason - a
+    -- smaller, tighter control looks like it's part of the row above it.
     belowSlider = CreateFrame("Slider", "DHToolsDangerBelowSlider", content, "OptionsSliderTemplate")
-    belowSlider:SetPoint("TOPLEFT", prevAlertOnAnchor, "BOTTOMLEFT", 24, -6)
+    belowSlider:SetPoint("TOPLEFT", firstAlertOnCheck, "BOTTOMLEFT", 24, -6)
     belowSlider:SetWidth(160)
     belowSlider:SetMinMaxValues(1, 20)
     belowSlider:SetValueStep(1)
@@ -1457,15 +1494,16 @@ local function CreateDangerPanel(parent)
     alwaysHeader:SetPoint("LEFT", categoriesTitle, "LEFT", ALWAYS_COL_X, 0)
     alwaysHeader:SetText("Always*")
 
-    local alwaysCaption = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    alwaysCaption:SetPoint("TOPLEFT", categoriesTitle, "BOTTOMLEFT", 0, -4)
-    alwaysCaption:SetPoint("RIGHT", -16, 0)
-    alwaysCaption:SetJustifyH("LEFT")
-    alwaysCaption:SetWordWrap(true)
-    alwaysCaption:SetText("* Always Alert fires regardless of the level filter above.")
+    -- 2026-09-28 (Chris): folded onto the SAME row as "Always*" instead
+    -- of its own row below - "*Ignore Level Filters" in a dimmer gray
+    -- right next to the header it's annotating, one row of vertical
+    -- space saved.
+    local alwaysNote = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    alwaysNote:SetPoint("LEFT", alwaysHeader, "RIGHT", 4, 0)
+    alwaysNote:SetText("*Ignore Level Filters")
 
     local alertForChecks, alwaysChecks = {}, {}
-    local prevCatRow = alwaysCaption
+    local prevCatRow = categoriesTitle
     for i, cat in ipairs(Danger.ALERT_CATEGORIES) do
         local rowLabel = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
         rowLabel:SetPoint("TOPLEFT", prevCatRow, "BOTTOMLEFT", 0, i == 1 and -10 or -6)
@@ -1574,84 +1612,323 @@ local function CreateMacrosPanel(parent)
         end
     end)
 
-    local slotsText = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    slotsText:SetPoint("TOPLEFT", openBtn, "BOTTOMLEFT", 0, -14)
+    -- 2026-09-28 (Chris): two separate rows instead of one FontString with
+    -- an embedded "\n" - a single string's two lines can't be
+    -- independently justified (the shorter "General" label left its own
+    -- number sitting well left of "Character-specific"'s number, reading
+    -- as unaligned) and there was no controllable gap between them. Two
+    -- rows fixes both: each is its own left-justified line, with a real
+    -- anchor gap in between.
+    local slotsGlobalText = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    slotsGlobalText:SetPoint("TOPLEFT", openBtn, "BOTTOMLEFT", 0, -14)
+    slotsGlobalText:SetJustifyH("LEFT")
+
+    local slotsPerCharText = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    slotsPerCharText:SetPoint("TOPLEFT", slotsGlobalText, "BOTTOMLEFT", 0, -8)
+    slotsPerCharText:SetJustifyH("LEFT")
 
     panel.Refresh = function()
         local numGlobal, numPerChar = GetNumMacros()
         local maxGlobal = MAX_ACCOUNT_MACROS or 18
         local maxPerChar = MAX_CHARACTER_MACROS or 18
-        slotsText:SetText(("General macro slots: %d/%d used\nCharacter-specific macro slots: %d/%d used")
-            :format(numGlobal, maxGlobal, numPerChar, maxPerChar))
+        slotsGlobalText:SetText(("General macro slots: %d/%d used"):format(numGlobal, maxGlobal))
+        slotsPerCharText:SetText(("Character-specific macro slots: %d/%d used"):format(numPerChar, maxPerChar))
     end
 
     return panel
 end
-
---------------------------------------------------------------------------
--- About page
---------------------------------------------------------------------------
 
 -- Store page - officer roster/primary officer and pricing config
 -- (question #9's own Config.lua-additions scope: catalog browsing lives
 -- in DH-Store's own window, DHStoreFrame via /dhs - this page is just
 -- the officer-facing settings DHStore\Core.lua's slash commands also
 -- expose, for anyone who'd rather use the Tools window).
+--
+-- 2026-09-28 (Chris), full rework:
+-- - Scrollable now, same scrollFrame+content pattern as Mob
+--   Marker/Bavin/Danger above - rows were spilling past the window's
+--   bottom edge, the one populated page here that didn't already guard
+--   against that.
+-- - Primary Officer moved first (with its own explanation - it's the
+--   one that matters most, receiving every purchase mail); Store
+--   Officers follows, also explained.
+-- - Store Officers rebuilt as an add-one-at-a-time list with
+--   type-to-filter roster suggestions and a removable current-officers
+--   list - mirrors Bavin's own Editors section 1:1 (Chris's explicit
+--   ask: "the way editors does in the Bavin config"), replacing the old
+--   raw comma-separated text box that had no autocomplete at all.
+--   Primary Officer gets the same suggestion pool.
+-- - The credit-price explanation now sits directly below the ratio box
+--   it explains (was below both discount checkboxes, reading as if it
+--   explained THEM instead).
+-- - The two discount checkboxes are one row now: "Apply Rep Tier Cost
+--   Reduction to [ ] Gold Price and/or [ ] Credits Price."
+-- - A brief description up top stands in for a user-facing settings
+--   section - everything below is still officer-only, and there isn't
+--   an ordinary-member setting to show yet.
+local STORE_SUGGEST_ROWS = 2
+
 local function CreateStorePanel(parent)
     local panel = CreateFrame("Frame", nil, parent)
     panel:SetAllPoints()
 
-    local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsStoreScroll", panel, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", 0, -8)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
+
+    local content = CreateFrame("Frame", nil, scrollFrame)
+    content:SetSize(1, 480) -- width set in Refresh; generous fixed estimate,
+                             -- pad rather than trim, same approach every
+                             -- other scrollable page here already uses.
+    scrollFrame:SetScrollChild(content)
+
+    local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 16, -16)
     title:SetText("Store")
 
-    local hint = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    local hint = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     hint:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
-    hint:SetText("Browse and buy from the store itself with /dhs. Officer settings below also work as /dhs officers|primary|ratio|discount chat commands.")
+    hint:SetText("Guild-only buyout store - officers list items at a gold price, priced in Bavin Credits too at a configurable ratio with a rep-tier discount. Browse and buy with /dhs. Everything below is officer setup; there's nothing here yet for an ordinary member to set.")
 
-    local function LabeledEdit(anchorTo, labelText, y)
-        local label = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        label:SetPoint("TOPLEFT", anchorTo, "BOTTOMLEFT", 0, y or -14)
-        label:SetText(labelText)
-        local edit = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
-        edit:SetSize(220, 20)
-        edit:SetPoint("LEFT", label, "RIGHT", 10, 0)
-        edit:SetAutoFocus(false)
-        local btn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-        btn:SetSize(60, 20)
-        btn:SetPoint("LEFT", edit, "RIGHT", 6, 0)
-        btn:SetText("Set")
-        return label, edit, btn
+    -- Shared type-to-filter suggestion pool, same idiom as Bavin's own
+    -- Config page above (this guild runs ~1000 members - see that
+    -- page's own comment for why a dropdown/full list doesn't scale).
+    local function BuildSuggestPool(anchor)
+        local buttons = {}
+        local prevAnchor = anchor
+        for i = 1, STORE_SUGGEST_ROWS do
+            local btn = CreateFrame("Button", nil, content)
+            btn:SetSize(220, 16)
+            if i == 1 then
+                btn:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 4, -6)
+            else
+                btn:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 0, -2)
+            end
+            local text = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            text:SetAllPoints()
+            text:SetJustifyH("LEFT")
+            btn.text = text
+            local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+            hl:SetAllPoints()
+            hl:SetColorTexture(1, 1, 1, 0.15)
+            btn:Hide()
+            buttons[i] = btn
+            prevAnchor = btn
+        end
+        return buttons
     end
 
-    local officersLabel, officersEdit, officersBtn = LabeledEdit(hint, "Store Officers:", -16)
-    officersBtn:SetScript("OnClick", function()
+    local function PopulateSuggestions(buttons, typed, onPick)
+        typed = (typed or ""):lower()
+        local shown = 0
+        if typed ~= "" then
+            for _, name in ipairs(DHTools.Bavin.GetRosterNames()) do
+                if shown >= #buttons then break end
+                if name:lower():find(typed, 1, true) then
+                    shown = shown + 1
+                    local btn = buttons[shown]
+                    btn.text:SetText(name)
+                    btn:Show()
+                    btn:SetScript("OnClick", function() onPick(name) end)
+                end
+            end
+        end
+        for i = shown + 1, #buttons do
+            buttons[i]:Hide()
+        end
+    end
+
+    --------------------------------------------------------------------
+    -- Primary Officer - the one who receives every purchase-request mail
+    --------------------------------------------------------------------
+    local primaryLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    primaryLabel:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", 0, -16)
+    primaryLabel:SetText("Primary Officer:")
+
+    local primaryEdit = CreateFrame("EditBox", "DHToolsStorePrimaryEdit", content, "InputBoxTemplate")
+    primaryEdit:SetSize(140, 20)
+    primaryEdit:SetPoint("LEFT", primaryLabel, "RIGHT", 10, -2)
+    primaryEdit:SetAutoFocus(false)
+    primaryEdit:SetMaxLetters(24)
+    primaryEdit:SetScript("OnEscapePressed", primaryEdit.ClearFocus)
+
+    local primaryBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    primaryBtn:SetSize(60, 20)
+    primaryBtn:SetPoint("LEFT", primaryEdit, "RIGHT", 6, 0)
+    primaryBtn:SetText("Set")
+
+    local primaryStatus = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    primaryStatus:SetPoint("LEFT", primaryBtn, "RIGHT", 8, 0)
+
+    local primaryDesc = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    primaryDesc:SetPoint("TOPLEFT", primaryLabel, "BOTTOMLEFT", 0, -6)
+    primaryDesc:SetPoint("RIGHT", -16, 0)
+    primaryDesc:SetJustifyH("LEFT")
+    primaryDesc:SetWordWrap(true)
+    primaryDesc:SetText("Receives all store purchase request mails.")
+
+    local primarySuggestButtons = BuildSuggestPool(primaryDesc)
+
+    local function UpdatePrimarySuggestions(typed)
+        PopulateSuggestions(primarySuggestButtons, typed, function(name)
+            primaryEdit:SetText(name)
+            primaryEdit:ClearFocus()
+            PopulateSuggestions(primarySuggestButtons, "", function() end)
+        end)
+    end
+    primaryEdit:SetScript("OnTextChanged", function(self)
+        UpdatePrimarySuggestions(self:GetText())
+    end)
+
+    local function TrySetPrimary()
+        local typed = primaryEdit:GetText()
+        primaryEdit:ClearFocus()
+        UpdatePrimarySuggestions("")
         if not DHTools.Store.CanManageStoreOfficersLocal() then
             DHTools.Store.Print("Refused - guild leader, donation recipient, or author account only.")
             return
         end
-        local list = {}
-        for name in (officersEdit:GetText() or ""):gmatch("[^,]+") do
-            table.insert(list, (name:match("^%s*(.-)%s*$")))
-        end
-        DHTools.Store.SetStoreOfficers(list)
+        DHTools.Store.SetPrimaryOfficer(typed)
+        primaryStatus:SetText("|cff33ff99Set!|r")
+        C_Timer.After(2, function() primaryStatus:SetText("") end)
         panel.Refresh()
+    end
+    primaryBtn:SetScript("OnClick", TrySetPrimary)
+    primaryEdit:SetScript("OnEnterPressed", TrySetPrimary)
+
+    --------------------------------------------------------------------
+    -- Store Officers - add-by-name with the same capped suggestion pool
+    -- and a removable current-officer list, mirroring Bavin's Editors
+    -- section exactly (see its own comments above for why this scales
+    -- to a ~1000-member guild and a small additive list doesn't need to).
+    --------------------------------------------------------------------
+    local officersTitle = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    officersTitle:SetPoint("TOPLEFT", primarySuggestButtons[STORE_SUGGEST_ROWS], "BOTTOMLEFT", -4, -14)
+    officersTitle:SetText("Store Officers:")
+
+    local officersDesc = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    officersDesc:SetPoint("TOPLEFT", officersTitle, "BOTTOMLEFT", 4, -4)
+    officersDesc:SetPoint("RIGHT", -16, 0)
+    officersDesc:SetJustifyH("LEFT")
+    officersDesc:SetWordWrap(true)
+    officersDesc:SetText("Can manage listings and these settings, in addition to the Primary Officer.")
+
+    local officerAddLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    officerAddLabel:SetPoint("TOPLEFT", officersDesc, "BOTTOMLEFT", -4, -8)
+    officerAddLabel:SetText("Add officer:")
+
+    local officerAddEdit = CreateFrame("EditBox", "DHToolsStoreOfficerAddEdit", content, "InputBoxTemplate")
+    officerAddEdit:SetSize(140, 20)
+    officerAddEdit:SetPoint("LEFT", officerAddLabel, "RIGHT", 10, -2)
+    officerAddEdit:SetAutoFocus(false)
+    officerAddEdit:SetMaxLetters(24)
+    officerAddEdit:SetScript("OnEscapePressed", officerAddEdit.ClearFocus)
+
+    local officerAddBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    officerAddBtn:SetSize(60, 20)
+    officerAddBtn:SetPoint("LEFT", officerAddEdit, "RIGHT", 6, 0)
+    officerAddBtn:SetText("Add")
+
+    local officerAddStatus = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    officerAddStatus:SetPoint("LEFT", officerAddBtn, "RIGHT", 8, 0)
+
+    local officerSuggestButtons = BuildSuggestPool(officerAddLabel)
+
+    local function UpdateOfficerSuggestions(typed)
+        PopulateSuggestions(officerSuggestButtons, typed, function(name)
+            officerAddEdit:SetText(name)
+            officerAddEdit:ClearFocus()
+            PopulateSuggestions(officerSuggestButtons, "", function() end)
+        end)
+    end
+    officerAddEdit:SetScript("OnTextChanged", function(self)
+        UpdateOfficerSuggestions(self:GetText())
     end)
 
-    local primaryLabel, primaryEdit, primaryBtn = LabeledEdit(officersLabel, "Primary Officer:")
-    primaryBtn:SetScript("OnClick", function()
+    -- Forward-declared: TryAddOfficer (defined next) needs to refresh the
+    -- current-officers list below, which isn't built yet at this point.
+    local RebuildCurrentOfficerRows
+
+    local function TryAddOfficer()
+        local typed = officerAddEdit:GetText()
+        officerAddEdit:ClearFocus()
+        UpdateOfficerSuggestions("")
+        if typed == "" then return end
         if not DHTools.Store.CanManageStoreOfficersLocal() then
-            DHTools.Store.Print("Refused - guild leader, donation recipient, or author account only.")
+            officerAddStatus:SetText("|cffff3333Refused (officers only)|r")
             return
         end
-        DHTools.Store.SetPrimaryOfficer(primaryEdit:GetText())
-        panel.Refresh()
-    end)
+        local current = {}
+        local db = DHTools.Store.db
+        if db then
+            for _, n in ipairs(db.officers) do
+                if n == typed then
+                    officerAddStatus:SetText("|cffff3333Already an officer|r")
+                    return
+                end
+                table.insert(current, n)
+            end
+        end
+        table.insert(current, typed)
+        DHTools.Store.SetStoreOfficers(current)
+        officerAddEdit:SetText("")
+        officerAddStatus:SetText("|cff33ff99Added!|r")
+        C_Timer.After(2, function() officerAddStatus:SetText("") end)
+        if RebuildCurrentOfficerRows then RebuildCurrentOfficerRows() end
+    end
+    officerAddBtn:SetScript("OnClick", TryAddOfficer)
+    officerAddEdit:SetScript("OnEnterPressed", TryAddOfficer)
 
-    local ratioLabel, ratioEdit, ratioBtn = LabeledEdit(primaryLabel, "Credits per Gold:")
+    local currentOfficersTitle = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    currentOfficersTitle:SetPoint("TOPLEFT", officerSuggestButtons[STORE_SUGGEST_ROWS], "BOTTOMLEFT", -4, -10)
+    currentOfficersTitle:SetText("Current officers:")
+
+    local STORE_CURRENT_OFFICER_ROWS = 6
+    local currentOfficerRows = {}
+    local prevOfficerAnchor = currentOfficersTitle
+    for i = 1, STORE_CURRENT_OFFICER_ROWS do
+        local row = CreateFrame("Frame", nil, content)
+        row:SetSize(300, 18)
+        if i == 1 then
+            row:SetPoint("TOPLEFT", prevOfficerAnchor, "BOTTOMLEFT", 4, -6)
+        else
+            row:SetPoint("TOPLEFT", prevOfficerAnchor, "BOTTOMLEFT", 0, -2)
+        end
+        local text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        text:SetPoint("LEFT", 0, 0)
+        row.text = text
+        local removeBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+        removeBtn:SetSize(60, 18)
+        removeBtn:SetPoint("LEFT", text, "RIGHT", 10, 0)
+        removeBtn:SetText("Remove")
+        row.removeBtn = removeBtn
+        row:Hide()
+        currentOfficerRows[i] = row
+        prevOfficerAnchor = row
+    end
+
+    --------------------------------------------------------------------
+    -- Credit ratio + rep-tier discount - dynamically re-anchored below
+    -- whatever the officer list actually shows (see RebuildCurrentOfficerRows),
+    -- same "don't reserve dead space for hidden rows" fix Bavin's own
+    -- Credit & Reputation section uses (that file's 2026-09-25 comment).
+    --------------------------------------------------------------------
+    local ratioLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    ratioLabel:SetText("Credits per Gold:")
+
+    local ratioEdit = CreateFrame("EditBox", "DHToolsStoreRatioEdit", content, "InputBoxTemplate")
+    ratioEdit:SetSize(60, 20)
+    ratioEdit:SetPoint("LEFT", ratioLabel, "RIGHT", 10, -2)
+    ratioEdit:SetAutoFocus(false)
+    ratioEdit:SetScript("OnEscapePressed", ratioEdit.ClearFocus)
+
+    local ratioBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    ratioBtn:SetSize(60, 20)
+    ratioBtn:SetPoint("LEFT", ratioEdit, "RIGHT", 6, 0)
+    ratioBtn:SetText("Set")
     ratioBtn:SetScript("OnClick", function()
         if not DHTools.Store.CanManageStoreOfficersLocal() then
             DHTools.Store.Print("Refused - guild leader, donation recipient, or author account only.")
@@ -1666,9 +1943,25 @@ local function CreateStorePanel(parent)
         panel.Refresh()
     end)
 
-    local goldCheck = CreateFrame("CheckButton", "DHToolsStoreGoldDiscountCheck", panel, "UICheckButtonTemplate")
-    goldCheck:SetPoint("TOPLEFT", ratioLabel, "BOTTOMLEFT", 0, -18)
-    _G[goldCheck:GetName() .. "Text"]:SetText("Apply tier discount to gold price")
+    -- 2026-09-28 (Chris): moved here, directly below the ratio box it
+    -- explains - was below both discount checkboxes, reading as if it
+    -- explained them instead of the ratio above.
+    local ratioDesc = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    ratioDesc:SetPoint("TOPLEFT", ratioLabel, "BOTTOMLEFT", 0, -6)
+    ratioDesc:SetPoint("RIGHT", -16, 0)
+    ratioDesc:SetJustifyH("LEFT")
+    ratioDesc:SetWordWrap(true)
+    ratioDesc:SetText("Credits price = gold price x this ratio, then the buyer's own tier discount.")
+
+    -- 2026-09-28 (Chris): one combined row instead of two separate
+    -- checkboxes.
+    local discountLabel1 = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    discountLabel1:SetPoint("TOPLEFT", ratioDesc, "BOTTOMLEFT", 0, -12)
+    discountLabel1:SetText("Apply Rep Tier Cost Reduction to")
+
+    local goldCheck = CreateFrame("CheckButton", "DHToolsStoreGoldDiscountCheck", content, "UICheckButtonTemplate")
+    goldCheck:SetPoint("LEFT", discountLabel1, "RIGHT", 2, 0)
+    _G[goldCheck:GetName() .. "Text"]:SetText("Gold Price")
     goldCheck:SetScript("OnClick", function(self)
         if not DHTools.Store.CanManageStoreOfficersLocal() then
             self:SetChecked(DHTools.Store.db.discountAppliesToGold)
@@ -1678,9 +1971,13 @@ local function CreateStorePanel(parent)
         DHTools.Store.db.discountAppliesToGold = self:GetChecked() and true or false
     end)
 
-    local creditCheck = CreateFrame("CheckButton", "DHToolsStoreCreditDiscountCheck", panel, "UICheckButtonTemplate")
-    creditCheck:SetPoint("TOPLEFT", goldCheck, "BOTTOMLEFT", 0, -4)
-    _G[creditCheck:GetName() .. "Text"]:SetText("Apply tier discount to credits price")
+    local discountLabel2 = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    discountLabel2:SetPoint("LEFT", _G[goldCheck:GetName() .. "Text"], "RIGHT", 2, 0)
+    discountLabel2:SetText("and/or")
+
+    local creditCheck = CreateFrame("CheckButton", "DHToolsStoreCreditDiscountCheck", content, "UICheckButtonTemplate")
+    creditCheck:SetPoint("LEFT", discountLabel2, "RIGHT", 2, 0)
+    _G[creditCheck:GetName() .. "Text"]:SetText("Credits Price")
     creditCheck:SetScript("OnClick", function(self)
         if not DHTools.Store.CanManageStoreOfficersLocal() then
             self:SetChecked(DHTools.Store.db.discountAppliesToCredits)
@@ -1690,49 +1987,141 @@ local function CreateStorePanel(parent)
         DHTools.Store.db.discountAppliesToCredits = self:GetChecked() and true or false
     end)
 
-    local status = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    status:SetPoint("TOPLEFT", creditCheck, "BOTTOMLEFT", 0, -14)
+    local status = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    status:SetPoint("TOPLEFT", discountLabel1, "BOTTOMLEFT", 0, -16)
     status:SetPoint("RIGHT", -16, 0)
     status:SetJustifyH("LEFT")
     status:SetWordWrap(true)
 
+    RebuildCurrentOfficerRows = function()
+        local canManage = DHTools.Store.CanManageStoreOfficersLocal()
+        local officers = (DHTools.Store.db and DHTools.Store.db.officers) or {}
+        local lastShown -- last VISIBLE row this pass, or nil if the list is empty
+        for i, row in ipairs(currentOfficerRows) do
+            local name = officers[i]
+            if not name then
+                row:Hide()
+            else
+                row:Show()
+                row.text:SetText(name)
+                row.removeBtn:SetScript("OnClick", function()
+                    local list = {}
+                    for _, n in ipairs(officers) do
+                        if n ~= name then table.insert(list, n) end
+                    end
+                    DHTools.Store.SetStoreOfficers(list)
+                    RebuildCurrentOfficerRows()
+                end)
+                if canManage then
+                    row.removeBtn:Enable()
+                else
+                    row.removeBtn:Disable()
+                end
+                lastShown = row
+            end
+        end
+
+        ratioLabel:ClearAllPoints()
+        if lastShown then
+            ratioLabel:SetPoint("TOPLEFT", lastShown, "BOTTOMLEFT", -4, -16)
+        else
+            ratioLabel:SetPoint("TOPLEFT", currentOfficersTitle, "BOTTOMLEFT", 0, -16)
+        end
+    end
+
     panel.Refresh = function()
+        -- -24 (not -4) to leave room for the scrollbar, same reasoning as
+        -- every other scrollable page here.
+        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 24))
+
         local db = DHTools.Store.db
         if not db then
             status:SetText("Store module isn't enabled yet - turn it on from the Tools page.")
             return
         end
-        officersEdit:SetText(table.concat(db.officers, ", "))
-        primaryEdit:SetText(db.primaryOfficer or "")
-        ratioEdit:SetText(db.creditGoldRatio and tostring(db.creditGoldRatio) or "")
-        goldCheck:SetChecked(db.discountAppliesToGold)
-        creditCheck:SetChecked(db.discountAppliesToCredits)
+
         -- EditBox has no reliable cross-client SetEnabled/Enable -
         -- EnableMouse(false) + dimming is the safe way to make one
         -- read-only without depending on an API that may not exist on
-        -- this client build.
+        -- this client build. Button DOES support Enable/Disable reliably.
         local canManage = DHTools.Store.CanManageStoreOfficersLocal()
-        for _, edit in ipairs({ officersEdit, primaryEdit, ratioEdit }) do
-            edit:EnableMouse(canManage)
-            if not canManage then edit:ClearFocus() end
-            edit:SetTextColor(canManage and 1 or 0.5, canManage and 1 or 0.5, canManage and 1 or 0.5)
-        end
+
+        primaryEdit:SetText(db.primaryOfficer or "")
+        UpdatePrimarySuggestions("")
+        primaryEdit:EnableMouse(canManage)
+        if not canManage then primaryEdit:ClearFocus() end
+        primaryEdit:SetTextColor(canManage and 1 or 0.5, canManage and 1 or 0.5, canManage and 1 or 0.5)
+        if canManage then primaryBtn:Enable() else primaryBtn:Disable() end
+
+        officerAddEdit:SetText("")
+        UpdateOfficerSuggestions("")
+        officerAddEdit:EnableMouse(canManage)
+        if not canManage then officerAddEdit:ClearFocus() end
+        officerAddEdit:SetTextColor(canManage and 1 or 0.5, canManage and 1 or 0.5, canManage and 1 or 0.5)
+        if canManage then officerAddBtn:Enable() else officerAddBtn:Disable() end
+
+        RebuildCurrentOfficerRows()
+
+        ratioEdit:SetText(db.creditGoldRatio and tostring(db.creditGoldRatio) or "")
+        ratioEdit:EnableMouse(canManage)
+        if not canManage then ratioEdit:ClearFocus() end
+        ratioEdit:SetTextColor(canManage and 1 or 0.5, canManage and 1 or 0.5, canManage and 1 or 0.5)
+        if canManage then ratioBtn:Enable() else ratioBtn:Disable() end
+
+        goldCheck:SetChecked(db.discountAppliesToGold)
+        creditCheck:SetChecked(db.discountAppliesToCredits)
+
         status:SetText((db.creditGoldRatio and "" or "Credits per Gold isn't set yet - the store's Credits column shows \"-\" until it is. ")
-            .. "Credits price = gold price x this ratio, then the buyer's own tier discount.")
+            .. (canManage and "" or "You can't manage Store officer settings (guild leader, donation recipient, or author account only) - read-only."))
     end
 
     return panel
 end
 
+--------------------------------------------------------------------------
+-- About page
+--------------------------------------------------------------------------
+
+-- 2026-09-28 (Chris): each real module's own top-level slash command,
+-- in the same order as the Tools page's module list (Air Service has no
+-- Config page of its own, so it isn't in that list - appended last
+-- here instead). Static, not derived from ns.moduleOrder/ns.modules -
+-- this is documentation text for a person reading the About page, and
+-- every module here already has a stable, long-lived slash command of
+-- its own (see each module's own SLASH_* registration).
+local ABOUT_MODULE_COMMANDS = {
+    { cmd = "/dht", label = "DH-Tools (this window: /dht config)" },
+    { cmd = "/mm", label = "Mob Marker" },
+    { cmd = "/dhq", label = "Quests" },
+    { cmd = "/dhb", label = "Bavin" },
+    { cmd = "/dhdanger", label = "Danger" },
+    { cmd = "/dhm", label = "Macros" },
+    { cmd = "/dhs", label = "Store" },
+    { cmd = "/dhair", label = "Air Service" },
+}
+
 local function CreateAboutPanel(parent)
     local panel = CreateFrame("Frame", nil, parent)
     panel:SetAllPoints()
 
-    local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    -- 2026-09-28: scrollable now, same pattern as every other populated
+    -- page (Mob Marker/Bavin/Danger/Store above) - the new module
+    -- slash-command list (see below) pushed this page close enough to a
+    -- fixed window's height that it's cheap insurance against the same
+    -- overflow-past-the-bottom bug Chris reported.
+    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsAboutScroll", panel, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", 0, -8)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
+
+    local content = CreateFrame("Frame", nil, scrollFrame)
+    content:SetSize(1, 480) -- width set in Refresh; generous fixed estimate
+    scrollFrame:SetScrollChild(content)
+
+    local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 16, -16)
     title:SetText("About DH-Tools")
 
-    local body = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    local body = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     body:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -16)
     body:SetPoint("RIGHT", -16, 0)
     body:SetJustifyH("LEFT")
@@ -1745,7 +2134,7 @@ local function CreateAboutPanel(parent)
     -- keeping the extra vertical gap around it). Still a separate
     -- FontString even at matching size, purely so the gap above/below it
     -- can be wider than the tighter within-body-paragraph spacing.
-    local credits = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    local credits = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     credits:SetPoint("TOPLEFT", body, "BOTTOMLEFT", 0, 0) -- y set in Refresh, once body's actual height is known
     credits:SetPoint("RIGHT", -16, 0)
     credits:SetJustifyH("LEFT")
@@ -1753,22 +2142,33 @@ local function CreateAboutPanel(parent)
     credits:SetWordWrap(true)
     credits:SetText("Major DH-Air Contributor: Deves\nBug Testers: Yuri, Cyndrith")
 
-    local bodyBottom = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    local bodyBottom = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     bodyBottom:SetPoint("TOPLEFT", credits, "BOTTOMLEFT", 0, -16)
     bodyBottom:SetPoint("RIGHT", -16, 0)
     bodyBottom:SetJustifyH("LEFT")
     bodyBottom:SetJustifyV("TOP")
     bodyBottom:SetWordWrap(true)
+
+    -- 2026-09-28 (Chris): the Mob Marker/HC Mob Marker origin paragraph
+    -- is gone - this is a good spot to list each module's own top-level
+    -- slash command instead (ABOUT_MODULE_COMMANDS above), replacing the
+    -- old single "/dht list" callout with the full set.
+    local commandLines = {}
+    for _, m in ipairs(ABOUT_MODULE_COMMANDS) do
+        table.insert(commandLines, "|cffffff00" .. m.cmd .. "|r - " .. m.label)
+    end
     bodyBottom:SetText(
         "The Death Happens guild's master addon - lets you activate or "
-        .. "deactivate individual modules from one addon. Type /dht list "
-        .. "to see what's installed.\n\n"
-        .. "Mob Marker's auto-mark/hotkey/target-icon-list functionality "
-        .. "was originally its own addon, HC Mob Marker, also by Loopi - "
-        .. "merged directly into DH-Tools as its first module.\n\n"
-        .. "Copyright (c) 2026 Loopi. All rights reserved.")
+        .. "deactivate individual modules from one addon.\n\n"
+        .. "Slash commands:\n"
+        .. table.concat(commandLines, "\n")
+        .. "\n\nCopyright (c) 2026 Loopi. All rights reserved.")
 
     panel.Refresh = function()
+        -- -24 (not -4) to leave room for the scrollbar, same reasoning as
+        -- every other scrollable page here.
+        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 24))
+
         local gameVersion = GetBuildInfo()
         body:SetText("Addon Version: " .. DHTools.VERSION .. "\n"
             .. "Game Version: " .. tostring(gameVersion) .. "\n\n"
@@ -1919,8 +2319,12 @@ function DHTools:Config_Open(pageKey)
 
         -- Danger/Macros/Store sit before About deliberately: About is
         -- the trailing "everything else" entry, and a new module
-        -- belongs with the other modules above it.
-        local pageNames = { "Tools", "MobMarker", "Quests", "Bavin", "Danger", "Macros", "Store", "About" }
+        -- belongs with the other modules above it. Store sits directly
+        -- after Bavin specifically (2026-09-28, Chris) - the two are
+        -- associated (Store hard-depends on Bavin for its Credits
+        -- pricing/permission model), so they read better adjacent
+        -- rather than with Danger/Macros between them.
+        local pageNames = { "Tools", "MobMarker", "Quests", "Bavin", "Store", "Danger", "Macros", "About" }
         local pageLabels = { Tools = "Tools", MobMarker = "Mob Marker", Quests = "Quests", Bavin = "Bavin", Danger = "Danger", Macros = "Macros", Store = "Store", About = "About" }
         local prevBtn
         for _, name in ipairs(pageNames) do
