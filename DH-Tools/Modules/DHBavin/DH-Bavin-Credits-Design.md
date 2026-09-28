@@ -412,15 +412,15 @@ will have.
 **SUPERSEDED 2026-09-28 (Chris, DH-Store design conversation) - see
 `src\DH-Tools\Modules\DHStore\DH-Store-Design.md`'s Officer roles
 resolution for the full replacement model.** The 4 tiers above split
-into 5, adding DH-Store's own AH Officer role: (1) Hidden author
+into 5, adding DH-Store's own Store Officer role: (1) Hidden author
 override (Loopi + alts, `IsAuthorAccount()` - undocumented outside
 this PC, same as today) and (2) Guild Leader (in-game rank 0) are now
 TWO separate tiers instead of one combined "Guild leader + Loopi";
 (3) Mail recipient (Bavin) is renamed **Donation Recipient**, same
-role; (4) **AH Officer(s)** is new - Store-specific, manages the
+role; (4) **Store Officer(s)** is new - Store-specific, manages the
 catalog and price overrides; (5) **Designated Distribution
 Officer(s)** is very likely this section's existing "Designated
-Officer" role just renamed for clarity now that "AH Officer" exists as
+Officer" role just renamed for clarity now that "Store Officer" exists as
 a separate thing - not yet confirmed with Chris, see DH-Store-Design.md.
 Each tier grants everything every tier below it grants (tier 1 has
 everyone's rights; tier 5 has only its own); membership per tier is

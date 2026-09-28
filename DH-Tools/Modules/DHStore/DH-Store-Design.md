@@ -3,12 +3,12 @@
 ## Concept
 A guild-only, buyout-only item store, modeled visually on the in-game
 Auction House's Browse pane but functionally simpler (no bids, no
-listing duration, no undercutting). Bavin or a designated AH officer
+listing duration, no undercutting). Bavin or a designated Store officer
 lists items at a gold price and a Bavin Credits price; the credit price
 is discounted by the buyer's own reputation tier (see
 DH-Bavin-Credits-Design.md's Points/tier system, which this module
 reads but does not own). "Buying" cannot move gold or items
-automatically - no WoW addon can - so it generates a mail to the AH
+automatically - no WoW addon can - so it generates a mail to the Store
 officer with (buyer, item, price) for manual fulfillment: item
 delivery via mail, and payment either gold (CoD) or a Credits
 deduction the addon still applies automatically the same way the
@@ -41,7 +41,7 @@ claude\DH-Store\PROFILE.md - not repeated here.
    specifically).
 3. **RESOLVED 2026-09-28 (Chris) - Purchase/claim flow.** No
    client-side claim-broadcast - races are rare enough at this guild's
-   scale (hundreds of items, infrequent buys) to tolerate. The AH
+   scale (hundreds of items, infrequent buys) to tolerate. The Store
    officer resolves any double-claim manually, FIFO, using a precise
    timestamp/sequence the addon embeds in the generated mail itself
    (WoW's own mail metadata isn't granular enough for this). No DH-Air-
@@ -105,28 +105,28 @@ claude\DH-Store\PROFILE.md - not repeated here.
       but is not certain ("I think") - needs verifying against the
       real roster, not assumed.
    3. **Donation Recipient** - the existing DH-Bavin `recipient` role,
-      renamed for clarity now that AH Officer exists as a separate
+      renamed for clarity now that Store Officer exists as a separate
       thing. Configurable by tier 1 or 2, same as today
       (`CanSetRecipientName`).
-   4. **AH Officer(s)** - NEW, Store-specific. Configurable by tier 1,
+   4. **Store Officer(s)** - NEW, Store-specific. Configurable by tier 1,
       2, or 3. Plural - gets the GUI for adding/removing store
       listings and manually overriding prices. Open sub-question
       resolved for now: when a member requests a purchase, ONE
-      designated PRIMARY AH Officer receives all of Store's purchase-
-      request mail (not every AH Officer) - who's primary is itself
+      designated PRIMARY Store Officer receives all of Store's purchase-
+      request mail (not every Store Officer) - who's primary is itself
       configurable, not hardcoded.
    5. **Designated Distribution Officer(s)** - configurable by tier 1,
       2, or 3. Sends the fulfillment mail, collects CoD and/or deducts
       Credits (CM5's engine). Very likely this is exactly the existing
       "Designated Officer" role from the Access tiers section above,
-      just renamed now that "AH Officer" needs its own distinct name -
+      just renamed now that "Store Officer" needs its own distinct name -
       not yet confirmed with Chris; if it's meant to be narrower than
       the existing Designated Officer (e.g. can send/charge but not
       view the full ledger or edit alt-links), that's a genuinely new,
       more limited tier rather than a rename.
 7. **Shared scroll-list widget** - new src\DH-Tools\Widgets\ folder,
-   native HybridScrollFrame-based (matches the real AH's own chrome;
-   explicitly not AceGUI - see STATUS.md's Last session). Built first
+   native HybridScrollFrame-based (matches the real Auction House's own
+   chrome; explicitly not AceGUI - see STATUS.md's Last session). Built first
    against DH-Store, Bavin's Roster/Conflicts tabs backported later
    only if it proves out. Not yet started.
 8. **UI layout specifics** - filter/search bar, category/quality
@@ -150,27 +150,27 @@ claude\DH-Store\PROFILE.md - not repeated here.
     current tier discount % needs to show prominently near the
     lower-left gold/Credits balance readout, not just be silently
     baked into each row's price. Not yet laid out.
-11. **Price-column real estate - open, Claude's take offered, not
-    decided.** Chris asked whether 4 full columns (gold, tier gold,
-    credits, tier credits) fit in the list. Claude's read: probably
-    not comfortably at readable width in a single row, especially
-    once stacks (#12) are factored in - and it's largely redundant
-    with #10 (if the discount is already shown once, prominently,
-    repeating base-vs-discounted as 4 separate list columns adds
-    little). Recommends following the real AH's own precedent
-    instead: the list itself shows only the final payable total(s)
-    per row (2 columns - gold, credits - both already tier-adjusted),
-    while the full breakdown (base price, discount applied, per-unit
-    vs. stack-total) lives in a details panel for the currently-
-    selected row, same as the real AH's list-shows-buyout /
-    detail-panel-shows-per-item split. Chris to confirm or redirect.
+11. **RESOLVED 2026-09-28 (Chris) - Price-column real estate.** Chris
+    agreed 4 full columns (gold, tier gold, credits, tier credits) is
+    too many, but wants the "full price" still visible alongside the
+    "tier price" - it's an instant, on-every-row reminder of the
+    payoff for donating items and earning guild reputation, not just
+    a number to look up. Resolved as **2 price columns, not 4** (Gold,
+    Credits): each cell shows the pre-discount base price struck
+    through beside the tier-discounted price, e.g. `~~50g~~ 30g`. This
+    keeps both numbers on every row (stronger reminder than hiding the
+    base price in a details panel) while still fitting in 2 columns.
+    Pairs with #10's global discount-% badge near the balance readout:
+    the badge explains *why* the price differs, the struck-through
+    column reinforces it row by row. Superseded a prior list-only-
+    shows-final-total / base-price-in-details-panel-only proposal.
 12. **Stack pricing - open, new.** Some listings will be stacks (e.g.
     20x Netherweave Cloth), needing both a per-unit price and a
     stack-total price, times up to 2 currencies (gold/credits) x 2
     states (base/discounted) - up to 8 numbers per listing if shown in
     full. Whether the store lets a buyer purchase part of a stack or
-    always the whole listed lot (matching how the real AH sells a
-    listing as one indivisible lot) is undecided - affects both the
+    always the whole listed lot (matching how the real Auction House
+    sells a listing as one indivisible lot) is undecided - affects both the
     pricing math and whether "per-unit" needs to be buyer-facing at
     all or is purely informational.
 
