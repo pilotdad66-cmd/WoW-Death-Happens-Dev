@@ -9,6 +9,7 @@
 ## SavedVariables: DHBavinCreditsDB
 ## SavedVariables: DHToolsAccountDB
 ## SavedVariables: DHAirDB
+## SavedVariables: DHStoreDB
 ## X-Curse-Project-Name: DH-Tools
 ## X-Category: Guild
 ## X-License: All Rights Reserved
@@ -18,6 +19,8 @@ Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
 Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
 Libs\LibDBIcon-1.0\LibDBIcon-1.0.lua
 Libs\LibUIDropDownMenu\LibUIDropDownMenu.lua
+
+Widgets\ScrollList.lua
 
 Core.lua
 Config.lua
@@ -78,3 +81,5 @@ Modules\DHMacros\Core.lua
 # this file.
 Modules\DHMacros\MacroLibrary.lua
 Modules\DHMacros\Board.lua
+Modules\DHStore\Core.lua
+Modules\DHStore\Sync.lua
