@@ -554,6 +554,15 @@ local function BuildQuickMenu()
                 DHAir:Board_Toggle()
             end
         end },
+        -- "Open DH Store" (2026-09-28, DH-Store question #9's access-
+        -- points scope) - same guarded-existence pattern as the other
+        -- cross-module calls above (Store might be disabled/not yet
+        -- enabled, same as any other module).
+        { text = "Open DH Store", notCheckable = true, func = function()
+            if DHTools.Store and DHTools.Store.Store_Toggle then
+                DHTools.Store.Store_Toggle()
+            end
+        end },
         DIVIDER,
         { text = "DH-Tools Settings", notCheckable = true, func = function()
             DHTools:Config_Open("Tools")
@@ -583,6 +592,11 @@ local function BuildMenu()
             hasArrow = true, menuList = BuildDHAirSubmenu() },
         { text = "Macros", notCheckable = true, keepShownOnClick = true,
             hasArrow = true, menuList = BuildMacrosSubmenu() },
+        { text = "Open DH Store", notCheckable = true, func = function()
+            if DHTools.Store and DHTools.Store.Store_Toggle then
+                DHTools.Store.Store_Toggle()
+            end
+        end },
         DIVIDER,
         { text = "DH-Tools Settings", notCheckable = true, func = function()
             DHTools:Config_Open("Tools")

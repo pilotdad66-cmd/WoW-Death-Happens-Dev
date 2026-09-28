@@ -1592,6 +1592,138 @@ end
 -- About page
 --------------------------------------------------------------------------
 
+-- Store page - officer roster/primary officer and pricing config
+-- (question #9's own Config.lua-additions scope: catalog browsing lives
+-- in DH-Store's own window, DHStoreFrame via /dhs - this page is just
+-- the officer-facing settings DHStore\Core.lua's slash commands also
+-- expose, for anyone who'd rather use the Tools window).
+local function CreateStorePanel(parent)
+    local panel = CreateFrame("Frame", nil, parent)
+    panel:SetAllPoints()
+
+    local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 16, -16)
+    title:SetText("Store")
+
+    local hint = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    hint:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
+    hint:SetPoint("RIGHT", -16, 0)
+    hint:SetJustifyH("LEFT")
+    hint:SetWordWrap(true)
+    hint:SetText("Browse and buy from the store itself with /dhs. Officer settings below also work as /dhs officers|primary|ratio|discount chat commands.")
+
+    local function LabeledEdit(anchorTo, labelText, y)
+        local label = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        label:SetPoint("TOPLEFT", anchorTo, "BOTTOMLEFT", 0, y or -14)
+        label:SetText(labelText)
+        local edit = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+        edit:SetSize(220, 20)
+        edit:SetPoint("LEFT", label, "RIGHT", 10, 0)
+        edit:SetAutoFocus(false)
+        local btn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+        btn:SetSize(60, 20)
+        btn:SetPoint("LEFT", edit, "RIGHT", 6, 0)
+        btn:SetText("Set")
+        return label, edit, btn
+    end
+
+    local officersLabel, officersEdit, officersBtn = LabeledEdit(hint, "Store Officers:", -16)
+    officersBtn:SetScript("OnClick", function()
+        if not DHTools.Store.CanManageStoreOfficersLocal() then
+            DHTools.Store.Print("Refused - guild leader, donation recipient, or author account only.")
+            return
+        end
+        local list = {}
+        for name in (officersEdit:GetText() or ""):gmatch("[^,]+") do
+            table.insert(list, (name:match("^%s*(.-)%s*$")))
+        end
+        DHTools.Store.SetStoreOfficers(list)
+        panel.Refresh()
+    end)
+
+    local primaryLabel, primaryEdit, primaryBtn = LabeledEdit(officersLabel, "Primary Officer:")
+    primaryBtn:SetScript("OnClick", function()
+        if not DHTools.Store.CanManageStoreOfficersLocal() then
+            DHTools.Store.Print("Refused - guild leader, donation recipient, or author account only.")
+            return
+        end
+        DHTools.Store.SetPrimaryOfficer(primaryEdit:GetText())
+        panel.Refresh()
+    end)
+
+    local ratioLabel, ratioEdit, ratioBtn = LabeledEdit(primaryLabel, "Credits per Gold:")
+    ratioBtn:SetScript("OnClick", function()
+        if not DHTools.Store.CanManageStoreOfficersLocal() then
+            DHTools.Store.Print("Refused - guild leader, donation recipient, or author account only.")
+            return
+        end
+        local ratio = tonumber(ratioEdit:GetText())
+        if not ratio then
+            DHTools.Store.Print("Enter a number, e.g. 10.")
+            return
+        end
+        DHTools.Store.db.creditGoldRatio = ratio
+        panel.Refresh()
+    end)
+
+    local goldCheck = CreateFrame("CheckButton", "DHToolsStoreGoldDiscountCheck", panel, "UICheckButtonTemplate")
+    goldCheck:SetPoint("TOPLEFT", ratioLabel, "BOTTOMLEFT", 0, -18)
+    _G[goldCheck:GetName() .. "Text"]:SetText("Apply tier discount to gold price")
+    goldCheck:SetScript("OnClick", function(self)
+        if not DHTools.Store.CanManageStoreOfficersLocal() then
+            self:SetChecked(DHTools.Store.db.discountAppliesToGold)
+            DHTools.Store.Print("Refused - guild leader, donation recipient, or author account only.")
+            return
+        end
+        DHTools.Store.db.discountAppliesToGold = self:GetChecked() and true or false
+    end)
+
+    local creditCheck = CreateFrame("CheckButton", "DHToolsStoreCreditDiscountCheck", panel, "UICheckButtonTemplate")
+    creditCheck:SetPoint("TOPLEFT", goldCheck, "BOTTOMLEFT", 0, -4)
+    _G[creditCheck:GetName() .. "Text"]:SetText("Apply tier discount to credits price")
+    creditCheck:SetScript("OnClick", function(self)
+        if not DHTools.Store.CanManageStoreOfficersLocal() then
+            self:SetChecked(DHTools.Store.db.discountAppliesToCredits)
+            DHTools.Store.Print("Refused - guild leader, donation recipient, or author account only.")
+            return
+        end
+        DHTools.Store.db.discountAppliesToCredits = self:GetChecked() and true or false
+    end)
+
+    local status = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    status:SetPoint("TOPLEFT", creditCheck, "BOTTOMLEFT", 0, -14)
+    status:SetPoint("RIGHT", -16, 0)
+    status:SetJustifyH("LEFT")
+    status:SetWordWrap(true)
+
+    panel.Refresh = function()
+        local db = DHTools.Store.db
+        if not db then
+            status:SetText("Store module isn't enabled yet - turn it on from the Tools page.")
+            return
+        end
+        officersEdit:SetText(table.concat(db.officers, ", "))
+        primaryEdit:SetText(db.primaryOfficer or "")
+        ratioEdit:SetText(db.creditGoldRatio and tostring(db.creditGoldRatio) or "")
+        goldCheck:SetChecked(db.discountAppliesToGold)
+        creditCheck:SetChecked(db.discountAppliesToCredits)
+        -- EditBox has no reliable cross-client SetEnabled/Enable -
+        -- EnableMouse(false) + dimming is the safe way to make one
+        -- read-only without depending on an API that may not exist on
+        -- this client build.
+        local canManage = DHTools.Store.CanManageStoreOfficersLocal()
+        for _, edit in ipairs({ officersEdit, primaryEdit, ratioEdit }) do
+            edit:EnableMouse(canManage)
+            if not canManage then edit:ClearFocus() end
+            edit:SetTextColor(canManage and 1 or 0.5, canManage and 1 or 0.5, canManage and 1 or 0.5)
+        end
+        status:SetText((db.creditGoldRatio and "" or "Credits per Gold isn't set yet - the store's Credits column shows \"-\" until it is. ")
+            .. "Credits price = gold price x this ratio, then the buyer's own tier discount.")
+    end
+
+    return panel
+end
+
 local function CreateAboutPanel(parent)
     local panel = CreateFrame("Frame", nil, parent)
     panel:SetAllPoints()
@@ -1782,13 +1914,14 @@ function DHTools:Config_Open(pageKey)
         SafeCreatePage("Bavin", CreateBavinPanel)
         SafeCreatePage("Danger", CreateDangerPanel)
         SafeCreatePage("Macros", CreateMacrosPanel)
+        SafeCreatePage("Store", CreateStorePanel)
         SafeCreatePage("About", CreateAboutPanel)
 
-        -- Danger/Macros sit before About deliberately: About is the
-        -- trailing "everything else" entry, and a new module belongs
-        -- with the other modules above it.
-        local pageNames = { "Tools", "MobMarker", "Quests", "Bavin", "Danger", "Macros", "About" }
-        local pageLabels = { Tools = "Tools", MobMarker = "Mob Marker", Quests = "Quests", Bavin = "Bavin", Danger = "Danger", Macros = "Macros", About = "About" }
+        -- Danger/Macros/Store sit before About deliberately: About is
+        -- the trailing "everything else" entry, and a new module
+        -- belongs with the other modules above it.
+        local pageNames = { "Tools", "MobMarker", "Quests", "Bavin", "Danger", "Macros", "Store", "About" }
+        local pageLabels = { Tools = "Tools", MobMarker = "Mob Marker", Quests = "Quests", Bavin = "Bavin", Danger = "Danger", Macros = "Macros", Store = "Store", About = "About" }
         local prevBtn
         for _, name in ipairs(pageNames) do
             local btn = CreateFrame("Button", nil, nav, "UIPanelButtonTemplate")
