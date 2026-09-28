@@ -74,6 +74,9 @@ function ns.InitDB()
     if type(DHToolsDB.minimap) ~= "table" then
         DHToolsDB.minimap = { hide = false }
     end
+    if type(DHToolsDB.officerVisibleMaxRank) ~= "number" then
+        DHToolsDB.officerVisibleMaxRank = 3
+    end
     ns.db = DHToolsDB
 end
 
@@ -160,6 +163,62 @@ local function CheckAuthorAccount()
         DHToolsAccountDB = {}
     end
     DHToolsAccountDB.isAuthorAccount = true
+end
+
+-- === Officer permission (2026-09-28, Chris item 7) ===
+-- Shared gate for the Officer Settings nav button ONLY - it decides
+-- whether that button/page exists for this client, nothing else. It
+-- does NOT replace or feed into any module's own permission checks
+-- (DHBavin's CanSetEditorsName, DHStore's CanManageStoreOfficers, etc.)
+-- - those keep their own independent logic, including their own
+-- FULL_PERMISSION_OVERRIDE_NAME checks used to verify REMOTE senders on
+-- incoming network messages. Widening that remote-trust surface was
+-- explicitly out of scope for this change.
+--
+-- DH-Tools keeps its OWN guild-roster-rank cache here (Chris's pick,
+-- 2nd AskUserQuestion round) rather than reusing DH-Bavin's, so the
+-- Officer Settings button's visibility never depends on whether the
+-- Bavin module happens to be enabled.
+ns.rosterRankCache = {}
+
+local function NormalizeRosterName(name)
+    -- Realm suffix strip only, no lowercasing - matches DHBavin's own
+    -- NormalizeName convention exactly, so names line up if ever
+    -- compared side by side.
+    return name and name:match("^([^-]+)") or name
+end
+
+function ns.UpdateRosterRankCache()
+    if not IsInGuild() then return end
+    wipe(ns.rosterRankCache)
+    local numMembers = GetNumGuildMembers and GetNumGuildMembers() or 0
+    for i = 1, numMembers do
+        local name, _, rankIndex = GetGuildRosterInfo(i)
+        if name then
+            ns.rosterRankCache[NormalizeRosterName(name)] = rankIndex
+        end
+    end
+end
+
+-- name: full "Name-Realm" or bare "Name". True if that guild member's
+-- rank is within the configured officer threshold, or they're the
+-- author account's known character.
+function ns.IsOfficerName(name)
+    local normalized = NormalizeRosterName(name)
+    if AUTHOR_CHARACTER_NAMES[normalized] then
+        return true
+    end
+    local rankIndex = ns.rosterRankCache[normalized]
+    if rankIndex == nil then return false end
+    local maxRank = (ns.db and ns.db.officerVisibleMaxRank) or 3
+    return rankIndex <= maxRank
+end
+
+-- LOCAL-only convenience: is the CURRENT character an officer, per the
+-- rules above, OR this client's account-wide author override.
+function ns.IsOfficerLocal()
+    if ns.IsAuthorAccount() then return true end
+    return ns.IsOfficerName(UnitName("player"))
 end
 
 -- === Update notification (2026-08-24) ===
@@ -756,6 +815,7 @@ frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("CHAT_MSG_ADDON")
 frame:RegisterEvent("CHAT_MSG_GUILD") -- guild-chat item lookup trigger, see above
 frame:RegisterEvent("GET_ITEM_INFO_RECEIVED") -- guild-chat lookup cache-miss retry, see above
+frame:RegisterEvent("GUILD_ROSTER_UPDATE") -- keeps ns.rosterRankCache current, see Officer permission section above
 frame:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
         local arg1 = ...
@@ -764,6 +824,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         end
     elseif event == "PLAYER_LOGIN" then
         CheckAuthorAccount()
+        ns.UpdateRosterRankCache()
         ActivateEnabledModules()
         if ns.Minimap_Init then
             ns.Minimap_Init()
@@ -778,6 +839,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
         LookupTrigger_OnChatMsgGuild(...)
     elseif event == "GET_ITEM_INFO_RECEIVED" then
         LookupOnItemInfoReceived(...)
+    elseif event == "GUILD_ROSTER_UPDATE" then
+        ns.UpdateRosterRankCache()
     end
 end)
 

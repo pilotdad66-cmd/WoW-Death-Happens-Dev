@@ -265,7 +265,14 @@ function ns.CanSetEditorsName(name)
     if not name then return false end
     if NormalizeName(name) == FULL_PERMISSION_OVERRIDE_NAME then return true end
     local entry = ns.guildRoster[NormalizeName(name)]
-    return entry ~= nil and entry.rankIndex ~= nil and entry.rankIndex <= 3
+    -- 2026-09-28 (Chris item 7): threshold is now configurable via the
+    -- new Officer Settings page (DHTools.db.officerVisibleMaxRank,
+    -- default 3) instead of a hardcoded 3 - everything else about this
+    -- check (own roster cache, own Loopidot literal above) is
+    -- deliberately untouched, see Core.lua's Officer permission section
+    -- for why this isn't just delegated to the new shared function.
+    local maxRank = (DHTools.db and DHTools.db.officerVisibleMaxRank) or 3
+    return entry ~= nil and entry.rankIndex ~= nil and entry.rankIndex <= maxRank
 end
 
 -- Whether the LOCAL player can manage the recipient right now. 2026-08-05:

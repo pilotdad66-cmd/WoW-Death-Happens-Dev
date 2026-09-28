@@ -666,17 +666,10 @@ local function CreateBavinPanel(parent)
     scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
 
     local content = CreateFrame("Frame", nil, scrollFrame)
-    content:SetSize(1, 690) -- width set in Refresh; height is a generous
-                             -- fixed estimate for this page's content -
-                             -- pad rather than trim if it's off, same
-                             -- approach Mob Marker's page already uses.
-                             -- 2026-09-25: 620 -> 690, room for the new
-                             -- "Open Bavin Rep & Credit Config" button
-                             -- section below Current Editors.
-                             -- 2026-08-24: reduced from 820 after tightening
-                             -- the officer section's gaps and dropping its
-                             -- two internal dividers and half its reserved
-                             -- suggestion-row space.
+    content:SetSize(1, 120) -- width set in Refresh; only one user setting
+                             -- lives on this page now (2026-09-28) - the
+                             -- recipient/editor/Credits officer section
+                             -- moved to the new Officer Settings page.
     scrollFrame:SetScrollChild(content)
 
     local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -688,7 +681,7 @@ local function CreateBavinPanel(parent)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
-    hint:SetText("The recipient is the guild's current mail collector; the mailbox helper and bag highlighting (a later milestone) will target whoever is set here. Only Bavin can change the recipient; officers (rank <= 3) can manage editors.")
+    hint:SetText("The recipient is the guild's current mail collector; the mailbox helper and bag highlighting (a later milestone) will target whoever is set here. Recipient/editor management and the Credit & Reputation System have moved to the Officer Settings page.")
 
     --------------------------------------------------------------------
     -- Everyone section - no permission gate, unlike everything below the
@@ -708,357 +701,6 @@ local function CreateBavinPanel(parent)
         Bavin.db.mouseoverChatTooltips = self:GetChecked() and true or false
     end)
 
-    local everyoneDivider = content:CreateTexture(nil, "ARTWORK")
-    everyoneDivider:SetColorTexture(1, 1, 1, 0.15)
-    everyoneDivider:SetHeight(1)
-    everyoneDivider:SetPoint("TOPLEFT", mouseoverCheck, "BOTTOMLEFT", -4, -10)
-    everyoneDivider:SetPoint("RIGHT", -16, 0)
-
-    --------------------------------------------------------------------
-    -- Officer-only section below this point (recipient/editor
-    -- management). 2026-08-24 (Loopi): removed the two dividers this
-    -- section used to have internally (before Recipient, before Current
-    -- Editors) and tightened every gap - already set off from the
-    -- everyone section above by everyoneDivider, so it doesn't need its
-    -- own internal separators too.
-    --------------------------------------------------------------------
-    -- 2026-08-05: recipient and editor management are separately scoped
-    -- (see DHBavin\Core.lua's Permission model section) - this note now
-    -- reflects whichever of the two the player lacks, instead of a single
-    -- flat "not the guild leader" message that no longer matches either
-    -- gate's real rule.
-    local lockedNote = content:CreateFontString(nil, "OVERLAY", "GameFontRedSmall")
-    lockedNote:SetPoint("TOPLEFT", everyoneDivider, "BOTTOMLEFT", 4, -8)
-    lockedNote:SetPoint("RIGHT", -16, 0)
-    lockedNote:SetJustifyH("LEFT")
-    lockedNote:SetWordWrap(true)
-
-    -- Type-to-filter suggestion rows, NOT a UIDropDownMenu and NOT a full
-    -- member list. 2026-07-28/29 history: a dynamically-repopulated
-    -- UIDropDownMenu here caused a page-bleed bug, then a hard "script ran
-    -- too long" crash; the next fix (listing every roster name as plain
-    -- text) works for a small guild but this guild runs ~1000 members, so
-    -- that's unusable too (and was almost certainly the REAL cause of the
-    -- dropdown crash as well - building/positioning ~1000 real UI frames
-    -- in one synchronous call blows WoW's script budget regardless of
-    -- which widget you use). The fix that actually scales: filter on the
-    -- Lua side (cheap even at 1000 entries) and only ever materialize a
-    -- handful of real button frames, reused as the match set changes.
-    -- Shared by both the recipient field and the "add editor" field below.
-    -- 2026-07-29: capped at 4 (was 8) - the pool reserves this many rows
-    -- of vertical space even when no suggestions are showing (which is
-    -- most of the time), so 8 left a large dead gap before the Editors
-    -- section and pushed Current Editors further down than it needed to
-    -- be. 2026-08-24 (Loopi): cut again, 4 -> 2 - same reasoning, this
-    -- reserved space was most of what Loopi meant by "empty space
-    -- (blank rows)" in the officer section. 2 still shows the closest
-    -- couple of matches, which covers the common case of a mostly-typed
-    -- name.
-    local BAVIN_SUGGEST_ROWS = 2
-
-    local function BuildSuggestPool(anchor)
-        local buttons = {}
-        local prevAnchor = anchor
-        for i = 1, BAVIN_SUGGEST_ROWS do
-            local btn = CreateFrame("Button", nil, content)
-            btn:SetSize(220, 16)
-            if i == 1 then
-                btn:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 4, -6)
-            else
-                btn:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 0, -2)
-            end
-            local text = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            text:SetAllPoints()
-            text:SetJustifyH("LEFT")
-            btn.text = text
-            local hl = btn:CreateTexture(nil, "HIGHLIGHT")
-            hl:SetAllPoints()
-            hl:SetColorTexture(1, 1, 1, 0.15)
-            btn:Hide()
-            buttons[i] = btn
-            prevAnchor = btn
-        end
-        return buttons
-    end
-
-    -- Fills `buttons` with up to #buttons roster names matching `typed`
-    -- (case-insensitive plain substring, no Lua pattern chars), hiding the
-    -- rest. Stops as soon as enough matches are found rather than
-    -- scanning the whole roster for display purposes. `onPick(name)` runs
-    -- when a suggestion row is clicked.
-    local function PopulateSuggestions(buttons, typed, onPick)
-        typed = (typed or ""):lower()
-        local shown = 0
-        if typed ~= "" then
-            for _, name in ipairs(Bavin.GetRosterNames()) do
-                if shown >= #buttons then break end
-                if name:lower():find(typed, 1, true) then
-                    shown = shown + 1
-                    local btn = buttons[shown]
-                    btn.text:SetText(name)
-                    btn:Show()
-                    btn:SetScript("OnClick", function() onPick(name) end)
-                end
-            end
-        end
-        for i = shown + 1, #buttons do
-            buttons[i]:Hide()
-        end
-    end
-
-    --------------------------------------------------------------------
-    -- Recipient (guild-leader-only)
-    --------------------------------------------------------------------
-    local recipientLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    recipientLabel:SetPoint("TOPLEFT", lockedNote, "BOTTOMLEFT", 0, -10)
-    recipientLabel:SetText("Recipient:")
-
-    local recipientEdit = CreateFrame("EditBox", "DHToolsBavinRecipientEdit", content, "InputBoxTemplate")
-    recipientEdit:SetSize(140, 20)
-    recipientEdit:SetPoint("LEFT", recipientLabel, "RIGHT", 10, -2)
-    recipientEdit:SetAutoFocus(false)
-    recipientEdit:SetMaxLetters(24)
-    recipientEdit:SetScript("OnEscapePressed", recipientEdit.ClearFocus)
-
-    local recipientSetBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-    recipientSetBtn:SetSize(60, 20)
-    recipientSetBtn:SetText("Set")
-    recipientSetBtn:SetPoint("LEFT", recipientEdit, "RIGHT", 6, 0)
-
-    local recipientStatus = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    recipientStatus:SetPoint("LEFT", recipientSetBtn, "RIGHT", 8, 0)
-
-    local rosterHint = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    rosterHint:SetPoint("TOPLEFT", recipientLabel, "BOTTOMLEFT", 0, -6)
-    rosterHint:SetPoint("RIGHT", -16, 0)
-    rosterHint:SetJustifyH("LEFT")
-    rosterHint:SetWordWrap(true)
-
-    local recipientSuggestButtons = BuildSuggestPool(rosterHint)
-
-    local function UpdateRecipientSuggestions(typed)
-        PopulateSuggestions(recipientSuggestButtons, typed, function(name)
-            recipientEdit:SetText(name)
-            recipientEdit:ClearFocus()
-            PopulateSuggestions(recipientSuggestButtons, "", function() end)
-        end)
-    end
-    recipientEdit:SetScript("OnTextChanged", function(self)
-        UpdateRecipientSuggestions(self:GetText())
-    end)
-
-    local function TrySetRecipient()
-        local typed = recipientEdit:GetText()
-        recipientEdit:ClearFocus()
-        UpdateRecipientSuggestions("")
-        if typed == "" then return end
-        if Bavin.SetRecipient(typed) then
-            recipientStatus:SetText("|cff33ff99Set!|r")
-            C_Timer.After(2, function() recipientStatus:SetText("") end)
-        else
-            recipientStatus:SetText("|cffff3333Refused (Bavin only)|r")
-        end
-    end
-    recipientSetBtn:SetScript("OnClick", TrySetRecipient)
-    recipientEdit:SetScript("OnEnterPressed", TrySetRecipient)
-
-    -- 2026-08-24 (Loopi): the divider that used to sit here (before
-    -- "Editors...") is gone - anchored directly off the recipient
-    -- suggestion pool instead, at recipientLabel's own x (-4 cancels the
-    -- pool's own +4 indent) so it lines up with "Recipient:" exactly.
-    --------------------------------------------------------------------
-    -- Editors (additive, guild-leader-only) - add-by-name with the same
-    -- capped suggestion pool, then a small removable list. Unlike the
-    -- recipient field, the "current editors" list below is sized to a
-    -- realistic editor count (not the guild roster), since in practice
-    -- it's a short additive list, not something that scales with guild
-    -- size the way the roster itself does.
-    --------------------------------------------------------------------
-    local editorsTitle = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    editorsTitle:SetPoint("TOPLEFT", recipientSuggestButtons[BAVIN_SUGGEST_ROWS], "BOTTOMLEFT", -4, -10)
-    editorsTitle:SetText("Editors (in addition to the recipient):")
-
-    local editorAddLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    editorAddLabel:SetPoint("TOPLEFT", editorsTitle, "BOTTOMLEFT", 0, -10)
-    editorAddLabel:SetText("Add editor:")
-
-    local editorAddEdit = CreateFrame("EditBox", "DHToolsBavinEditorAddEdit", content, "InputBoxTemplate")
-    editorAddEdit:SetSize(140, 20)
-    editorAddEdit:SetPoint("LEFT", editorAddLabel, "RIGHT", 10, -2)
-    editorAddEdit:SetAutoFocus(false)
-    editorAddEdit:SetMaxLetters(24)
-    editorAddEdit:SetScript("OnEscapePressed", editorAddEdit.ClearFocus)
-
-    local editorAddBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-    editorAddBtn:SetSize(60, 20)
-    editorAddBtn:SetText("Add")
-    editorAddBtn:SetPoint("LEFT", editorAddEdit, "RIGHT", 6, 0)
-
-    local editorAddStatus = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    editorAddStatus:SetPoint("LEFT", editorAddBtn, "RIGHT", 8, 0)
-
-    -- 2026-08-24: anchored to editorAddLabel (x=16, same column as
-    -- editorsTitle/recipientLabel), not editorAddEdit (the edit box,
-    -- offset well to the right) - matches recipientSuggestButtons'
-    -- anchor-to-label pattern above instead of drifting off the edit box.
-    local editorSuggestButtons = BuildSuggestPool(editorAddLabel)
-
-    local function UpdateEditorSuggestions(typed)
-        PopulateSuggestions(editorSuggestButtons, typed, function(name)
-            editorAddEdit:SetText(name)
-            editorAddEdit:ClearFocus()
-            PopulateSuggestions(editorSuggestButtons, "", function() end)
-        end)
-    end
-    editorAddEdit:SetScript("OnTextChanged", function(self)
-        UpdateEditorSuggestions(self:GetText())
-    end)
-
-    -- Forward-declared: TryAddEditor (defined next) needs to refresh the
-    -- current-editors list below, which isn't built yet at this point.
-    local RebuildCurrentEditorRows
-
-    local function TryAddEditor()
-        local typed = editorAddEdit:GetText()
-        editorAddEdit:ClearFocus()
-        UpdateEditorSuggestions("")
-        if typed == "" then return end
-        local current = {}
-        if Bavin.db then
-            for _, n in ipairs(Bavin.db.editors) do
-                if n == typed then
-                    editorAddStatus:SetText("|cffff3333Already an editor|r")
-                    return
-                end
-                table.insert(current, n)
-            end
-        end
-        table.insert(current, typed)
-        if Bavin.SetEditors(current) then
-            editorAddEdit:SetText("")
-            editorAddStatus:SetText("|cff33ff99Added!|r")
-            C_Timer.After(2, function() editorAddStatus:SetText("") end)
-            if RebuildCurrentEditorRows then RebuildCurrentEditorRows() end
-        else
-            editorAddStatus:SetText("|cffff3333Refused (officers only)|r")
-        end
-    end
-    editorAddBtn:SetScript("OnClick", TryAddEditor)
-    editorAddEdit:SetScript("OnEnterPressed", TryAddEditor)
-
-    -- 2026-08-24 (Loopi): the divider that used to sit here is gone -
-    -- anchored directly off the editor suggestion pool instead, same
-    -- -4-cancels-+4 trick used for editorsTitle above, so "Current
-    -- editors:" lines up at the same x as "Recipient:" and "Editors
-    -- (in addition to the recipient):" exactly as Loopi asked.
-    local currentEditorsTitle = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    currentEditorsTitle:SetPoint("TOPLEFT", editorSuggestButtons[BAVIN_SUGGEST_ROWS], "BOTTOMLEFT", -4, -10)
-    currentEditorsTitle:SetText("Current editors:")
-
-    local BAVIN_CURRENT_EDITOR_ROWS = 10
-    local currentEditorRows = {}
-    local prevEditorAnchor = currentEditorsTitle
-    for i = 1, BAVIN_CURRENT_EDITOR_ROWS do
-        local row = CreateFrame("Frame", nil, content)
-        row:SetSize(300, 18)
-        if i == 1 then
-            row:SetPoint("TOPLEFT", prevEditorAnchor, "BOTTOMLEFT", 4, -6)
-        else
-            row:SetPoint("TOPLEFT", prevEditorAnchor, "BOTTOMLEFT", 0, -2)
-        end
-        local text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        text:SetPoint("LEFT", 0, 0)
-        row.text = text
-        local removeBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-        removeBtn:SetSize(60, 18)
-        removeBtn:SetPoint("LEFT", text, "RIGHT", 10, 0)
-        removeBtn:SetText("Remove")
-        row.removeBtn = removeBtn
-        row:Hide()
-        currentEditorRows[i] = row
-        prevEditorAnchor = row
-    end
-
-    --------------------------------------------------------------------
-    -- Credit & Reputation System (2026-09-25, Chris: "the existing
-    -- DH-Tools config Bavin page should basically remain the same...
-    -- a button in the officer section to open... a new separate
-    -- window"). Deliberately NOT nested inside the recipient/editors
-    -- gate above - Designated Officers (Credits.lua's own officer list)
-    -- aren't necessarily the same people as Bavin's recipient/editors,
-    -- so this button gets its own independent Enable/Disable check in
-    -- Refresh below rather than inheriting canManageRecipient/
-    -- canManageEditors. See CreditsConfig.lua for the window itself.
-    --------------------------------------------------------------------
-    -- 2026-09-25 (Chris): anchored dynamically in RebuildCurrentEditorRows
-    -- below, NOT to currentEditorRows[BAVIN_CURRENT_EDITOR_ROWS] (a fixed
-    -- 10th slot) - that fixed anchor was the bug Chris flagged: with 0-2
-    -- real editors, rows 3-10 sit hidden but still reserve their full
-    -- vertical space (Hide() doesn't collapse a frame's anchor chain), so
-    -- this section always sat 10 rows below the list regardless of how
-    -- many editors actually existed. No initial SetPoint here - the first
-    -- Refresh call (which always runs RebuildCurrentEditorRows) sets it.
-    local creditsTitle = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    creditsTitle:SetText("Credit & Reputation System (in development):")
-
-    local creditsOpenBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-    creditsOpenBtn:SetSize(200, 22)
-    creditsOpenBtn:SetPoint("TOPLEFT", creditsTitle, "BOTTOMLEFT", 4, -8)
-    creditsOpenBtn:SetText("Open Bavin Rep & Credit Config")
-    creditsOpenBtn:SetScript("OnClick", function()
-        if Bavin.CreditsConfig_Toggle then
-            Bavin.CreditsConfig_Toggle()
-        end
-    end)
-
-    local creditsLockedNote = content:CreateFontString(nil, "OVERLAY", "GameFontRedSmall")
-    creditsLockedNote:SetPoint("LEFT", creditsOpenBtn, "RIGHT", 10, 0)
-    creditsLockedNote:SetText("|cffff3333Designated Officer/guild leader/author only.|r")
-    creditsLockedNote:Hide()
-
-    RebuildCurrentEditorRows = function()
-        -- 2026-08-05: removing an editor is editor-management, gated by
-        -- CanManageEditors (rank<=3/Loopidot) - was wrongly using
-        -- CanManageRecipient (Bavin/Loopidot) before the two gates split.
-        local canManage = Bavin.CanManageEditors()
-        local editors = (Bavin.db and Bavin.db.editors) or {}
-        local lastShown -- last VISIBLE row this pass, or nil if the list is empty
-        for i, row in ipairs(currentEditorRows) do
-            local name = editors[i]
-            if not name then
-                row:Hide()
-            else
-                row:Show()
-                row.text:SetText(name)
-                row.removeBtn:SetScript("OnClick", function()
-                    local list = {}
-                    for _, n in ipairs(editors) do
-                        if n ~= name then table.insert(list, n) end
-                    end
-                    if Bavin.SetEditors(list) then
-                        RebuildCurrentEditorRows()
-                    end
-                end)
-                if canManage then
-                    row.removeBtn:Enable()
-                else
-                    row.removeBtn:Disable()
-                end
-                lastShown = row
-            end
-        end
-
-        -- Dynamic re-anchor (2026-09-25, Chris) - everything below the
-        -- editors list moves up to sit right after whatever's actually
-        -- showing, instead of always sitting 10 rows down.
-        creditsTitle:ClearAllPoints()
-        if lastShown then
-            creditsTitle:SetPoint("TOPLEFT", lastShown, "BOTTOMLEFT", -4, -16)
-        else
-            creditsTitle:SetPoint("TOPLEFT", currentEditorsTitle, "BOTTOMLEFT", 0, -16)
-        end
-    end
-
     panel.Refresh = function()
         -- -24 (not -4) to leave room for the scrollbar - same reasoning
         -- as Mob Marker's page (see its Refresh comment above).
@@ -1066,68 +708,6 @@ local function CreateBavinPanel(parent)
 
         Bavin.InitDB()
         mouseoverCheck:SetChecked(Bavin.db and Bavin.db.mouseoverChatTooltips)
-        -- 2026-08-05: recipient and editor management are separately
-        -- scoped now (CanManageRecipient: Bavin/Loopidot by name only;
-        -- CanManageEditors: rank<=3 officers or Loopidot) - each
-        -- section below is enabled/disabled against its own gate instead
-        -- of one shared "canManage" boolean.
-        local canManageRecipient = Bavin.CanManageRecipient()
-        local canManageEditors = Bavin.CanManageEditors()
-        -- Shown whenever EITHER section is locked (not just when both
-        -- are), so a rank<=3 officer who can manage editors but not the
-        -- recipient still sees why the recipient controls are disabled.
-        lockedNote:SetShown(not (canManageRecipient and canManageEditors))
-        if not canManageRecipient and not canManageEditors then
-            lockedNote:SetText("|cffff3333You can't manage the recipient (Bavin only) or editors (officers only) - read-only.|r")
-        elseif not canManageRecipient then
-            lockedNote:SetText("|cffff3333You can't change the recipient (Bavin only).|r")
-        elseif not canManageEditors then
-            lockedNote:SetText("|cffff3333You can't manage editors (officers rank<=3 only).|r")
-        end
-
-        -- Just a count, not the roster itself - see the BuildSuggestPool
-        -- comment above for why (some guilds run ~1000 members).
-        local memberCount = #Bavin.GetRosterNames()
-        if memberCount == 0 then
-            rosterHint:SetText("Guild roster hasn't loaded yet.")
-        else
-            rosterHint:SetText(memberCount .. " guild member(s) loaded - type part of a name below for matches.")
-        end
-
-        recipientEdit:SetText(Bavin.db and Bavin.db.recipient or "")
-        UpdateRecipientSuggestions("")
-        if canManageRecipient then
-            recipientEdit:Enable()
-            recipientSetBtn:Enable()
-        else
-            recipientEdit:Disable()
-            recipientSetBtn:Disable()
-        end
-
-        editorAddEdit:SetText("")
-        UpdateEditorSuggestions("")
-        if canManageEditors then
-            editorAddEdit:Enable()
-            editorAddBtn:Enable()
-        else
-            editorAddEdit:Disable()
-            editorAddBtn:Disable()
-        end
-
-        RebuildCurrentEditorRows()
-
-        -- Independent gate (see the section's own comment above) -
-        -- Designated Officers or guild leader/author, not
-        -- canManageRecipient/canManageEditors.
-        local canOpenCredits = (Bavin.CanManageCreditsConfigLocal and Bavin.CanManageCreditsConfigLocal())
-            or (Bavin.CanManageCreditsOfficers and Bavin.CanManageCreditsOfficers())
-        if canOpenCredits then
-            creditsOpenBtn:Enable()
-            creditsLockedNote:Hide()
-        else
-            creditsOpenBtn:Disable()
-            creditsLockedNote:Show()
-        end
     end
 
     return panel
@@ -1677,9 +1257,9 @@ local function CreateStorePanel(parent)
     scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
 
     local content = CreateFrame("Frame", nil, scrollFrame)
-    content:SetSize(1, 480) -- width set in Refresh; generous fixed estimate,
-                             -- pad rather than trim, same approach every
-                             -- other scrollable page here already uses.
+    content:SetSize(1, 120) -- width set in Refresh; officer setup moved to
+                             -- the Officer Settings page (2026-09-28) -
+                             -- nothing here yet for an ordinary member.
     scrollFrame:SetScrollChild(content)
 
     local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -1691,12 +1271,402 @@ local function CreateStorePanel(parent)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
-    hint:SetText("Guild-only buyout store - officers list items at a gold price, priced in Bavin Credits too at a configurable ratio with a rep-tier discount. Browse and buy with /dhs. Everything below is officer setup; there's nothing here yet for an ordinary member to set.")
+    hint:SetText("Guild-only buyout store - officers list items at a gold price, priced in Bavin Credits too at a configurable ratio with a rep-tier discount. Browse and buy with /dhs. Officer setup (primary/store officers, credit ratio, rep-tier discount) has moved to the Officer Settings page.")
 
-    -- Shared type-to-filter suggestion pool, same idiom as Bavin's own
-    -- Config page above (this guild runs ~1000 members - see that
-    -- page's own comment for why a dropdown/full list doesn't scale).
-    local function BuildSuggestPool(anchor)
+    panel.Refresh = function()
+        -- -24 (not -4) to leave room for the scrollbar, same reasoning as
+        -- every other scrollable page here.
+        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 24))
+    end
+
+    return panel
+end
+
+--------------------------------------------------------------------------
+-- Officer Settings page (2026-09-28, Chris) - one consolidated page for
+-- every module's officer-gated settings, instead of scattering them
+-- across each module's own page. Its OWN nav button (built in the nav
+-- loop below) only shows for accounts that pass DHTools.IsOfficerLocal()
+-- (see Core.lua's new shared rank-gate) - everyone else never even sees
+-- the button, same "hide entirely, don't just disable" idea the rest of
+-- DH-Tools' permission model already uses. The individual widgets below
+-- are otherwise UNCHANGED from their old homes on Bavin's/Store's own
+-- pages and still gate through each MODULE's own existing permission
+-- check (Bavin.CanManageRecipient/CanManageEditors,
+-- Store.CanManageStoreOfficersLocal) - moving them here only changes
+-- WHERE the controls live, not who is allowed to use them once visible.
+--------------------------------------------------------------------------
+
+local function CreateOfficerSettingsPanel(parent)
+    local Bavin = DHTools.Bavin
+    local panel = CreateFrame("Frame", nil, parent)
+    panel:SetAllPoints()
+
+    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsOfficerScroll", panel, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", 0, -8)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
+
+    local content = CreateFrame("Frame", nil, scrollFrame)
+    content:SetSize(1, 1300) -- width set in Refresh; generous fixed estimate
+                              -- for Bavin's + Store's combined officer
+                              -- sections plus the new rank-threshold
+                              -- control up top - pad rather than trim,
+                              -- same approach every other scrollable page
+                              -- here already uses.
+    scrollFrame:SetScrollChild(content)
+
+    local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 16, -16)
+    title:SetText("Officer Settings")
+
+    local hint = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    hint:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
+    hint:SetPoint("RIGHT", -16, 0)
+    hint:SetJustifyH("LEFT")
+    hint:SetWordWrap(true)
+    hint:SetText("Every officer-gated setting across all modules, in one place. This button is only visible to guild ranks 0 through the threshold below, plus the author account (always, regardless of rank).")
+
+    --------------------------------------------------------------------
+    -- Who can see this button at all (2026-09-28, Chris) - DH-Tools-wide,
+    -- not per-module. See Core.lua's DHTools.IsOfficerLocal/IsOfficerName.
+    --------------------------------------------------------------------
+    local rankLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    rankLabel:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", 0, -16)
+    rankLabel:SetText("Show this Officer Settings button to guild rank 0 through:")
+
+    local rankEdit = CreateFrame("EditBox", "DHToolsOfficerRankEdit", content, "InputBoxTemplate")
+    rankEdit:SetSize(40, 20)
+    rankEdit:SetPoint("LEFT", rankLabel, "RIGHT", 10, -2)
+    rankEdit:SetAutoFocus(false)
+    rankEdit:SetNumeric(true)
+    rankEdit:SetMaxLetters(1)
+    rankEdit:SetScript("OnEscapePressed", rankEdit.ClearFocus)
+
+    local rankBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    rankBtn:SetSize(60, 20)
+    rankBtn:SetPoint("LEFT", rankEdit, "RIGHT", 6, 0)
+    rankBtn:SetText("Set")
+
+    local rankStatus = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    rankStatus:SetPoint("LEFT", rankBtn, "RIGHT", 8, 0)
+
+    local rankDesc = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    rankDesc:SetPoint("TOPLEFT", rankLabel, "BOTTOMLEFT", 0, -6)
+    rankDesc:SetPoint("RIGHT", -16, 0)
+    rankDesc:SetJustifyH("LEFT")
+    rankDesc:SetWordWrap(true)
+    rankDesc:SetText("Guild rank number, where 0 = Guild Master and higher numbers are lower ranks (default 3). Takes effect next time this window opens. The author account can always see this button regardless of rank.")
+
+    rankBtn:SetScript("OnClick", function()
+        local rank = tonumber(rankEdit:GetText())
+        if not rank or rank < 0 or rank > 9 then
+            rankStatus:SetText("|cffff3333Enter 0-9|r")
+            return
+        end
+        DHTools.db.officerVisibleMaxRank = rank
+        rankEdit:ClearFocus()
+        rankStatus:SetText("|cff33ff99Set!|r")
+        C_Timer.After(2, function() rankStatus:SetText("") end)
+    end)
+    rankEdit:SetScript("OnEnterPressed", function(self) self:ClearFocus(); rankBtn:Click() end)
+
+    local topDivider = content:CreateTexture(nil, "ARTWORK")
+    topDivider:SetColorTexture(1, 1, 1, 0.15)
+    topDivider:SetHeight(1)
+    topDivider:SetPoint("TOPLEFT", rankDesc, "BOTTOMLEFT", -4, -14)
+    topDivider:SetPoint("RIGHT", -16, 0)
+
+    --------------------------------------------------------------------
+    -- Bavin (moved from Bavin's own Config page, 2026-09-28 - see that
+    -- page for the one user setting it kept)
+    --------------------------------------------------------------------
+    local bavinHeading = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    bavinHeading:SetPoint("TOPLEFT", topDivider, "BOTTOMLEFT", 4, -14)
+    bavinHeading:SetText("Bavin")
+
+    local lockedNote = content:CreateFontString(nil, "OVERLAY", "GameFontRedSmall")
+    lockedNote:SetPoint("TOPLEFT", bavinHeading, "BOTTOMLEFT", 0, -8)
+    lockedNote:SetPoint("RIGHT", -16, 0)
+    lockedNote:SetJustifyH("LEFT")
+    lockedNote:SetWordWrap(true)
+
+    local BAVIN_SUGGEST_ROWS = 2
+
+    local function BuildBavinSuggestPool(anchor)
+        local buttons = {}
+        local prevAnchor = anchor
+        for i = 1, BAVIN_SUGGEST_ROWS do
+            local btn = CreateFrame("Button", nil, content)
+            btn:SetSize(220, 16)
+            if i == 1 then
+                btn:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 4, -6)
+            else
+                btn:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 0, -2)
+            end
+            local text = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            text:SetAllPoints()
+            text:SetJustifyH("LEFT")
+            btn.text = text
+            local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+            hl:SetAllPoints()
+            hl:SetColorTexture(1, 1, 1, 0.15)
+            btn:Hide()
+            buttons[i] = btn
+            prevAnchor = btn
+        end
+        return buttons
+    end
+
+    local function PopulateBavinSuggestions(buttons, typed, onPick)
+        typed = (typed or ""):lower()
+        local shown = 0
+        if typed ~= "" then
+            for _, name in ipairs(Bavin.GetRosterNames()) do
+                if shown >= #buttons then break end
+                if name:lower():find(typed, 1, true) then
+                    shown = shown + 1
+                    local btn = buttons[shown]
+                    btn.text:SetText(name)
+                    btn:Show()
+                    btn:SetScript("OnClick", function() onPick(name) end)
+                end
+            end
+        end
+        for i = shown + 1, #buttons do
+            buttons[i]:Hide()
+        end
+    end
+
+    --------------------------------------------------------------------
+    -- Recipient (guild-leader-only)
+    --------------------------------------------------------------------
+    local recipientLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    recipientLabel:SetPoint("TOPLEFT", lockedNote, "BOTTOMLEFT", 0, -10)
+    recipientLabel:SetText("Recipient:")
+
+    local recipientEdit = CreateFrame("EditBox", "DHToolsBavinRecipientEdit", content, "InputBoxTemplate")
+    recipientEdit:SetSize(140, 20)
+    recipientEdit:SetPoint("LEFT", recipientLabel, "RIGHT", 10, -2)
+    recipientEdit:SetAutoFocus(false)
+    recipientEdit:SetMaxLetters(24)
+    recipientEdit:SetScript("OnEscapePressed", recipientEdit.ClearFocus)
+
+    local recipientSetBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    recipientSetBtn:SetSize(60, 20)
+    recipientSetBtn:SetText("Set")
+    recipientSetBtn:SetPoint("LEFT", recipientEdit, "RIGHT", 6, 0)
+
+    local recipientStatus = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    recipientStatus:SetPoint("LEFT", recipientSetBtn, "RIGHT", 8, 0)
+
+    local rosterHint = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    rosterHint:SetPoint("TOPLEFT", recipientLabel, "BOTTOMLEFT", 0, -6)
+    rosterHint:SetPoint("RIGHT", -16, 0)
+    rosterHint:SetJustifyH("LEFT")
+    rosterHint:SetWordWrap(true)
+
+    local recipientSuggestButtons = BuildBavinSuggestPool(rosterHint)
+
+    local function UpdateRecipientSuggestions(typed)
+        PopulateBavinSuggestions(recipientSuggestButtons, typed, function(name)
+            recipientEdit:SetText(name)
+            recipientEdit:ClearFocus()
+            PopulateBavinSuggestions(recipientSuggestButtons, "", function() end)
+        end)
+    end
+    recipientEdit:SetScript("OnTextChanged", function(self)
+        UpdateRecipientSuggestions(self:GetText())
+    end)
+
+    local function TrySetRecipient()
+        local typed = recipientEdit:GetText()
+        recipientEdit:ClearFocus()
+        UpdateRecipientSuggestions("")
+        if typed == "" then return end
+        if Bavin.SetRecipient(typed) then
+            recipientStatus:SetText("|cff33ff99Set!|r")
+            C_Timer.After(2, function() recipientStatus:SetText("") end)
+        else
+            recipientStatus:SetText("|cffff3333Refused (Bavin only)|r")
+        end
+    end
+    recipientSetBtn:SetScript("OnClick", TrySetRecipient)
+    recipientEdit:SetScript("OnEnterPressed", TrySetRecipient)
+
+    --------------------------------------------------------------------
+    -- Editors (additive, guild-leader-only) - add-by-name with the same
+    -- capped suggestion pool, then a small removable list.
+    --------------------------------------------------------------------
+    local editorsTitle = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    editorsTitle:SetPoint("TOPLEFT", recipientSuggestButtons[BAVIN_SUGGEST_ROWS], "BOTTOMLEFT", -4, -10)
+    editorsTitle:SetText("Editors (in addition to the recipient):")
+
+    local editorAddLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    editorAddLabel:SetPoint("TOPLEFT", editorsTitle, "BOTTOMLEFT", 0, -10)
+    editorAddLabel:SetText("Add editor:")
+
+    local editorAddEdit = CreateFrame("EditBox", "DHToolsBavinEditorAddEdit", content, "InputBoxTemplate")
+    editorAddEdit:SetSize(140, 20)
+    editorAddEdit:SetPoint("LEFT", editorAddLabel, "RIGHT", 10, -2)
+    editorAddEdit:SetAutoFocus(false)
+    editorAddEdit:SetMaxLetters(24)
+    editorAddEdit:SetScript("OnEscapePressed", editorAddEdit.ClearFocus)
+
+    local editorAddBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    editorAddBtn:SetSize(60, 20)
+    editorAddBtn:SetText("Add")
+    editorAddBtn:SetPoint("LEFT", editorAddEdit, "RIGHT", 6, 0)
+
+    local editorAddStatus = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    editorAddStatus:SetPoint("LEFT", editorAddBtn, "RIGHT", 8, 0)
+
+    local editorSuggestButtons = BuildBavinSuggestPool(editorAddLabel)
+
+    local function UpdateEditorSuggestions(typed)
+        PopulateBavinSuggestions(editorSuggestButtons, typed, function(name)
+            editorAddEdit:SetText(name)
+            editorAddEdit:ClearFocus()
+            PopulateBavinSuggestions(editorSuggestButtons, "", function() end)
+        end)
+    end
+    editorAddEdit:SetScript("OnTextChanged", function(self)
+        UpdateEditorSuggestions(self:GetText())
+    end)
+
+    -- Forward-declared: TryAddEditor (defined next) needs to refresh the
+    -- current-editors list below, which isn't built yet at this point.
+    local RebuildCurrentEditorRows
+
+    local function TryAddEditor()
+        local typed = editorAddEdit:GetText()
+        editorAddEdit:ClearFocus()
+        UpdateEditorSuggestions("")
+        if typed == "" then return end
+        local current = {}
+        if Bavin.db then
+            for _, n in ipairs(Bavin.db.editors) do
+                if n == typed then
+                    editorAddStatus:SetText("|cffff3333Already an editor|r")
+                    return
+                end
+                table.insert(current, n)
+            end
+        end
+        table.insert(current, typed)
+        if Bavin.SetEditors(current) then
+            editorAddEdit:SetText("")
+            editorAddStatus:SetText("|cff33ff99Added!|r")
+            C_Timer.After(2, function() editorAddStatus:SetText("") end)
+            if RebuildCurrentEditorRows then RebuildCurrentEditorRows() end
+        else
+            editorAddStatus:SetText("|cffff3333Refused (officers only)|r")
+        end
+    end
+    editorAddBtn:SetScript("OnClick", TryAddEditor)
+    editorAddEdit:SetScript("OnEnterPressed", TryAddEditor)
+
+    local currentEditorsTitle = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    currentEditorsTitle:SetPoint("TOPLEFT", editorSuggestButtons[BAVIN_SUGGEST_ROWS], "BOTTOMLEFT", -4, -10)
+    currentEditorsTitle:SetText("Current editors:")
+
+    local BAVIN_CURRENT_EDITOR_ROWS = 10
+    local currentEditorRows = {}
+    local prevEditorAnchor = currentEditorsTitle
+    for i = 1, BAVIN_CURRENT_EDITOR_ROWS do
+        local row = CreateFrame("Frame", nil, content)
+        row:SetSize(300, 18)
+        if i == 1 then
+            row:SetPoint("TOPLEFT", prevEditorAnchor, "BOTTOMLEFT", 4, -6)
+        else
+            row:SetPoint("TOPLEFT", prevEditorAnchor, "BOTTOMLEFT", 0, -2)
+        end
+        local text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        text:SetPoint("LEFT", 0, 0)
+        row.text = text
+        local removeBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+        removeBtn:SetSize(60, 18)
+        removeBtn:SetPoint("LEFT", text, "RIGHT", 10, 0)
+        removeBtn:SetText("Remove")
+        row.removeBtn = removeBtn
+        row:Hide()
+        currentEditorRows[i] = row
+        prevEditorAnchor = row
+    end
+
+    --------------------------------------------------------------------
+    -- Credit & Reputation System - a button to open Bavin's own separate
+    -- Rep & Credit Config window. Deliberately NOT nested inside the
+    -- recipient/editors gate above - Designated Officers (Credits.lua's
+    -- own officer list) aren't necessarily the same people as Bavin's
+    -- recipient/editors, so this button gets its own independent
+    -- Enable/Disable check in Refresh below.
+    --------------------------------------------------------------------
+    local creditsTitle = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    creditsTitle:SetText("Credit & Reputation System (in development):")
+
+    local creditsOpenBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    creditsOpenBtn:SetSize(200, 22)
+    creditsOpenBtn:SetPoint("TOPLEFT", creditsTitle, "BOTTOMLEFT", 4, -8)
+    creditsOpenBtn:SetText("Open Bavin Rep & Credit Config")
+    creditsOpenBtn:SetScript("OnClick", function()
+        if Bavin.CreditsConfig_Toggle then
+            Bavin.CreditsConfig_Toggle()
+        end
+    end)
+
+    local creditsLockedNote = content:CreateFontString(nil, "OVERLAY", "GameFontRedSmall")
+    creditsLockedNote:SetPoint("LEFT", creditsOpenBtn, "RIGHT", 10, 0)
+    creditsLockedNote:SetText("|cffff3333Designated Officer/guild leader/author only.|r")
+    creditsLockedNote:Hide()
+
+    RebuildCurrentEditorRows = function()
+        local canManage = Bavin.CanManageEditors()
+        local editors = (Bavin.db and Bavin.db.editors) or {}
+        local lastShown -- last VISIBLE row this pass, or nil if the list is empty
+        for i, row in ipairs(currentEditorRows) do
+            local name = editors[i]
+            if not name then
+                row:Hide()
+            else
+                row:Show()
+                row.text:SetText(name)
+                row.removeBtn:SetScript("OnClick", function()
+                    local list = {}
+                    for _, n in ipairs(editors) do
+                        if n ~= name then table.insert(list, n) end
+                    end
+                    if Bavin.SetEditors(list) then
+                        RebuildCurrentEditorRows()
+                    end
+                end)
+                if canManage then
+                    row.removeBtn:Enable()
+                else
+                    row.removeBtn:Disable()
+                end
+                lastShown = row
+            end
+        end
+
+        creditsTitle:ClearAllPoints()
+        if lastShown then
+            creditsTitle:SetPoint("TOPLEFT", lastShown, "BOTTOMLEFT", -4, -16)
+        else
+            creditsTitle:SetPoint("TOPLEFT", currentEditorsTitle, "BOTTOMLEFT", 0, -16)
+        end
+    end
+
+    --------------------------------------------------------------------
+    -- Store (moved from Store's own Config page, 2026-09-28 - see that
+    -- page for its brief description)
+    --------------------------------------------------------------------
+    local storeHeading = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    storeHeading:SetPoint("TOPLEFT", creditsOpenBtn, "BOTTOMLEFT", -4, -20)
+    storeHeading:SetText("Store")
+
+    local STORE_SUGGEST_ROWS = 2
+
+    local function BuildStoreSuggestPool(anchor)
         local buttons = {}
         local prevAnchor = anchor
         for i = 1, STORE_SUGGEST_ROWS do
@@ -1721,11 +1691,11 @@ local function CreateStorePanel(parent)
         return buttons
     end
 
-    local function PopulateSuggestions(buttons, typed, onPick)
+    local function PopulateStoreSuggestions(buttons, typed, onPick)
         typed = (typed or ""):lower()
         local shown = 0
         if typed ~= "" then
-            for _, name in ipairs(DHTools.Bavin.GetRosterNames()) do
+            for _, name in ipairs(Bavin.GetRosterNames()) do
                 if shown >= #buttons then break end
                 if name:lower():find(typed, 1, true) then
                     shown = shown + 1
@@ -1745,7 +1715,7 @@ local function CreateStorePanel(parent)
     -- Primary Officer - the one who receives every purchase-request mail
     --------------------------------------------------------------------
     local primaryLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    primaryLabel:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", 0, -16)
+    primaryLabel:SetPoint("TOPLEFT", storeHeading, "BOTTOMLEFT", 0, -14)
     primaryLabel:SetText("Primary Officer:")
 
     local primaryEdit = CreateFrame("EditBox", "DHToolsStorePrimaryEdit", content, "InputBoxTemplate")
@@ -1770,13 +1740,13 @@ local function CreateStorePanel(parent)
     primaryDesc:SetWordWrap(true)
     primaryDesc:SetText("Receives all store purchase request mails.")
 
-    local primarySuggestButtons = BuildSuggestPool(primaryDesc)
+    local primarySuggestButtons = BuildStoreSuggestPool(primaryDesc)
 
     local function UpdatePrimarySuggestions(typed)
-        PopulateSuggestions(primarySuggestButtons, typed, function(name)
+        PopulateStoreSuggestions(primarySuggestButtons, typed, function(name)
             primaryEdit:SetText(name)
             primaryEdit:ClearFocus()
-            PopulateSuggestions(primarySuggestButtons, "", function() end)
+            PopulateStoreSuggestions(primarySuggestButtons, "", function() end)
         end)
     end
     primaryEdit:SetScript("OnTextChanged", function(self)
@@ -1802,8 +1772,7 @@ local function CreateStorePanel(parent)
     --------------------------------------------------------------------
     -- Store Officers - add-by-name with the same capped suggestion pool
     -- and a removable current-officer list, mirroring Bavin's Editors
-    -- section exactly (see its own comments above for why this scales
-    -- to a ~1000-member guild and a small additive list doesn't need to).
+    -- section above.
     --------------------------------------------------------------------
     local officersTitle = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     officersTitle:SetPoint("TOPLEFT", primarySuggestButtons[STORE_SUGGEST_ROWS], "BOTTOMLEFT", -4, -14)
@@ -1835,13 +1804,13 @@ local function CreateStorePanel(parent)
     local officerAddStatus = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     officerAddStatus:SetPoint("LEFT", officerAddBtn, "RIGHT", 8, 0)
 
-    local officerSuggestButtons = BuildSuggestPool(officerAddLabel)
+    local officerSuggestButtons = BuildStoreSuggestPool(officerAddLabel)
 
     local function UpdateOfficerSuggestions(typed)
-        PopulateSuggestions(officerSuggestButtons, typed, function(name)
+        PopulateStoreSuggestions(officerSuggestButtons, typed, function(name)
             officerAddEdit:SetText(name)
             officerAddEdit:ClearFocus()
-            PopulateSuggestions(officerSuggestButtons, "", function() end)
+            PopulateStoreSuggestions(officerSuggestButtons, "", function() end)
         end)
     end
     officerAddEdit:SetScript("OnTextChanged", function(self)
@@ -1912,9 +1881,7 @@ local function CreateStorePanel(parent)
 
     --------------------------------------------------------------------
     -- Credit ratio + rep-tier discount - dynamically re-anchored below
-    -- whatever the officer list actually shows (see RebuildCurrentOfficerRows),
-    -- same "don't reserve dead space for hidden rows" fix Bavin's own
-    -- Credit & Reputation section uses (that file's 2026-09-25 comment).
+    -- whatever the officer list actually shows (see RebuildCurrentOfficerRows).
     --------------------------------------------------------------------
     local ratioLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     ratioLabel:SetText("Credits per Gold:")
@@ -1943,9 +1910,6 @@ local function CreateStorePanel(parent)
         panel.Refresh()
     end)
 
-    -- 2026-09-28 (Chris): moved here, directly below the ratio box it
-    -- explains - was below both discount checkboxes, reading as if it
-    -- explained them instead of the ratio above.
     local ratioDesc = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     ratioDesc:SetPoint("TOPLEFT", ratioLabel, "BOTTOMLEFT", 0, -6)
     ratioDesc:SetPoint("RIGHT", -16, 0)
@@ -1953,8 +1917,6 @@ local function CreateStorePanel(parent)
     ratioDesc:SetWordWrap(true)
     ratioDesc:SetText("Credits price = gold price x this ratio, then the buyer's own tier discount.")
 
-    -- 2026-09-28 (Chris): one combined row instead of two separate
-    -- checkboxes.
     local discountLabel1 = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     discountLabel1:SetPoint("TOPLEFT", ratioDesc, "BOTTOMLEFT", 0, -12)
     discountLabel1:SetText("Apply Rep Tier Cost Reduction to")
@@ -1987,11 +1949,11 @@ local function CreateStorePanel(parent)
         DHTools.Store.db.discountAppliesToCredits = self:GetChecked() and true or false
     end)
 
-    local status = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    status:SetPoint("TOPLEFT", discountLabel1, "BOTTOMLEFT", 0, -16)
-    status:SetPoint("RIGHT", -16, 0)
-    status:SetJustifyH("LEFT")
-    status:SetWordWrap(true)
+    local storeStatus = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    storeStatus:SetPoint("TOPLEFT", discountLabel1, "BOTTOMLEFT", 0, -16)
+    storeStatus:SetPoint("RIGHT", -16, 0)
+    storeStatus:SetJustifyH("LEFT")
+    storeStatus:SetWordWrap(true)
 
     RebuildCurrentOfficerRows = function()
         local canManage = DHTools.Store.CanManageStoreOfficersLocal()
@@ -2034,45 +1996,100 @@ local function CreateStorePanel(parent)
         -- every other scrollable page here.
         content:SetWidth(math.max(1, scrollFrame:GetWidth() - 24))
 
+        rankEdit:SetText(tostring((DHTools.db and DHTools.db.officerVisibleMaxRank) or 3))
+
+        --------------------------------------------------------------
+        -- Bavin section
+        --------------------------------------------------------------
+        Bavin.InitDB()
+        local canManageRecipient = Bavin.CanManageRecipient()
+        local canManageEditors = Bavin.CanManageEditors()
+        lockedNote:SetShown(not (canManageRecipient and canManageEditors))
+        if not canManageRecipient and not canManageEditors then
+            lockedNote:SetText("|cffff3333You can't manage the recipient (Bavin only) or editors (officers only) - read-only.|r")
+        elseif not canManageRecipient then
+            lockedNote:SetText("|cffff3333You can't change the recipient (Bavin only).|r")
+        elseif not canManageEditors then
+            lockedNote:SetText("|cffff3333You can't manage editors (officers only).|r")
+        end
+
+        local memberCount = #Bavin.GetRosterNames()
+        if memberCount == 0 then
+            rosterHint:SetText("Guild roster hasn't loaded yet.")
+        else
+            rosterHint:SetText(memberCount .. " guild member(s) loaded - type part of a name below for matches.")
+        end
+
+        recipientEdit:SetText(Bavin.db and Bavin.db.recipient or "")
+        UpdateRecipientSuggestions("")
+        if canManageRecipient then
+            recipientEdit:Enable()
+            recipientSetBtn:Enable()
+        else
+            recipientEdit:Disable()
+            recipientSetBtn:Disable()
+        end
+
+        editorAddEdit:SetText("")
+        UpdateEditorSuggestions("")
+        if canManageEditors then
+            editorAddEdit:Enable()
+            editorAddBtn:Enable()
+        else
+            editorAddEdit:Disable()
+            editorAddBtn:Disable()
+        end
+
+        RebuildCurrentEditorRows()
+
+        local canOpenCredits = (Bavin.CanManageCreditsConfigLocal and Bavin.CanManageCreditsConfigLocal())
+            or (Bavin.CanManageCreditsOfficers and Bavin.CanManageCreditsOfficers())
+        if canOpenCredits then
+            creditsOpenBtn:Enable()
+            creditsLockedNote:Hide()
+        else
+            creditsOpenBtn:Disable()
+            creditsLockedNote:Show()
+        end
+
+        --------------------------------------------------------------
+        -- Store section
+        --------------------------------------------------------------
         local db = DHTools.Store.db
         if not db then
-            status:SetText("Store module isn't enabled yet - turn it on from the Tools page.")
+            storeStatus:SetText("Store module isn't enabled yet - turn it on from the Tools page.")
             return
         end
 
-        -- EditBox has no reliable cross-client SetEnabled/Enable -
-        -- EnableMouse(false) + dimming is the safe way to make one
-        -- read-only without depending on an API that may not exist on
-        -- this client build. Button DOES support Enable/Disable reliably.
-        local canManage = DHTools.Store.CanManageStoreOfficersLocal()
+        local canManageStore = DHTools.Store.CanManageStoreOfficersLocal()
 
         primaryEdit:SetText(db.primaryOfficer or "")
         UpdatePrimarySuggestions("")
-        primaryEdit:EnableMouse(canManage)
-        if not canManage then primaryEdit:ClearFocus() end
-        primaryEdit:SetTextColor(canManage and 1 or 0.5, canManage and 1 or 0.5, canManage and 1 or 0.5)
-        if canManage then primaryBtn:Enable() else primaryBtn:Disable() end
+        primaryEdit:EnableMouse(canManageStore)
+        if not canManageStore then primaryEdit:ClearFocus() end
+        primaryEdit:SetTextColor(canManageStore and 1 or 0.5, canManageStore and 1 or 0.5, canManageStore and 1 or 0.5)
+        if canManageStore then primaryBtn:Enable() else primaryBtn:Disable() end
 
         officerAddEdit:SetText("")
         UpdateOfficerSuggestions("")
-        officerAddEdit:EnableMouse(canManage)
-        if not canManage then officerAddEdit:ClearFocus() end
-        officerAddEdit:SetTextColor(canManage and 1 or 0.5, canManage and 1 or 0.5, canManage and 1 or 0.5)
-        if canManage then officerAddBtn:Enable() else officerAddBtn:Disable() end
+        officerAddEdit:EnableMouse(canManageStore)
+        if not canManageStore then officerAddEdit:ClearFocus() end
+        officerAddEdit:SetTextColor(canManageStore and 1 or 0.5, canManageStore and 1 or 0.5, canManageStore and 1 or 0.5)
+        if canManageStore then officerAddBtn:Enable() else officerAddBtn:Disable() end
 
         RebuildCurrentOfficerRows()
 
         ratioEdit:SetText(db.creditGoldRatio and tostring(db.creditGoldRatio) or "")
-        ratioEdit:EnableMouse(canManage)
-        if not canManage then ratioEdit:ClearFocus() end
-        ratioEdit:SetTextColor(canManage and 1 or 0.5, canManage and 1 or 0.5, canManage and 1 or 0.5)
-        if canManage then ratioBtn:Enable() else ratioBtn:Disable() end
+        ratioEdit:EnableMouse(canManageStore)
+        if not canManageStore then ratioEdit:ClearFocus() end
+        ratioEdit:SetTextColor(canManageStore and 1 or 0.5, canManageStore and 1 or 0.5, canManageStore and 1 or 0.5)
+        if canManageStore then ratioBtn:Enable() else ratioBtn:Disable() end
 
         goldCheck:SetChecked(db.discountAppliesToGold)
         creditCheck:SetChecked(db.discountAppliesToCredits)
 
-        status:SetText((db.creditGoldRatio and "" or "Credits per Gold isn't set yet - the store's Credits column shows \"-\" until it is. ")
-            .. (canManage and "" or "You can't manage Store officer settings (guild leader, donation recipient, or author account only) - read-only."))
+        storeStatus:SetText((db.creditGoldRatio and "" or "Credits per Gold isn't set yet - the store's Credits column shows \"-\" until it is. ")
+            .. (canManageStore and "" or "You can't manage Store officer settings (guild leader, donation recipient, or author account only) - read-only."))
     end
 
     return panel
@@ -2315,6 +2332,10 @@ function DHTools:Config_Open(pageKey)
         SafeCreatePage("Danger", CreateDangerPanel)
         SafeCreatePage("Macros", CreateMacrosPanel)
         SafeCreatePage("Store", CreateStorePanel)
+        local isOfficer = DHTools.IsOfficerLocal and DHTools.IsOfficerLocal()
+        if isOfficer then
+            SafeCreatePage("OfficerSettings", CreateOfficerSettingsPanel)
+        end
         SafeCreatePage("About", CreateAboutPanel)
 
         -- Danger/Macros/Store sit before About deliberately: About is
@@ -2323,9 +2344,17 @@ function DHTools:Config_Open(pageKey)
         -- after Bavin specifically (2026-09-28, Chris) - the two are
         -- associated (Store hard-depends on Bavin for its Credits
         -- pricing/permission model), so they read better adjacent
-        -- rather than with Danger/Macros between them.
-        local pageNames = { "Tools", "MobMarker", "Quests", "Bavin", "Store", "Danger", "Macros", "About" }
-        local pageLabels = { Tools = "Tools", MobMarker = "Mob Marker", Quests = "Quests", Bavin = "Bavin", Danger = "Danger", Macros = "Macros", Store = "Store", About = "About" }
+        -- rather than with Danger/Macros between them. Officer Settings
+        -- sits just above About (2026-09-28, Chris item 7) and its nav
+        -- button only exists at all for accounts DHTools.IsOfficerLocal()
+        -- approves - hidden entirely, not merely disabled, for everyone
+        -- else, matching the rest of DH-Tools' permission model.
+        local pageNames = { "Tools", "MobMarker", "Quests", "Bavin", "Store", "Danger", "Macros" }
+        if isOfficer then
+            table.insert(pageNames, "OfficerSettings")
+        end
+        table.insert(pageNames, "About")
+        local pageLabels = { Tools = "Tools", MobMarker = "Mob Marker", Quests = "Quests", Bavin = "Bavin", Danger = "Danger", Macros = "Macros", Store = "Store", OfficerSettings = "Officer Settings", About = "About" }
         local prevBtn
         for _, name in ipairs(pageNames) do
             local btn = CreateFrame("Button", nil, nav, "UIPanelButtonTemplate")
