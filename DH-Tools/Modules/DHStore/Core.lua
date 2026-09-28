@@ -41,12 +41,13 @@ function ns.InitDB()
     end
     ns.db.officersUpdatedAt = ns.db.officersUpdatedAt or 0
     ns.db.catalogUpdatedAt = ns.db.catalogUpdatedAt or 0
-    -- creditGoldRatio starts UNSET on purpose - question #5's starting
-    -- value ("same ratio as Reputation Points/Gold, ~10 pts/gold per
-    -- Chris's recollection") still needs verifying against the real
-    -- data before it's safe to assume as a default. Until an officer
-    -- sets this via the config page, the credits column shows "—"
-    -- rather than a number nobody has confirmed.
+    -- creditGoldRatio: CONFIRMED 2026-09-28 (Chris) - 10 credits per
+    -- gold, no longer just a recollection needing verification (see
+    -- question #5's original note). `== nil` (not `or 10`) so an
+    -- officer's own explicit change - including one that happens to
+    -- also be 10 - is never silently re-stamped as "still the default"
+    -- on a later login.
+    if ns.db.creditGoldRatio == nil then ns.db.creditGoldRatio = 10 end
     if ns.db.discountAppliesToGold == nil then ns.db.discountAppliesToGold = true end
     if ns.db.discountAppliesToCredits == nil then ns.db.discountAppliesToCredits = true end
     -- Repoint the runtime table at the persistent one, same pattern as
@@ -257,27 +258,39 @@ end
 local frame
 local searchText = ""
 local qualityFilter = nil -- nil = All
+-- question #8's expanded resolution (2026-09-28, Chris): mimic the real
+-- in-game Auction House's left-frame class/subclass browser - NOT
+-- DH-Bavin's own donation-ranking categories, a completely different
+-- taxonomy. nil className = All Categories.
+local categoryClassName = nil
+local categorySubclassName = nil
+local expandedClassIndex = nil -- which class row is showing its subclasses (accordion - one at a time, v1)
 
 local QUALITY_NAMES = { [0] = "Poor", [1] = "Common", [2] = "Uncommon", [3] = "Rare", [4] = "Epic", [5] = "Legendary" }
 
--- Sorted array snapshot of ns.catalog, filtered by searchText/qualityFilter.
--- Quality comes from GetItemInfo (client item cache) since it isn't on
--- the wire (question #2 keeps the wire payload to itemId/itemLink/
--- quantity/gold only) - falls back to showing the row unfiltered if the
--- cache hasn't resolved it yet, same "best-effort" posture DH-Bavin's
--- ShowItems took on itemLink (see that file's own 2026-08-05 comment).
+-- Sorted array snapshot of ns.catalog, filtered by searchText/
+-- qualityFilter/categoryClassName/categorySubclassName. Quality/class/
+-- subclass all come from GetItemInfo (client item cache) since none of
+-- them are on the wire (question #2 keeps the wire payload to itemId/
+-- itemLink/quantity/gold only) - falls back to showing the row
+-- unfiltered if the cache hasn't resolved it yet, same "best-effort"
+-- posture DH-Bavin's ShowItems took on itemLink (see that file's own
+-- 2026-08-05 comment). itemType/itemSubType strings are compared
+-- directly against GetAuctionItemClasses/GetAuctionItemSubClasses'
+-- own strings (BuildCategoryPanel) rather than numeric classID/
+-- subclassID - both come from the same client-side item class table,
+-- so this needs no index-mapping guesswork.
 local function GetFilteredSortedListings()
     local list = {}
     local needle = searchText:lower()
     for _, l in pairs(ns.catalog) do
-        local name = (l.itemLink and GetItemInfo(l.itemLink)) or l.itemLink or ("item " .. tostring(l.itemId or "?"))
+        local name, _, itemQuality, _, _, itemType, itemSubType = l.itemLink and GetItemInfo(l.itemLink)
+        name = name or l.itemLink or ("item " .. tostring(l.itemId or "?"))
         local matchesSearch = needle == "" or name:lower():find(needle, 1, true) ~= nil
-        local matchesQuality = true
-        if qualityFilter ~= nil then
-            local _, _, itemQuality = GetItemInfo(l.itemLink or "")
-            matchesQuality = (itemQuality == qualityFilter)
-        end
-        if matchesSearch and matchesQuality then
+        local matchesQuality = qualityFilter == nil or itemQuality == qualityFilter
+        local matchesClass = categoryClassName == nil or itemType == categoryClassName
+        local matchesSubclass = categorySubclassName == nil or itemSubType == categorySubclassName
+        if matchesSearch and matchesQuality and matchesClass and matchesSubclass then
             table.insert(list, l)
         end
     end
@@ -436,17 +449,150 @@ local function UpdateDiscountBadge(badge)
     badge:SetScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
+--------------------------------------------------------------------------
+-- Category panel (question #3, expanded 2026-09-28, Chris): a left-side
+-- class/subclass browser mimicking the real in-game Auction House's
+-- left AH frame - NOT DH-Bavin's own donation/points categories, a
+-- completely different taxonomy (see GetFilteredSortedListings' own
+-- comment above). Sourced live from GetAuctionItemClasses()/
+-- GetAuctionItemSubClasses(classIndex) - the same Blizzard API the
+-- real AH's browse tree uses - rather than a hardcoded list, so it
+-- always matches whatever this client's item class table contains.
+-- Accordion style: only one class's subclasses are visible at a time
+-- (v1 - a ~400px column doesn't have room for everything expanded at
+-- once). Wrapped in UIPanelScrollFrameTemplate since a fully expanded
+-- class's subclass list plus every other collapsed class row can
+-- exceed that space (same "why a scrollframe" reasoning as
+-- PriorityEditor.lua's own list).
+--------------------------------------------------------------------------
+
+local CATEGORY_ROW_HEIGHT = 18
+local CATEGORY_PANEL_WIDTH = 150
+
+local categoryButtons = {} -- flat list of {btn, kind="all"|"class"|"subclass", className, subclassName, classIndex}
+local categoryPanelContent
+
+local function RelayoutCategoryPanel()
+    local y = -2
+    for _, entry in ipairs(categoryButtons) do
+        local btn = entry.btn
+        if entry.kind == "subclass" and entry.classIndex ~= expandedClassIndex then
+            btn:Hide()
+        else
+            btn:Show()
+            btn:ClearAllPoints()
+            btn:SetPoint("TOPLEFT", categoryPanelContent, "TOPLEFT", 0, y)
+            btn:SetPoint("TOPRIGHT", categoryPanelContent, "TOPRIGHT", 0, y)
+            y = y - CATEGORY_ROW_HEIGHT
+        end
+
+        local selected
+        if entry.kind == "all" then
+            selected = categoryClassName == nil
+        elseif entry.kind == "class" then
+            selected = categoryClassName == entry.className and categorySubclassName == nil
+        else
+            selected = categoryClassName == entry.className and categorySubclassName == entry.subclassName
+        end
+        btn.text:SetTextColor(selected and 1 or 0.9, selected and 0.82 or 0.9, selected and 0 or 0.9)
+    end
+    categoryPanelContent:SetHeight(math.max(1, -y))
+end
+
+local function SelectCategory(className, subclassName)
+    categoryClassName = className
+    categorySubclassName = subclassName
+    RelayoutCategoryPanel()
+    ns.Store_Refresh()
+end
+
+local function CreateCategoryButton(parent, indent)
+    local btn = CreateFrame("Button", nil, parent)
+    btn:SetHeight(CATEGORY_ROW_HEIGHT)
+    local highlight = btn:CreateTexture(nil, "HIGHLIGHT")
+    highlight:SetAllPoints()
+    highlight:SetColorTexture(1, 1, 1, 0.1)
+    btn:SetHighlightTexture(highlight)
+    local fs = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    fs:SetPoint("LEFT", indent, 0)
+    fs:SetPoint("RIGHT", -2, 0)
+    fs:SetJustifyH("LEFT")
+    fs:SetWordWrap(false)
+    btn.text = fs
+    return btn
+end
+
+local function BuildCategoryPanel(parent)
+    local panel = CreateFrame("Frame", "DHStoreCategoryPanel", parent)
+    panel:SetWidth(CATEGORY_PANEL_WIDTH)
+
+    local scrollFrame = CreateFrame("ScrollFrame", "DHStoreCategoryScroll", panel, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", 0, 0)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -22, 0)
+
+    local content = CreateFrame("Frame", nil, scrollFrame)
+    content:SetSize(CATEGORY_PANEL_WIDTH - 22, 1)
+    scrollFrame:SetScrollChild(content)
+    categoryPanelContent = content
+
+    categoryButtons = {}
+
+    local allBtn = CreateCategoryButton(content, 4)
+    allBtn.text:SetText("All Categories")
+    allBtn:SetScript("OnClick", function()
+        expandedClassIndex = nil
+        SelectCategory(nil, nil)
+    end)
+    tinsert(categoryButtons, { btn = allBtn, kind = "all" })
+
+    local classes = { GetAuctionItemClasses() }
+    for classIndex, className in ipairs(classes) do
+        local classBtn = CreateCategoryButton(content, 4)
+        classBtn.text:SetText(className)
+        classBtn:SetScript("OnClick", function()
+            if expandedClassIndex == classIndex then
+                expandedClassIndex = nil
+                SelectCategory(nil, nil)
+            else
+                expandedClassIndex = classIndex
+                SelectCategory(className, nil)
+            end
+        end)
+        tinsert(categoryButtons, { btn = classBtn, kind = "class", className = className, classIndex = classIndex })
+
+        local subclasses = { GetAuctionItemSubClasses(classIndex) }
+        for _, subclassName in ipairs(subclasses) do
+            local subBtn = CreateCategoryButton(content, 16)
+            subBtn.text:SetText(subclassName)
+            subBtn:SetScript("OnClick", function()
+                SelectCategory(className, subclassName)
+            end)
+            tinsert(categoryButtons, { btn = subBtn, kind = "subclass", className = className, subclassName = subclassName, classIndex = classIndex })
+        end
+    end
+
+    return panel
+end
+
 local function CreateStoreFrame()
     frame = CreateFrame("Frame", "DHStoreFrame", UIParent, "BasicFrameTemplateWithInset")
-    frame:SetSize(560, 460)
+    frame:SetSize(740, 460)
     frame:SetPoint("CENTER")
     if frame.TitleText then frame.TitleText:SetText("DH-Store") end
     tinsert(UISpecialFrames, "DHStoreFrame")
     DHTools.InitStandaloneWindow(frame)
 
+    -- Left column: AH-style category browser (question #3).
+    frame.categoryPanel = BuildCategoryPanel(frame)
+    frame.categoryPanel:SetPoint("TOPLEFT", 12, -32)
+    frame.categoryPanel:SetPoint("BOTTOMLEFT", 12, 14)
+    RelayoutCategoryPanel()
+
+    local RIGHT_X = 190 -- everything below sits right of the category panel
+
     frame.searchEdit = CreateFrame("EditBox", "DHStoreSearchEdit", frame, "InputBoxTemplate")
     frame.searchEdit:SetSize(160, 20)
-    frame.searchEdit:SetPoint("TOPLEFT", 16, -32)
+    frame.searchEdit:SetPoint("TOPLEFT", RIGHT_X, -32)
     frame.searchEdit:SetAutoFocus(false)
     frame.searchEdit:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
     frame.searchEdit:SetScript("OnTextChanged", function(self)
@@ -547,7 +693,7 @@ end)
 local function ShowHelp()
     ns.Print("Commands:")
     ns.Print("  /dhs                       - open the Store browse window")
-    ns.Print("  /dhs list <shift-click item> <qty> <gold> - officer: add/edit a listing (gold as a decimal, e.g. 5.5)")
+    ns.Print("  /dhs list <shift-click item> <qty> [gold] - officer: add/edit a listing (gold auto-sourced from ItemPoints.lua; give a decimal like 5.5 to override)")
     ns.Print("  /dhs sold <listingId>      - officer: mark a listing sold")
     ns.Print("  /dhs unpend <listingId>    - officer: revert a pending listing to available")
     ns.Print("  /dhs officers <name1,name2,...> - tier 1-3: set the Store Officer roster")
@@ -555,6 +701,13 @@ local function ShowHelp()
     ns.Print("  /dhs on|off                - enable/disable this module")
 end
 
+-- 2026-09-28 (Chris): "no point in building a manual entry system we
+-- won't use" - ItemPoints.lua now carries a real per-unit goldValue
+-- (question #5's import-pipeline fix, same day), so this pulls the
+-- whole-lot price from there automatically. The trailing gold argument
+-- is now OPTIONAL, kept only as the manual override question #5's own
+-- design text still allows ("or a manual per-listing override") - for
+-- an item ItemPoints.lua has no gold price for, or a one-off exception.
 local function HandleListCommand(rest)
     if not ns.CanManageListingsLocal() then
         ns.Print("Refused - you must be a Store Officer or higher.")
@@ -562,19 +715,37 @@ local function HandleListCommand(rest)
     end
     local link, tail = rest:match("^(.-|h|r)%s+(.*)$")
     if not link then
-        ns.Print("Usage: /dhs list <shift-click an item link> <quantity> <gold price, e.g. 5.5>")
+        ns.Print("Usage: /dhs list <shift-click an item link> <quantity> [gold price override, e.g. 5.5]")
         return
     end
-    local qtyStr, goldStr = tail:match("^(%S+)%s+(%S+)$")
-    local quantity, goldAmount = tonumber(qtyStr), tonumber(goldStr)
-    if not quantity or not goldAmount then
-        ns.Print("Usage: /dhs list <shift-click an item link> <quantity> <gold price, e.g. 5.5>")
+    local qtyStr, goldStr = tail:match("^(%S+)%s*(%S*)$")
+    local quantity = tonumber(qtyStr)
+    if not quantity then
+        ns.Print("Usage: /dhs list <shift-click an item link> <quantity> [gold price override, e.g. 5.5]")
         return
     end
+
+    local itemName = GetItemInfo(link)
+    local goldAmount = tonumber(goldStr) -- manual override, if given
+    local sourcedFromItemPoints = false
+    if not goldAmount then
+        local unitGold = itemName and DHTools.Bavin.GetItemGoldValue(itemName)
+        if unitGold then
+            goldAmount = unitGold * quantity
+            sourcedFromItemPoints = true
+        end
+    end
+    if not goldAmount then
+        ns.Print("No ItemPoints.lua gold price found for '" .. (itemName or link)
+            .. "' - give one explicitly: /dhs list <link> <quantity> <gold price>")
+        return
+    end
+
     local itemId = tonumber(link:match("item:(%d+)"))
     local goldCopper = math.floor(goldAmount * 10000 + 0.5)
     local listingId = ns.AddOrEditListing(nil, itemId, link, quantity, goldCopper)
-    ns.Print("Listed: " .. link .. " x" .. quantity .. " for " .. ns.FormatMoney(goldCopper) .. " (ID " .. listingId .. ")")
+    ns.Print("Listed: " .. link .. " x" .. quantity .. " for " .. ns.FormatMoney(goldCopper)
+        .. (sourcedFromItemPoints and " (from ItemPoints.lua)" or " (manual price)") .. " (ID " .. listingId .. ")")
     ns.Store_Refresh()
 end
 

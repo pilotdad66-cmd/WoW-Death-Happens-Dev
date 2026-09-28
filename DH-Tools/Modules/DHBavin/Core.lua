@@ -400,6 +400,19 @@ function ns.GetBaselineItemPoints(name)
     return ns.ITEM_POINTS and ns.ITEM_POINTS[name]
 end
 
+-- Baseline per-unit gold value from ItemPoints.lua's own raw data
+-- (2026-09-28, DH-Store question #5's resolution - see that file's
+-- goldValue field comment). Decimal gold (e.g. 50.34 = 50g 34s), NOT
+-- copper. nil where the sheet had no gold price for this item. No
+-- override mechanism here (unlike GetItemPoints) - DH-Store's own
+-- per-listing manual override, when an officer supplies one, lives
+-- entirely in DHStoreDB, not here.
+function ns.GetItemGoldValue(name)
+    if not name then return nil end
+    local base = ns.ITEM_POINTS and ns.ITEM_POINTS[name]
+    return base and base.goldValue or nil
+end
+
 -- Highest editedAt across every known local override (including revert
 -- tombstones) - this client's "version" for the PTSSYNCREQ catch-up
 -- handshake. 0 if it has none yet.
