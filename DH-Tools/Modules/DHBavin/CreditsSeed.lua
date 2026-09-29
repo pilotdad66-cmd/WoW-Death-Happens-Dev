@@ -189,5 +189,9 @@ function ns.Credits_SetAsNewMain(altName, rawGoldAmount, latestDonation)
     }
     ns.creditsDb.toonIndex[bareName:lower()] = bareName
     if ns.Credits_RemoveFromReviewQueue then ns.Credits_RemoveFromReviewQueue(bareName) end
+    -- CM3: a brand-new account plus the name leaving the Review Queue.
+    if ns.CreditsSync_Changed then
+        ns.CreditsSync_Changed({ bareName }, { { name = bareName, present = false } })
+    end
     return true
 end

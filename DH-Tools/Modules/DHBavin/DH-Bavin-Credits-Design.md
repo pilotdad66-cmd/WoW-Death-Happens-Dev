@@ -960,8 +960,54 @@ New message types over DH-Bavin's existing prefix/chunking convention:
 
 Whether this needs a prefix version bump (the existing convention,
 e.g. k-0012's `DHBavinV1` -> `V2` when SYNCDATA's payload shape
-changed) depends on the exact wire format worked out in CM3 - noted
-here so it isn't forgotten, not decided yet.
+changed): RESOLVED for CM3 (2026-09-29) - no bump. CM3 rides the
+existing credits prefix (`DHBavinCreditsV2`) with two additive message
+types; a client without CreditsSync.lua falls through
+`Credits_OnAddonMessage`'s if/elseif chain and ignores them.
+
+### CM3 as built - officer ledger sync (CreditsSync.lua, 2026-09-29)
+Wire (prefix `DHBavinCreditsV2`, always WHISPER, online officers only):
+- `LSYNCREQ|<fp>|<since>` - "send me everything stamped after <since>".
+  Answered with LSYNCDATA and reciprocated ONCE per peer per appearance
+  (so edits made while the requester was away flow back too, without a
+  request loop).
+- `LSYNCDATA|<id>|<i>/<n>|<chunk>` - chunked payload (<=200 chars per
+  chunk, cut at `;` where possible, reassembled by plain concatenation,
+  same idea as Sync.lua's ChunkEncoded; refuses n > 400). Payload is
+  `;`-joined items: `F:<fp>` first, then any of
+  - `R:<record>` = `discordName|mainToon|altsCSV|points|credits|tier|
+    prestige|lifetimePoints|lastDonationDate|lastUpdated|syncedAt|
+    lifetimeCredits` (lifetimeCredits last/optional: absent or below
+    `credits` decodes as `credits`).
+  - `Q:<name>|<1 add / 0 remove>|<stamp>` - a Review Queue add/remove.
+  Strings are %-escaped for `% | ; , ~`, so no field can break a
+  delimiter.
+Rules:
+- The historical seed is never replicated. `<fp>` is a hash of
+  SeedData + AltRoster; a mismatch stops the exchange (one warning per
+  peer per session) because deltas applied onto different bases could
+  corrupt alt lists. Seed records carry no `syncedAt`, so only
+  post-seed changes are ever sent.
+- Per-record last-writer-wins on `syncedAt` (a strictly increasing
+  per-client stamp, distinct from the display field `lastUpdated`);
+  equal stamps tie-break on the encoded string so every client
+  converges. Review Queue rides as per-name add/remove stamps
+  (`rqStamps`).
+- Receiver verifies the SENDER against its own officer list + guild
+  roster (`IsGuildMember` and the same check CFGSET uses: guild leader
+  or shared-list officer) and applies only if the receiver is itself
+  an officer. Nothing claimed inside a message is trusted.
+- An edit made while no officer is online is marked `dirty`, is not
+  served to requests, and is RE-STAMPED at share time (not edit time)
+  when the next officer contact happens - so a long-offline edit cannot
+  overwrite a newer change made by someone else meanwhile.
+- Login (~8s later, after the roster populates) and any officer coming
+  online later trigger the "send what I missed" request; `lastSyncAt`
+  (minus a 120s slack) is the `<since>`.
+- Not synced here: config (CFGSET already does it),
+  `Credits_ResetTestData` and `CreditsSeed_Import` (deliberately
+  local), and credit/point transactions (CM4-CM6 - per-record replace
+  is right for identity edits but donations will need real deltas).
 
 ## Mail processing flows
 

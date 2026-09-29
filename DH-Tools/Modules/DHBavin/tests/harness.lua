@@ -167,7 +167,7 @@ _G.DHTools = {
 --------------------------------------------------------------------------
 
 local ADDON_ROOT = "C:\\AIProjects-NOSYNC\\WoW\\src\\DH-Tools\\Modules\\DHBavin\\"
-local FILES = { "Core.lua", "Sync.lua", "ItemPoints.lua", "Credits.lua", "CreditsSeed.lua" }
+local FILES = { "Core.lua", "Sync.lua", "ItemPoints.lua", "Credits.lua", "CreditsSeed.lua", "CreditsSync.lua" }
 
 for _, filename in ipairs(FILES) do
     local chunk, err = loadfile(ADDON_ROOT .. filename)
@@ -248,7 +248,11 @@ local function resetState()
         ns.creditsDb.creditTestReceivers = {}
         ns.creditsDb.creditTestSenders = {}
         ns.creditsDb.configUpdatedAt = 0
+        -- CM3 sync bookkeeping (CreditsSync.lua)
+        ns.creditsDb.rqStamps = {}
+        ns.creditsDb.lastSyncAt = nil
     end
+    if ns.CreditsSync_ResetSession then ns.CreditsSync_ResetSession() end
     ns.CreditsSeedData = nil
     ns.CreditsAltRoster = nil
     ns.CreditsReviewQueue = nil
@@ -1307,6 +1311,328 @@ check("Reset with permission wipes ledger, toonIndex, dynamic Review Queue, tran
     and next(ns.creditsDb.dynamicReviewQueue) == nil
     and next(ns.creditsDb.transactionLog) == nil)
 check("A name resolves back to self-fallback after reset", ns.Credits_ResolveMain("MainA") == "MainA")
+
+--------------------------------------------------------------------------
+-- Credits: CM3 officer ledger sync (CreditsSync.lua)
+--------------------------------------------------------------------------
+print("== Credits: CM3 ledger sync ==")
+do
+    local PFX = "DHBavinCreditsV2"
+    local function deliver(from, text)
+        ns.Credits_OnAddonMessage(PFX, text, "WHISPER", from)
+    end
+    -- All LSYNCDATA messages sent to `target`, as { id, i, n, chunk } in send order.
+    local function dataTo(target)
+        local out = {}
+        for _, e in ipairs(outboxLog) do
+            if e.target == target and e.channel == "WHISPER" then
+                local id, i, n, chunk = e.text:match("^LSYNCDATA|(%x+)|(%d+)/(%d+)|(.*)$")
+                if id then out[#out + 1] = { id = id, i = tonumber(i), n = tonumber(n), chunk = chunk, text = e.text } end
+            end
+        end
+        return out
+    end
+    local function payloadOf(msgs)
+        local parts = {}
+        for _, m in ipairs(msgs) do parts[m.i] = m.chunk end
+        return table.concat(parts)
+    end
+    local function reqsTo(target)
+        local out = {}
+        for _, e in ipairs(outboxLog) do
+            if e.target == target and e.text:match("^LSYNCREQ|") then out[#out + 1] = e end
+        end
+        return out
+    end
+    local function setup()
+        resetState()
+        inGuild = true
+        guildRosterEntries = {
+            { name = "GLeader", rankIndex = 0 },
+            { name = "Officer1", rankIndex = 3 },
+            { name = "Officer2", rankIndex = 3 },
+            { name = "Member1", rankIndex = 5 },
+        }
+        ns.UpdateGuildRosterCache()
+        currentPlayerName = "Officer1"
+        ns.db.editors = { "Officer1", "Officer2" }
+        ns.CreditsSeedData = { MainA = { lifetimePoints = 100 }, MainB = { lifetimePoints = 200 } }
+        ns.CreditsAltRoster = { MainA = { "AltA1" } }
+        ns.CreditsSeed_Import()
+        outboxLog, printLog = {}, {}
+    end
+
+    -- ---- record codec ----------------------------------------------------
+    local nasty = {
+        discordName = "We|ird;Na,me%~", mainToon = "Ma;in", alts = { "A,lt", "B|lt", "C%lt" },
+        points = 10, credits = 5, tier = "Friendly", prestige = 0, lifetimePoints = 3010,
+        lastDonationDate = "2026-09-20", lastUpdated = 123, syncedAt = 456, lifetimeCredits = 9,
+    }
+    local enc = ns.CreditsSync_EncodeRecord(nasty)
+    check("Encoded record contains no raw ';' (item delimiter)", not enc:find(";", 1, true))
+    local _, pipes = enc:gsub("|", "")
+    check("Encoded record has exactly 11 field separators despite hostile characters", pipes == 11)
+    local dec = ns.CreditsSync_DecodeRecord(enc)
+    check("Record round-trips discordName/mainToon", dec and dec.discordName == nasty.discordName and dec.mainToon == nasty.mainToon)
+    check("Record round-trips alts with delimiters in the names",
+        dec and #dec.alts == 3 and dec.alts[1] == "A,lt" and dec.alts[2] == "B|lt" and dec.alts[3] == "C%lt")
+    check("Record round-trips numbers incl. lifetimeCredits and syncedAt",
+        dec and dec.points == 10 and dec.credits == 5 and dec.lifetimePoints == 3010
+        and dec.lifetimeCredits == 9 and dec.syncedAt == 456 and dec.lastUpdated == 123)
+
+    check("Decode rejects an unknown tier", ns.CreditsSync_DecodeRecord(enc:gsub("Friendly", "Godlike")) == nil)
+    check("Decode rejects too few fields", ns.CreditsSync_DecodeRecord("a|b|c") == nil)
+    check("Decode rejects a negative balance", ns.CreditsSync_DecodeRecord((enc:gsub("|5|Friendly", "|-5|Friendly"))) == nil)
+    local legacy = enc:gsub("|9$", "")
+    local legacyDec = ns.CreditsSync_DecodeRecord(legacy)
+    check("A record without the trailing lifetimeCredits decodes with lifetimeCredits = credits",
+        legacyDec and legacyDec.lifetimeCredits == 5)
+
+    -- ---- fingerprint ---------------------------------------------------
+    setup()
+    local fp1 = ns.CreditsSync_Fingerprint()
+    check("Fingerprint is an 8-hex string", fp1:match("^%x%x%x%x%x%x%x%x$") ~= nil)
+    check("Fingerprint is stable across calls", ns.CreditsSync_Fingerprint() == fp1)
+    ns.CreditsSeedData = { MainA = { lifetimePoints = 100 }, MainB = { lifetimePoints = 201 } }
+    check("Fingerprint changes when the seed data changes", ns.CreditsSync_Fingerprint() ~= fp1)
+    ns.CreditsSeedData = { MainA = { lifetimePoints = 100 }, MainB = { lifetimePoints = 200 } }
+    check("Fingerprint returns when the seed data is restored", ns.CreditsSync_Fingerprint() == fp1)
+    ns.CreditsAltRoster = { MainA = { "AltA1", "AltA2" } }
+    check("Fingerprint changes when the alt roster changes", ns.CreditsSync_Fingerprint() ~= fp1)
+
+    -- ---- outbound: a local change is whispered to online officers only --
+    setup()
+    check("Seed records carry no syncedAt (seed is never replicated)", ns.creditsDb.ledger["MainA"].syncedAt == nil)
+    check("LinkAlt succeeds", ns.Credits_LinkAlt("NewAlt", "MainA") == true)
+    local toOfficer2 = dataTo("Officer2")
+    check("Change was whispered to the online officer", #toOfficer2 >= 1)
+    check("Nothing sent to a non-officer member", #dataTo("Member1") == 0)
+    check("The online guild leader (an authorized sender) is also a peer", #dataTo("GLeader") >= 1)
+    local anyGuild = false
+    for _, e in ipairs(outboxLog) do if e.channel == "GUILD" then anyGuild = true end end
+    check("Ledger sync never uses the GUILD channel", not anyGuild)
+    local payload = payloadOf(toOfficer2)
+    check("Payload leads with the seed fingerprint", payload:match("^F:" .. ns.CreditsSync_Fingerprint() .. ";") ~= nil)
+    check("Payload carries the changed record", payload:find("R:MainA|", 1, true) ~= nil and payload:find("NewAlt", 1, true) ~= nil)
+    check("Payload does not carry the untouched seed record", payload:find("R:MainB|", 1, true) == nil)
+    check("Changed record got a syncedAt stamp", ns.creditsDb.ledger["MainA"].syncedAt and ns.creditsDb.ledger["MainA"].syncedAt > 0)
+    check("Record sent live is not left dirty", ns.creditsDb.ledger["MainA"].dirty == nil)
+    check("Payload carries the review-queue removal stamp", payload:find("Q:NewAlt|0|", 1, true) ~= nil)
+    for _, m in ipairs(toOfficer2) do
+        check("Every chunk fits the 255-byte addon message limit", #PFX + #m.text <= 255)
+    end
+
+    -- ---- multi-chunk, out-of-order reassembly --------------------------------
+    setup()
+    for k = 1, 30 do ns.Credits_LinkAlt("Bulkalt" .. k, "MainA") end
+    outboxLog = {}
+    ns.Credits_LinkAlt("Bulkalt31", "MainA")
+    local msgs = dataTo("Officer2")
+    check("A big account produces a multi-chunk transmission", #msgs > 1)
+    local snapshotAlts = #ns.creditsDb.ledger["MainA"].alts
+    -- Roll the local record back to a stale stamp with no alts, then deliver reversed.
+    ns.creditsDb.ledger["MainA"].alts = {}
+    ns.creditsDb.ledger["MainA"].syncedAt = 1
+    ns.Credits_RebuildToonIndex()
+    for k = #msgs, 1, -1 do deliver("Officer2", msgs[k].text) end
+    check("Out-of-order chunks reassemble and the newer record is applied",
+        #ns.creditsDb.ledger["MainA"].alts == snapshotAlts)
+    check("toonIndex is rebuilt after an applied record", ns.creditsDb.toonIndex["bulkalt31"] == "MainA")
+
+    -- ---- last-writer-wins -------------------------------------------------
+    setup()
+    local base = { discordName = "MainA", mainToon = "MainA", alts = { "Fresh" }, points = 100, credits = 0,
+        tier = "Neutral", prestige = 0, lifetimePoints = 100, lastDonationDate = "", lastUpdated = 5,
+        syncedAt = 1000, lifetimeCredits = 0 }
+    local function msgFor(rec)
+        return "LSYNCDATA|abc1|1/1|F:" .. ns.CreditsSync_Fingerprint() .. ";R:" .. ns.CreditsSync_EncodeRecord(rec)
+    end
+    deliver("Officer2", msgFor(base))
+    check("Newer syncedAt over an unsynced seed record is applied", ns.creditsDb.ledger["MainA"].alts[1] == "Fresh")
+    local older = { discordName = "MainA", mainToon = "MainA", alts = { "Older" }, points = 100, credits = 0,
+        tier = "Neutral", prestige = 0, lifetimePoints = 100, lastDonationDate = "", lastUpdated = 5,
+        syncedAt = 900, lifetimeCredits = 0 }
+    deliver("Officer2", msgFor(older))
+    check("A stale record (lower syncedAt) is ignored", ns.creditsDb.ledger["MainA"].alts[1] == "Fresh")
+    local tieHi = { discordName = "MainA", mainToon = "MainA", alts = { "Zzz" }, points = 100, credits = 0,
+        tier = "Neutral", prestige = 0, lifetimePoints = 100, lastDonationDate = "", lastUpdated = 5,
+        syncedAt = 1000, lifetimeCredits = 0 }
+    local tieLo = { discordName = "MainA", mainToon = "MainA", alts = { "Aaa" }, points = 100, credits = 0,
+        tier = "Neutral", prestige = 0, lifetimePoints = 100, lastDonationDate = "", lastUpdated = 5,
+        syncedAt = 1000, lifetimeCredits = 0 }
+    deliver("Officer2", msgFor(tieLo))
+    check("Equal stamps: the lexically lower encoding does not displace the current record",
+        ns.creditsDb.ledger["MainA"].alts[1] == "Fresh")
+    deliver("Officer2", msgFor(tieHi))
+    local afterHi = ns.creditsDb.ledger["MainA"].alts[1]
+    deliver("Officer2", msgFor(tieLo))
+    check("Tie-break is order-independent (both orders converge on the same record)",
+        ns.creditsDb.ledger["MainA"].alts[1] == afterHi and afterHi == "Zzz")
+    local rollback = ns.creditsDb.ledger["MainA"].syncedAt
+    check("Applying a received record keeps the sender's syncedAt (no re-stamp)", rollback == 1000)
+    check("A received record is not marked dirty (no echo loop)", ns.creditsDb.ledger["MainA"].dirty == nil)
+    check("Receiving never triggers an outbound send by itself", #outboxOfType("LSYNCDATA") == 0)
+
+    -- A brand-new account arrives whole.
+    local brandNew = { discordName = "NewAcct", mainToon = "NewAcct", alts = {}, points = 0, credits = 0,
+        tier = "Neutral", prestige = 0, lifetimePoints = 0, lastDonationDate = "", lastUpdated = 5,
+        syncedAt = 2000, lifetimeCredits = 0 }
+    deliver("Officer2", msgFor(brandNew))
+    check("A new account record is created", ns.creditsDb.ledger["NewAcct"] ~= nil and ns.creditsDb.toonIndex["newacct"] == "NewAcct")
+
+    -- ---- sender / receiver verification ------------------------------------
+    setup()
+    deliver("Member1", msgFor(base))
+    check("A non-officer guild member cannot write the ledger", ns.creditsDb.ledger["MainA"].syncedAt == nil)
+    deliver("Stranger", msgFor(base))
+    check("A sender outside the guild is rejected", ns.creditsDb.ledger["MainA"].syncedAt == nil)
+    ns.db.editors = { "Officer1" } -- Officer2 no longer an officer on THIS client
+    deliver("Officer2", msgFor(base))
+    check("Sender is judged against the receiver's OWN officer list (not the message)", ns.creditsDb.ledger["MainA"].syncedAt == nil)
+    ns.db.editors = { "Officer1", "Officer2" }
+    deliver("GLeader", msgFor(base))
+    check("The guild leader is an authorized sender", ns.creditsDb.ledger["MainA"].syncedAt == 1000)
+    setup()
+    currentPlayerName = "Member1"
+    deliver("Officer2", msgFor(base))
+    check("A receiver who is not an officer applies nothing", ns.creditsDb.ledger["MainA"].syncedAt == nil)
+    deliver("Officer2", "LSYNCREQ|" .. ns.CreditsSync_Fingerprint() .. "|0")
+    check("A receiver who is not an officer answers nothing", #outboxLog == 0)
+
+    -- ---- fingerprint mismatch --------------------------------------------------
+    setup()
+    local badFp = "LSYNCDATA|abc2|1/1|F:deadbeef;R:" .. ns.CreditsSync_EncodeRecord(base)
+    deliver("Officer2", badFp)
+    check("A seed-fingerprint mismatch applies nothing", ns.creditsDb.ledger["MainA"].syncedAt == nil)
+    local warns = 0
+    for _, l in ipairs(printLog) do if tostring(l):find("seed data differs", 1, true) then warns = warns + 1 end end
+    check("A mismatch prints one warning", warns == 1)
+    deliver("Officer2", badFp)
+    deliver("Officer2", "LSYNCREQ|deadbeef|0")
+    warns = 0
+    for _, l in ipairs(printLog) do if tostring(l):find("seed data differs", 1, true) then warns = warns + 1 end end
+    check("Repeated mismatches from the same peer do not spam", warns == 1)
+    check("A mismatched request is not answered", #dataTo("Officer2") == 0)
+
+    -- ---- hostile / malformed input never errors -----------------------------
+    setup()
+    local fpNow = ns.CreditsSync_Fingerprint()
+    local junk = {
+        "LSYNCDATA", "LSYNCDATA|", "LSYNCDATA|zz|1/1|x", "LSYNCDATA|ab|0/0|x", "LSYNCDATA|ab|5/1|x",
+        "LSYNCDATA|ab|1/999999|x", "LSYNCDATA|ab|1/1|F:" .. fpNow .. ";R:", "LSYNCDATA|ab|1/1|F:" .. fpNow .. ";R:a|b",
+        "LSYNCDATA|ab|1/1|F:" .. fpNow .. ";Q:|1|5", "LSYNCDATA|ab|1/1|F:" .. fpNow .. ";Q:x|9|abc",
+        "LSYNCDATA|ab|1/1|;;;;", "LSYNCREQ", "LSYNCREQ|nothex|abc", "LSYNCREQ||",
+    }
+    local allOk = true
+    for _, j in ipairs(junk) do
+        local ok = pcall(deliver, "Officer2", j)
+        if not ok then allOk = false end
+    end
+    check("Malformed LSYNC messages are ignored without raising errors", allOk)
+    check("Malformed messages changed nothing", ns.creditsDb.ledger["MainA"].syncedAt == nil and next(ns.creditsDb.rqStamps) == nil)
+
+    -- ---- answering a request ---------------------------------------------------
+    setup()
+    ns.Credits_LinkAlt("NewAlt", "MainA")
+    outboxLog = {}
+    deliver("Officer2", "LSYNCREQ|" .. ns.CreditsSync_Fingerprint() .. "|0")
+    local ans = dataTo("Officer2")
+    check("A request is answered with LSYNCDATA", #ans >= 1)
+    local ap = payloadOf(ans)
+    check("The answer carries post-seed records only", ap:find("R:MainA|", 1, true) and not ap:find("R:MainB|", 1, true))
+    check("The requester is asked back once (reciprocal)", #reqsTo("Officer2") == 1)
+    outboxLog = {}
+    deliver("Officer2", "LSYNCREQ|" .. ns.CreditsSync_Fingerprint() .. "|0")
+    check("A second request from the same peer does not trigger another reciprocal", #reqsTo("Officer2") == 0)
+    outboxLog = {}
+    deliver("Officer2", "LSYNCREQ|" .. ns.CreditsSync_Fingerprint() .. "|" .. (ns.creditsDb.ledger["MainA"].syncedAt + 1000))
+    check("A request newer than everything we have gets no data", #dataTo("Officer2") == 0)
+
+    -- ---- offline edit -> dirty -> flushed (re-stamped) on next contact ----------
+    setup()
+    guildRosterEntries[3].online = false -- Officer2 offline
+    guildRosterEntries[1].online = false -- ...and the guild leader (also a peer)
+    ns.UpdateGuildRosterCache()
+    ns.Credits_LinkAlt("OfflineAlt", "MainA")
+    check("With no officer online the edit is sent nowhere", #outboxLog == 0)
+    check("...and the record is marked dirty", ns.creditsDb.ledger["MainA"].dirty == true)
+    local oldStamp = ns.creditsDb.ledger["MainA"].syncedAt
+    check("...and the dirty edit is NOT served to a request yet",
+        (function() deliver("Officer2", "LSYNCREQ|" .. ns.CreditsSync_Fingerprint() .. "|0") return #dataTo("Officer2") end)() == 0)
+    wallClock = wallClock + 3600
+    guildRosterEntries[3].online = true
+    guildRosterEntries[1].online = true
+    ns.UpdateGuildRosterCache()
+    outboxLog = {}
+    ns.CreditsSync_OnLogin()
+    check("Login asks each online officer for what we missed", #reqsTo("Officer2") == 1)
+    local flushed = payloadOf(dataTo("Officer2"))
+    check("Dirty edits are pushed at contact", flushed:find("OfflineAlt", 1, true) ~= nil)
+    check("...re-stamped at share time, not edit time", ns.creditsDb.ledger["MainA"].syncedAt > oldStamp)
+    check("...and no longer dirty", ns.creditsDb.ledger["MainA"].dirty == nil)
+    check("lastSyncAt is recorded for the next 'since'", ns.creditsDb.lastSyncAt == wallClock)
+
+    -- ---- new officer coming online is asked once ---------------------------------
+    setup()
+    guildRosterEntries[3].online = false
+    ns.UpdateGuildRosterCache()
+    ns.CreditsSync_OnLogin()
+    check("No online officer at login means no request", #reqsTo("Officer2") == 0)
+    guildRosterEntries[3].online = true
+    ns.UpdateGuildRosterCache()
+    ns.CreditsSync_OnRosterUpdate()
+    check("An officer who logs in later is asked", #reqsTo("Officer2") == 1)
+    ns.CreditsSync_OnRosterUpdate()
+    check("...but only once while they stay online", #reqsTo("Officer2") == 1)
+    guildRosterEntries[3].online = false
+    ns.UpdateGuildRosterCache()
+    ns.CreditsSync_OnRosterUpdate()
+    guildRosterEntries[3].online = true
+    ns.UpdateGuildRosterCache()
+    ns.CreditsSync_OnRosterUpdate()
+    check("...and asked again after a relog", #reqsTo("Officer2") == 2)
+
+    -- ---- review queue rides along ----------------------------------------------------
+    setup()
+    ns.Credits_LinkAlt("QAlt", "MainA")
+    ns.Credits_UnlinkAlt("QAlt")
+    local queued = false
+    for _, r in ipairs(ns.creditsDb.dynamicReviewQueue) do if r.name == "QAlt" then queued = true end end
+    check("Unlink reopened the name in the queue locally", queued)
+    check("Unlink sent a queue-add stamp", payloadOf(dataTo("Officer2")):find("Q:QAlt|1|", 1, true) ~= nil)
+    local ts = ns.creditsDb.rqStamps["qalt"].ts
+    local function qmsg(present, stamp)
+        return "LSYNCDATA|abc3|1/1|F:" .. ns.CreditsSync_Fingerprint() .. ";Q:QAlt|" .. present .. "|" .. stamp
+    end
+    deliver("Officer2", qmsg(0, ts - 1))
+    queued = false
+    for _, r in ipairs(ns.creditsDb.dynamicReviewQueue) do if r.name == "QAlt" then queued = true end end
+    check("A stale queue-remove is ignored", queued)
+    deliver("Officer2", qmsg(0, ts + 5))
+    queued = false
+    for _, r in ipairs(ns.creditsDb.dynamicReviewQueue) do if r.name == "QAlt" then queued = true end end
+    check("A newer queue-remove clears the name", not queued)
+    deliver("Officer2", qmsg(1, ts + 9))
+    queued = false
+    for _, r in ipairs(ns.creditsDb.dynamicReviewQueue) do if r.name == "QAlt" then queued = true end end
+    check("A still-newer queue-add reopens it", queued)
+
+    -- ---- SetAsNewMain syncs the new account and clears the queue ------------------------
+    setup()
+    ns.Credits_AddToReviewQueue("Newbie")
+    outboxLog = {}
+    check("SetAsNewMain succeeds", ns.Credits_SetAsNewMain("Newbie", 0, "2026-09-20") == true)
+    local nm = payloadOf(dataTo("Officer2"))
+    check("The new account is whispered to officers", nm:find("R:Newbie|", 1, true) ~= nil)
+    check("...with the queue removal", nm:find("Q:Newbie|0|", 1, true) ~= nil)
+
+    -- ---- stamps strictly increase within one second --------------------------------------
+    setup()
+    ns.Credits_LinkAlt("S1", "MainA")
+    local s1 = ns.creditsDb.ledger["MainA"].syncedAt
+    ns.Credits_LinkAlt("S2", "MainA")
+    check("Two edits in the same clock second still get increasing stamps", ns.creditsDb.ledger["MainA"].syncedAt > s1)
+end
 
 --------------------------------------------------------------------------
 -- Summary

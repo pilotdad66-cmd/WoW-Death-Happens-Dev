@@ -178,6 +178,8 @@ local function IsAuthorizedConfigSender(senderShort)
     if ns.IsGuildLeader(senderShort) then return true end
     return ns.IsOfficerName(senderShort)
 end
+-- CM3 (CreditsSync.lua) verifies ledger-sync senders with the same check.
+ns.Credits_IsAuthorizedSender = IsAuthorizedConfigSender
 
 --------------------------------------------------------------------------
 -- Alt resolution (CM2, ongoing - see DH-Bavin-Credits-Design.md's "Data
@@ -289,7 +291,7 @@ local function RemoveAltFromAnyAccount(altBare)
                 if a:lower() == key then
                     table.remove(rec.alts, i)
                     if ns.creditsDb.toonIndex then ns.creditsDb.toonIndex[key] = nil end
-                    return true
+                    return true, rec.discordName
                 end
             end
         end
@@ -328,11 +330,16 @@ function ns.Credits_LinkAlt(altName, mainToonName)
     -- main-reassignment, not a link).
     if altBare:lower() == mainBare:lower() then return false end
 
-    RemoveAltFromAnyAccount(altBare)
+    local _, previousAccount = RemoveAltFromAnyAccount(altBare)
     rec.alts = rec.alts or {}
     table.insert(rec.alts, altBare)
     ns.creditsDb.toonIndex[altBare:lower()] = discordName
     ns.Credits_RemoveFromReviewQueue(altBare)
+    -- CM3: the target account (and the one the alt moved away from) changed,
+    -- and the name left the Review Queue.
+    if ns.CreditsSync_Changed then
+        ns.CreditsSync_Changed({ discordName, previousAccount }, { { name = altBare, present = false } })
+    end
     return true
 end
 
@@ -348,8 +355,12 @@ function ns.Credits_UnlinkAlt(altName)
     if not ns.CanManageCreditsConfigLocal() then return false end
     if not altName or altName == "" then return false end
     local altBare = ns.NormalizeName(altName)
-    if not RemoveAltFromAnyAccount(altBare) then return false end
+    local removed, previousAccount = RemoveAltFromAnyAccount(altBare)
+    if not removed then return false end
     ns.Credits_AddToReviewQueue(altBare)
+    if ns.CreditsSync_Changed then
+        ns.CreditsSync_Changed({ previousAccount }, { { name = altBare, present = true } })
+    end
     return true
 end
 
@@ -571,6 +582,9 @@ local function AddonSendMessage(text, channel, target)
     end
 end
 
+-- Shared with CreditsSync.lua (CM3), which loads after this file.
+ns.Credits_SendAddon = AddonSendMessage
+
 local function RegisterPrefix()
     if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
         pcall(C_ChatInfo.RegisterAddonMessagePrefix, PREFIX)
@@ -668,6 +682,12 @@ function ns.Credits_OnAddonMessage(prefix, message, channel, sender)
         end
     elseif msgType == "CREDITSYNCDATA" then
         ApplyIncomingConfig(rest, senderShort)
+    elseif msgType == "LSYNCREQ" or msgType == "LSYNCDATA" then
+        -- CM3 officer ledger sync (CreditsSync.lua). Additive message types
+        -- on this same prefix; guarded because the file loads after this one.
+        if ns.CreditsSync_OnMessage then
+            ns.CreditsSync_OnMessage(msgType, rest, sender, senderShort)
+        end
     end
 end
 
@@ -738,6 +758,8 @@ function ns.Credits_ResetTestData()
     ns.creditsDb.toonIndex = {}
     ns.creditsDb.dynamicReviewQueue = {}
     ns.creditsDb.transactionLog = {}
+    ns.creditsDb.rqStamps = {}    -- CM3 review-queue sync stamps (local reset, like the rest)
+    ns.creditsDb.lastSyncAt = 0
     ns.CreditsPrint("Test credit data wiped (ledger, toon index, dynamic review queue, transaction log).")
     return true
 end
@@ -750,14 +772,18 @@ end
 ns.creditsFrame = CreateFrame("Frame")
 ns.creditsFrame:RegisterEvent("PLAYER_LOGIN")
 ns.creditsFrame:RegisterEvent("CHAT_MSG_ADDON")
+ns.creditsFrame:RegisterEvent("GUILD_ROSTER_UPDATE")
 ns.creditsFrame:SetScript("OnEvent", function(_, event, ...)
     if not DHTools.IsModuleEnabled("bavin") then return end
     if event == "PLAYER_LOGIN" then
         ns.InitCreditsDB()
         ns.Credits_Init()
         ns.Credits_EvaluateArming()
+        if ns.CreditsSync_OnLogin then ns.CreditsSync_OnLogin() end
     elseif event == "CHAT_MSG_ADDON" then
         ns.Credits_OnAddonMessage(...)
+    elseif event == "GUILD_ROSTER_UPDATE" then
+        if ns.CreditsSync_OnRosterUpdate then ns.CreditsSync_OnRosterUpdate() end
     end
 end)
 

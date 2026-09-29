@@ -48,6 +48,7 @@ Modules\DHBavin\ReviewQueue.lua
 # note as SeedData.lua above - load order here is cosmetic grouping only.
 Modules\DHBavin\AltRoster.lua
 Modules\DHBavin\CreditsSeed.lua
+Modules\DHBavin\CreditsSync.lua
 Modules\DHBavin\CreditsConfig.lua
 Modules\DHBavin\Account.lua
 Modules\DHBavin\ItemPoints.lua
