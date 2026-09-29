@@ -242,7 +242,8 @@ local function resetState()
         ns.creditsDb.toonIndex = {}
         ns.creditsDb.dynamicReviewQueue = {}
         ns.creditsDb.transactionLog = {}
-        ns.creditsDb.officers = {}
+        -- 2026-09-28: officers field removed - Credits no longer keeps
+        -- its own officer list (see "Credits: permission gates" below).
         ns.creditsDb.masterToggle = false
         ns.creditsDb.creditTestReceivers = {}
         ns.creditsDb.creditTestSenders = {}
@@ -290,7 +291,9 @@ check("Leader also counts as a guild member", ns.IsGuildMember("GLeader") == tru
 -- 2026-08-05 (Loopi): TESTING_ALLOW_ANYONE_TO_MANAGE is gone - recipient
 -- and editor management are now separately scoped, real enforcement, no
 -- bypass. CanManageRecipient: only the name "Bavin" or "Loopidot".
--- CanManageEditors: any rank<=3 officer, or "Loopidot".
+-- CanManageEditors (2026-09-28, Chris - shared officer-roles list):
+-- guild leader, the current recipient, or "Loopidot" - no more rank<=3
+-- threshold (see Core.lua's CanSetEditorsName comment).
 print("== CanManageRecipient / CanManageEditors / SetRecipient / SetEditors ==")
 resetState()
 inGuild = true
@@ -310,16 +313,19 @@ check("A rank-0 guild leader who isn't Bavin/Loopidot cannot manage the recipien
 check("...and SetRecipient is refused for them", ns.SetRecipient("Bavin") == false)
 check("Refused SetRecipient does not change local state", ns.db.recipient == nil)
 check("Refused SetRecipient sends nothing", #outboxOfType("RECIPIENT") == 0)
-check("A rank-0 guild leader who isn't rank<=3-or-Loopidot... actually IS rank<=3, so CAN manage editors",
+check("A guild leader CAN manage editors/officers even though they can't manage the recipient",
     ns.CanManageEditors() == true)
 
--- An officer (rank<=3, not Bavin/Loopidot) can manage editors but not
--- the recipient - the two gates are independent.
+-- An officer (rank<=3, not guild leader/recipient/Loopidot) can no
+-- longer manage editors either as of 2026-09-28 - only guild leader,
+-- recipient, or Loopidot may.
 currentPlayerName = "Officer1"
-check("A rank<=3 officer cannot manage the recipient", ns.CanManageRecipient() == false)
-check("...but CAN manage editors", ns.CanManageEditors() == true)
-check("SetEditors succeeds for a rank<=3 officer",
-    ns.SetEditors({ "Officer1" }) == true and #ns.db.editors == 1)
+check("A rank<=3 officer who isn't guild leader/recipient/Loopidot cannot manage the recipient",
+    ns.CanManageRecipient() == false)
+check("...and can no longer manage editors/officers either (2026-09-28 tightening)",
+    ns.CanManageEditors() == false)
+check("SetEditors is refused for a rank<=3 officer who isn't guild leader/recipient",
+    ns.SetEditors({ "Officer1" }) == false)
 
 -- A regular member (rank>3, not Bavin/Loopidot) can manage neither.
 currentPlayerName = "Grunt1"
@@ -335,8 +341,8 @@ check("Bavin (unverified guild membership - name-based check only) can manage th
 check("Bavin's SetRecipient succeeds", ns.SetRecipient("Bavin") == true)
 check("Recipient was actually stored", ns.db.recipient == "Bavin")
 check("A RECIPIENT broadcast was sent", #outboxOfType("RECIPIENT") == 1)
-check("Bavin cannot manage editors just by being Bavin (not rank<=3, not Loopidot)",
-    ns.CanManageEditors() == false)
+check("Bavin can now manage editors/officers too, having just become the recipient (2026-09-28)",
+    ns.CanManageEditors() == true)
 
 -- Loopidot (FULL_PERMISSION_OVERRIDE_NAME) can manage both, regardless
 -- of rank or roster membership at all.
@@ -469,10 +475,11 @@ check("Bavin can manage the recipient again once back in Death Happens",
 -- Section 3: Receive-side verification - never trust a self-asserted sender
 --------------------------------------------------------------------------
 -- 2026-08-05: RECIPIENT and EDITORS are now separately gated
--- (CanSetRecipientName: Bavin/Loopidot by name; CanSetEditorsName:
--- rank<=3 or Loopidot) - a rank-0 guild leader who isn't Bavin/Loopidot
--- can no longer set the recipient remotely either, same tightening as
--- the local gate in Section 2.
+-- (CanSetRecipientName: Bavin/Loopidot by name; CanSetEditorsName, as of
+-- 2026-09-28: guild leader/recipient/Loopidot, no more rank<=3) - a
+-- rank-0 guild leader who isn't Bavin/Loopidot can no longer set the
+-- recipient remotely either, same tightening as the local gate in
+-- Section 2.
 print("== Receive-side RECIPIENT/EDITORS verification ==")
 resetState()
 inGuild = true
@@ -496,11 +503,12 @@ check("A RECIPIENT message from the sender name 'Bavin' is accepted (name-based,
     ns.db.recipient == "Someone")
 
 ns.db.recipient = nil
-ns.Sync_OnAddonMessage("DHBavinV4", "EDITORS|Officer1", "GUILD", "Grunt1")
-check("An EDITORS message from a rank>3 sender is ignored", #ns.db.editors == 0)
-
 ns.Sync_OnAddonMessage("DHBavinV4", "EDITORS|Officer1", "GUILD", "Officer1")
-check("An EDITORS message from a verified rank<=3 sender is accepted",
+check("An EDITORS message from a rank<=3 sender who isn't guild leader/recipient/Loopidot is now ignored (2026-09-28)",
+    #ns.db.editors == 0)
+
+ns.Sync_OnAddonMessage("DHBavinV4", "EDITORS|Officer1", "GUILD", "RealLeader")
+check("An EDITORS message from a verified guild leader is accepted",
     #ns.db.editors == 1 and ns.db.editors[1] == "Officer1")
 
 --------------------------------------------------------------------------
@@ -1028,9 +1036,14 @@ end
 
 --------------------------------------------------------------------------
 print("== Credits: permission gates ==")
+-- 2026-09-28 (Chris, item 5): Credits no longer keeps its own officer
+-- list/gate - ns.CanManageCreditsConfigLocal() now just checks
+-- membership in DH-Bavin's shared officer list (ns.db.editors, via
+-- ns.IsOfficerName). ns.CanManageCreditsOfficers/SetCreditsOfficers are
+-- gone; managing WHO is on that list is Core.lua's
+-- ns.CanSetEditorsName/ns.SetEditors, already covered above.
 resetState()
 check("Refused when not in the guild at all", ns.CanManageCreditsConfigLocal() == false)
-check("Officer-list management also refused when not in the guild", ns.CanManageCreditsOfficers() == false)
 
 inGuild = true
 guildRosterEntries = {
@@ -1039,26 +1052,22 @@ guildRosterEntries = {
 }
 ns.UpdateGuildRosterCache()
 currentPlayerName = "PlainMember"
-check("In guild but neither officer nor author is still refused", ns.CanManageCreditsConfigLocal() == false)
-check("A plain member cannot manage the officers list either", ns.CanManageCreditsOfficers() == false)
-
-currentPlayerName = "GLeader"
-check("The guild leader can manage the officers list", ns.CanManageCreditsOfficers() == true)
-check("Being guild leader alone does not grant config access (not an officer)",
+check("In guild but neither a shared-list officer nor author is still refused",
     ns.CanManageCreditsConfigLocal() == false)
 
-ns.creditsDb.officers = { "PlainMember" }
-currentPlayerName = "PlainMember"
-check("A listed Designated Officer can manage local config", ns.CanManageCreditsConfigLocal() == true)
-check("A Designated Officer is not thereby able to manage the officers list itself",
-    ns.CanManageCreditsOfficers() == false)
+currentPlayerName = "GLeader"
+check("Being guild leader alone does not grant config access (not on the shared officer list)",
+    ns.CanManageCreditsConfigLocal() == false)
 
-ns.creditsDb.officers = {}
-authorAccountFlag = true
-check("Author-account override grants config access even with no officer entry",
+ns.db.editors = { "PlainMember" }
+currentPlayerName = "PlainMember"
+check("A name on the shared officer list can manage local Credits config",
     ns.CanManageCreditsConfigLocal() == true)
-check("Author-account override also grants officer-list management",
-    ns.CanManageCreditsOfficers() == true)
+
+ns.db.editors = {}
+authorAccountFlag = true
+check("Author-account override grants config access even with an empty shared officer list",
+    ns.CanManageCreditsConfigLocal() == true)
 
 inGuild = false
 check("Author override does not bypass the guild-membership gate", ns.CanManageCreditsConfigLocal() == false)
@@ -1070,7 +1079,7 @@ inGuild = true
 guildRosterEntries = { { name = "Officer1", rankIndex = 3 } }
 ns.UpdateGuildRosterCache()
 currentPlayerName = "Officer1"
-ns.creditsDb.officers = { "Officer1" }
+ns.db.editors = { "Officer1" }
 
 check("Import refuses with no SeedData.lua loaded", ns.CreditsSeed_Import() == false)
 
@@ -1104,7 +1113,7 @@ inGuild = true
 guildRosterEntries = { { name = "Officer1", rankIndex = 3 } }
 ns.UpdateGuildRosterCache()
 currentPlayerName = "Officer1"
-ns.creditsDb.officers = { "Officer1" }
+ns.db.editors = { "Officer1" }
 ns.CreditsSeedData = { MainA = { lifetimePoints = 100 }, MainB = { lifetimePoints = 200 } }
 ns.CreditsSeed_Import()
 
@@ -1113,10 +1122,10 @@ check("A name with no account resolves to itself (self-fallback)",
 check("A seeded main resolves to itself", ns.Credits_ResolveMain("MainA") == "MainA")
 
 check("Linking without permission is refused", (function()
-    local prior = ns.creditsDb.officers
-    ns.creditsDb.officers = {}
+    local prior = ns.db.editors
+    ns.db.editors = {}
     local result = ns.Credits_LinkAlt("SomeAlt", "MainA")
-    ns.creditsDb.officers = prior
+    ns.db.editors = prior
     return result
 end)() == false)
 
@@ -1167,7 +1176,7 @@ inGuild = true
 guildRosterEntries = { { name = "Officer1", rankIndex = 3 } }
 ns.UpdateGuildRosterCache()
 currentPlayerName = "Officer1"
-ns.creditsDb.officers = { "Officer1" }
+ns.db.editors = { "Officer1" }
 
 ns.CreditsReviewQueue = {
     { name = "StaticOnly", issue = "no_identity_mapping", latestDonation = "2026-07-01", rawGoldAmount = 40 },
@@ -1199,7 +1208,7 @@ inGuild = true
 guildRosterEntries = { { name = "Officer1", rankIndex = 3 } }
 ns.UpdateGuildRosterCache()
 currentPlayerName = "Officer1"
-ns.creditsDb.officers = { "Officer1" }
+ns.db.editors = { "Officer1" }
 ns.CreditsSeedData = { ExistingMain = { lifetimePoints = 500 } }
 ns.CreditsSeed_Import()
 ns.Credits_AddToReviewQueue("NewGuy")
@@ -1228,10 +1237,10 @@ check("Cannot promote the same name twice now that it resolves to its own accoun
     ns.Credits_SetAsNewMain("NewGuy", 999, "2026-09-21") == false)
 
 check("Promotion without permission is refused", (function()
-    local prior = ns.creditsDb.officers
-    ns.creditsDb.officers = {}
+    local prior = ns.db.editors
+    ns.db.editors = {}
     local result = ns.Credits_SetAsNewMain("AnotherGuy", 50, "")
-    ns.creditsDb.officers = prior
+    ns.db.editors = prior
     return result
 end)() == false)
 
@@ -1242,16 +1251,16 @@ inGuild = true
 guildRosterEntries = { { name = "Officer1", rankIndex = 3 } }
 ns.UpdateGuildRosterCache()
 currentPlayerName = "Officer1"
-ns.creditsDb.officers = { "Officer1" }
+ns.db.editors = { "Officer1" }
 ns.CreditsSeedData = { MainA = { lifetimePoints = 100 } }
 ns.CreditsSeed_Import()
 ns.Credits_AddToReviewQueue("Whoever")
 
 check("Reset without permission is refused and leaves data intact", (function()
-    local prior = ns.creditsDb.officers
-    ns.creditsDb.officers = {}
+    local prior = ns.db.editors
+    ns.db.editors = {}
     local result = ns.Credits_ResetTestData()
-    ns.creditsDb.officers = prior
+    ns.db.editors = prior
     return result == false and ns.creditsDb.ledger["MainA"] ~= nil
 end)())
 

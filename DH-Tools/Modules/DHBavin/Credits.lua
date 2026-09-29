@@ -15,23 +15,33 @@
 --            listed test character, checked BEFORE installation, not
 --            inside the handler. Armed lazily at PLAYER_LOGIN.
 --
--- Own addon-message prefix (DHBavinCreditsV1), deliberately NOT sharing
--- Sync.lua's DHBavinV4 (2026-09-24, Chris) - keeps this feature's wire
--- format fully isolated from the live v1.0 donation flow, matching Wall
--- 1's "removable by deleting one file" goal. Carries only the
--- Designated Officers list + Wall 2/3 config (toggle, test lists,
--- multiplier) - NOT the ledger itself (that's CM3's job; wire format
--- TBD there per the design doc's own "work out the exact wire format"
--- note).
+-- Own addon-message prefix (DHBavinCreditsV2 as of 2026-09-28, bumped
+-- from V1 - see the PREFIX comment further down for why), deliberately
+-- NOT sharing Sync.lua's DHBavinV4 (2026-09-24, Chris) - keeps this
+-- feature's wire format fully isolated from the live v1.0 donation
+-- flow, matching Wall 1's "removable by deleting one file" goal.
+-- Carries Wall 2/3 config (toggle, test lists, Credit/Rep and Rep/Gold
+-- ratios) - NOT the officer list any more (2026-09-28, Chris: that's
+-- now DH-Bavin's single shared officer-roles list, see Core.lua's
+-- IsOfficerName) and NOT the ledger itself (that's CM3's job; wire
+-- format TBD there per the design doc's own "work out the exact wire
+-- format" note).
 --
 -- Credits vs. Reputation points: NOT the same number (2026-09-24,
 -- Chris) - points are the tier-tracked reputation total, credits are a
--- separate spendable balance earned at creditMultiplier credits-per-
--- point (default 0.01, officer-configurable - see DH-Bavin-Credits-
--- Design.md's "Multiplier" decision; updated 2026-09-28, Chris: new
--- ratio is 100 rep = 1 credit = 1 gold, superseding the earlier 0.60
--- figure). This file's config just carries the multiplier; CM4's
--- crediting logic is what actually applies it.
+-- separate spendable balance. 2026-09-28 (Chris): the single "credits
+-- per point" MULTIPLIER is now THREE independent, officer-editable
+-- ratios instead - Credit/Rep, Credit/Gold (DH-Store's own
+-- creditGoldRatio, unchanged location), and a new Rep/Gold ratio that
+-- isn't consumed by anything yet (Rep points come from the static
+-- ItemPoints.lua baseline, not a calculation) but Chris wants it
+-- configurable anyway. The three do NOT have to reconcile with each
+-- other - Chris's explicit call. Each ratio is stored/edited as an X/Y
+-- pair ("X Credits = Y Rep Points", etc.), not a single decimal, so the
+-- UI can show the whole-number relationship Chris actually thinks in
+-- rather than a multiplier like 0.01. This file's config just carries
+-- Credit/Rep and Rep/Gold; CM4's crediting logic (not yet built) is
+-- what would actually apply Credit/Rep.
 
 local DHTools = DHTools
 DHTools.Bavin = DHTools.Bavin or {}
@@ -41,7 +51,13 @@ function ns.CreditsPrint(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99DH-Bavin Credits:|r " .. msg)
 end
 
-local DEFAULT_MULTIPLIER = 0.01 -- credits per reputation point (100 rep = 1 credit, 2026-09-28, Chris)
+-- 2026-09-28 (Chris): "100 rep = 1 credit" as a whole-number ratio pair
+-- (x Credits = y Rep) instead of the old single 0.01 multiplier.
+local DEFAULT_CREDITS_PER_REP = { x = 1, y = 100 }
+-- NOT USED by any formula yet (see header comment) - a starting default
+-- only, picked to match the "100 rep = ..." figure Chris has used
+-- elsewhere. Officers can set it to anything; nothing currently reads it.
+local DEFAULT_REP_PER_GOLD = { x = 100, y = 1 }
 
 --------------------------------------------------------------------------
 -- Wall 1: SavedVariables
@@ -97,18 +113,20 @@ function ns.InitCreditsDB()
     if type(ns.creditsDb.creditTestSenders) ~= "table" then
         ns.creditsDb.creditTestSenders = {}
     end
-    -- Designated Officers - guild-leader-settable (CanManageCreditsOfficers
-    -- below), separate from DHBavinDB's priority-list editors.
-    if type(ns.creditsDb.officers) ~= "table" then
-        ns.creditsDb.officers = {}
+    -- 2026-09-28 (Chris): no more Designated Officers list here - see
+    -- this file's header comment. ns.creditsDb.officers (if present from
+    -- an earlier test build) is simply left alone and unread; harmless.
+    -- Credit/Rep and Rep/Gold ratios, each an {x=, y=} pair
+    -- ("x Credits = y Rep Points" / "x Rep = y Gold"), officer-editable,
+    -- independent of each other and of DH-Store's own creditGoldRatio.
+    if type(ns.creditsDb.creditsPerRep) ~= "table" or type(ns.creditsDb.creditsPerRep.x) ~= "number" then
+        ns.creditsDb.creditsPerRep = { x = DEFAULT_CREDITS_PER_REP.x, y = DEFAULT_CREDITS_PER_REP.y }
     end
-    -- Credits-per-point multiplier, officer-configurable.
-    if type(ns.creditsDb.multiplier) ~= "number" then
-        ns.creditsDb.multiplier = DEFAULT_MULTIPLIER
+    if type(ns.creditsDb.repPerGold) ~= "table" or type(ns.creditsDb.repPerGold.x) ~= "number" then
+        ns.creditsDb.repPerGold = { x = DEFAULT_REP_PER_GOLD.x, y = DEFAULT_REP_PER_GOLD.y }
     end
-    -- Version stamp for the officers/config broadcast below - same
-    -- "strictly newer wins" idiom Core.lua's k-0019 fix uses for
-    -- recipient/editors.
+    -- Version stamp for the config broadcast below - same "strictly
+    -- newer wins" idiom Core.lua's k-0019 fix uses for recipient/editors.
     if type(ns.creditsDb.configUpdatedAt) ~= "number" then
         ns.creditsDb.configUpdatedAt = 0
     end
@@ -117,61 +135,32 @@ end
 --------------------------------------------------------------------------
 -- Permission model
 --------------------------------------------------------------------------
--- Designated Officers list itself: guild-leader-settable only (same
--- tier as Core.lua's CanManageRecipient, not CanManageEditors' rank<=3)
--- - per design doc's "Officer role" section: "guild-leader-settable,
--- guild-roster-verified on receipt... IsAuthorAccount() override
--- applies same as everywhere else."
-function ns.CanManageCreditsOfficers()
-    if not ns.IsInTargetGuild() then return false end
-    if DHTools.IsAuthorAccount and DHTools.IsAuthorAccount() then return true end
-    return ns.IsGuildLeader(UnitName("player"))
-end
-
--- Whether `name` is a currently known Designated Officer, verified
--- against THIS client's own synced copy of ns.creditsDb.officers -
--- never a self-asserted claim. Same fail-closed philosophy as
--- ns.IsGuildLeader/ns.CanEditList (Core.lua).
-function ns.IsCreditsOfficer(name)
-    if not name or not ns.creditsDb then return false end
-    local norm = ns.NormalizeName(name)
-    for _, officer in ipairs(ns.creditsDb.officers) do
-        if ns.NormalizeName(officer) == norm then return true end
-    end
-    return false
-end
+-- 2026-09-28 (Chris): Designated Officers is no longer a Credits-owned
+-- list - see this file's header comment. "Officer" status for Credits
+-- config purposes now comes straight from DH-Bavin's shared officer-
+-- roles list (Core.lua's IsOfficerName), which also grants Bavin
+-- donation-editing and Store listing management.
 
 -- LOCAL-only: whether the local player may manage Wall 2/3 config
--- (master toggle, test lists, multiplier) - any Designated Officer, or
--- the author account. Same LOCAL-only safety split as Core.lua's
+-- (master toggle, test lists, ratios) - any shared-list officer, or the
+-- author account. Same LOCAL-only safety split as Core.lua's
 -- CanEditListLocal (see that function's comment) - a function that also
 -- verifies a REMOTE sender must stay pure name-based; see
 -- IsAuthorizedConfigSender below for that side.
 function ns.CanManageCreditsConfigLocal()
     if not ns.IsInTargetGuild() then return false end
     if DHTools.IsAuthorAccount and DHTools.IsAuthorAccount() then return true end
-    return ns.IsCreditsOfficer(UnitName("player"))
+    return ns.IsOfficerName(UnitName("player"))
 end
 
 -- RECEIVE-SIDE check for an incoming CFGSET/CREDITSYNCDATA: the sender
--- must be either the guild leader (who can always touch officers/config,
--- same as CanManageCreditsOfficers above) or a currently-known
--- Designated Officer. Never trusts a self-asserted claim in the message
--- itself - same idiom Sync.lua's receive-side verification uses.
+-- must be either the guild leader or a currently-known shared-list
+-- officer. Never trusts a self-asserted claim in the message itself -
+-- same idiom Sync.lua's receive-side verification uses.
 local function IsAuthorizedConfigSender(senderShort)
     if ns.IsGuildLeader(senderShort) then return true end
-    return ns.IsCreditsOfficer(senderShort)
+    return ns.IsOfficerName(senderShort)
 end
-
--- BOOTSTRAP NOTE: a brand-new client (empty officers list, configUpdatedAt
--- 0) can only learn the officers list from a reply the GUILD LEADER sent
--- - IsGuildLeader resolves independently via the roster cache (rank 0),
--- but IsCreditsOfficer can only check against THIS client's own, not-yet-
--- populated officers list, so a non-leader officer's reply to a fresh
--- client is correctly rejected rather than trusted blind. Fails closed,
--- not a bug: during the test phase this just means the guild leader's
--- own client should be online when a fresh test alt first logs in. Worth
--- revisiting if that turns out to matter in practice.
 
 --------------------------------------------------------------------------
 -- Alt resolution (CM2, ongoing - see DH-Bavin-Credits-Design.md's "Data
@@ -439,13 +428,8 @@ end
 -- Every setter below: check permission, mutate ns.creditsDb, bump the
 -- version stamp, broadcast. Returns true/false so callers (slash
 -- commands today, a config UI later) can show a refusal.
-function ns.SetCreditsOfficers(list)
-    if not ns.CanManageCreditsOfficers() then return false end
-    ns.creditsDb.officers = list
-    ns.creditsDb.configUpdatedAt = time()
-    ns.Credits_BroadcastConfig()
-    return true
-end
+-- 2026-09-28 (Chris): SetCreditsOfficers removed - the officer list is
+-- DH-Bavin's shared one now (Core.lua's ns.SetEditors), not this file's.
 
 function ns.SetCreditsMasterToggle(enabled)
     if not ns.CanManageCreditsConfigLocal() then return false end
@@ -487,29 +471,50 @@ function ns.RemoveCreditTestSender(name)
     return true
 end
 
-function ns.SetCreditsMultiplier(value)
+-- 2026-09-28 (Chris): the old single SetCreditsMultiplier(value) is now
+-- two ratio setters, each taking an X/Y pair ("x Credits = y Rep
+-- Points" / "x Rep = y Gold") instead of one decimal. Both positive
+-- integers/numbers, no requirement that they reconcile with each other
+-- or with DH-Store's own creditGoldRatio - Chris's explicit call.
+function ns.SetCreditsPerRep(x, y)
     if not ns.CanManageCreditsConfigLocal() then return false end
-    local num = tonumber(value)
-    if not num or num <= 0 then return false end
-    ns.creditsDb.multiplier = num
+    local nx, ny = tonumber(x), tonumber(y)
+    if not nx or nx <= 0 or not ny or ny <= 0 then return false end
+    ns.creditsDb.creditsPerRep = { x = nx, y = ny }
+    ns.creditsDb.configUpdatedAt = time()
+    ns.Credits_BroadcastConfig()
+    return true
+end
+
+function ns.SetRepPerGold(x, y)
+    if not ns.CanManageCreditsConfigLocal() then return false end
+    local nx, ny = tonumber(x), tonumber(y)
+    if not nx or nx <= 0 or not ny or ny <= 0 then return false end
+    ns.creditsDb.repPerGold = { x = nx, y = ny }
     ns.creditsDb.configUpdatedAt = time()
     ns.Credits_BroadcastConfig()
     return true
 end
 
 --------------------------------------------------------------------------
--- Sync: own prefix (DHBavinCreditsV1), isolated from Sync.lua's DHBavinV4
+-- Sync: own prefix (DHBavinCreditsV2 as of 2026-09-28), isolated from
+-- Sync.lua's DHBavinV4
 --------------------------------------------------------------------------
 -- PROTOCOL (guild-only, no RAID/PARTY fallback - same as Sync.lua):
---   CFGSET|officersCSV|toggle(0/1)|receiversCSV|sendersCSV|multiplier|updatedAt
---       - full-replace broadcast of everything this file owns (officers
---         + Wall 2/3 config), sent by the setters above AFTER their own
---         permission gate has already passed. Applied by a receiver
---         only if updatedAt is strictly newer than its own AND the
---         sender is guild-leader-or-officer verified (see
+--   CFGSET|toggle(0/1)|receiversCSV|sendersCSV|crX|crY|rgX|rgY|updatedAt
+--       - full-replace broadcast of everything this file owns (Wall 2/3
+--         config: toggle, test lists, Credit/Rep ratio crX/crY,
+--         Rep/Gold ratio rgX/rgY), sent by the setters above AFTER
+--         their own permission gate has already passed. Applied by a
+--         receiver only if updatedAt is strictly newer than its own AND
+--         the sender is guild-leader-or-officer verified (see
 --         IsAuthorizedConfigSender above) - last-writer-wins, same
---         idiom as Core.lua's k-0019 fix.
---   CREDITSYNCREQ             - "send me current officers/config"
+--         idiom as Core.lua's k-0019 fix. 2026-09-28 (Chris): dropped
+--         officersCSV (officer list is DH-Bavin's shared EDITORS
+--         broadcast now) and replaced the single multiplier field with
+--         the two ratio pairs - non-additive shape change, hence the
+--         V1->V2 prefix bump below.
+--   CREDITSYNCREQ             - "send me current config"
 --                                (unconditional - same GATING philosophy
 --                                as Sync.lua's SYNCREQ)
 --   CREDITSYNCDATA|<same payload as CFGSET>
@@ -519,7 +524,7 @@ end
 -- any time this wire format changes non-additively - a receiver on the
 -- wrong prefix version simply never gets these messages, never
 -- misparses them.
-local PREFIX = "DHBavinCreditsV1"
+local PREFIX = "DHBavinCreditsV2"
 
 local function AddonSendMessage(text, channel, target)
     if C_ChatInfo and C_ChatInfo.SendAddonMessage then
@@ -552,11 +557,13 @@ end
 
 local function EncodeConfig()
     return table.concat({
-        table.concat(ns.creditsDb.officers, ","),
         ns.creditsDb.masterToggle and "1" or "0",
         table.concat(ns.creditsDb.creditTestReceivers, ","),
         table.concat(ns.creditsDb.creditTestSenders, ","),
-        tostring(ns.creditsDb.multiplier),
+        tostring(ns.creditsDb.creditsPerRep.x),
+        tostring(ns.creditsDb.creditsPerRep.y),
+        tostring(ns.creditsDb.repPerGold.x),
+        tostring(ns.creditsDb.repPerGold.y),
         tostring(ns.creditsDb.configUpdatedAt),
     }, "|")
 end
@@ -568,16 +575,16 @@ end
 -- actually the SAFE failure mode this pattern is chosen for).
 local function ApplyIncomingConfig(payload, senderShort)
     if not IsAuthorizedConfigSender(senderShort) then return end
-    local officersCSV, toggleFlag, receiversCSV, sendersCSV, multStr, updatedAtStr =
-        payload:match("^(.-)|([01])|(.-)|(.-)|([%d%.]+)|(%d+)$")
-    if not officersCSV then return end
+    local toggleFlag, receiversCSV, sendersCSV, crXStr, crYStr, rgXStr, rgYStr, updatedAtStr =
+        payload:match("^([01])|(.-)|(.-)|([%d%.]+)|([%d%.]+)|([%d%.]+)|([%d%.]+)|(%d+)$")
+    if not toggleFlag then return end
     local updatedAt = tonumber(updatedAtStr) or 0
     if updatedAt <= (ns.creditsDb.configUpdatedAt or 0) then return end
-    ns.creditsDb.officers = SplitCSV(officersCSV)
     ns.creditsDb.masterToggle = (toggleFlag == "1")
     ns.creditsDb.creditTestReceivers = SplitCSV(receiversCSV)
     ns.creditsDb.creditTestSenders = SplitCSV(sendersCSV)
-    ns.creditsDb.multiplier = tonumber(multStr) or DEFAULT_MULTIPLIER
+    ns.creditsDb.creditsPerRep = { x = tonumber(crXStr) or DEFAULT_CREDITS_PER_REP.x, y = tonumber(crYStr) or DEFAULT_CREDITS_PER_REP.y }
+    ns.creditsDb.repPerGold = { x = tonumber(rgXStr) or DEFAULT_REP_PER_GOLD.x, y = tonumber(rgYStr) or DEFAULT_REP_PER_GOLD.y }
     ns.creditsDb.configUpdatedAt = updatedAt
     ns.Credits_EvaluateArming() -- config just changed - re-check Wall 4
     -- Live-refresh CreditsConfig.lua's window if an officer has it open
@@ -733,8 +740,9 @@ local function ShowCreditsStatus()
         return
     end
     ns.CreditsPrint("Master toggle: " .. (ns.creditsDb.masterToggle and "|cff33ff33ON|r" or "|cffff3333OFF|r"))
-    ns.CreditsPrint("Multiplier: " .. ns.creditsDb.multiplier .. " credits per point")
-    ns.CreditsPrint("Officers: " .. (#ns.creditsDb.officers > 0 and table.concat(ns.creditsDb.officers, ", ") or "none"))
+    ns.CreditsPrint("Credit/Rep ratio: " .. ns.creditsDb.creditsPerRep.x .. " Credits = " .. ns.creditsDb.creditsPerRep.y .. " Rep Points")
+    ns.CreditsPrint("Rep/Gold ratio: " .. ns.creditsDb.repPerGold.x .. " Rep = " .. ns.creditsDb.repPerGold.y .. " Gold (*not used currently)")
+    ns.CreditsPrint("Officers: shared list, managed on the Officer Settings page")
     ns.CreditsPrint("Test receivers (inbox hook): " .. (#ns.creditsDb.creditTestReceivers > 0 and table.concat(ns.creditsDb.creditTestReceivers, ", ") or "none"))
     ns.CreditsPrint("Test senders (outgoing hook): " .. (#ns.creditsDb.creditTestSenders > 0 and table.concat(ns.creditsDb.creditTestSenders, ", ") or "none"))
     ns.CreditsPrint("This character armed: inbox=" .. tostring(ns.creditsArmedInbox) .. " outgoing=" .. tostring(ns.creditsArmedOutgoing))
@@ -762,13 +770,25 @@ function ns.Credits_HandleSlash(rest)
         else
             ns.CreditsPrint("Refused - Designated Officer or author account only.")
         end
-    elseif sub == "multiplier" then
-        if arg1 == "" then
-            ns.CreditsPrint("Usage: /dhb credits multiplier <positive number>")
-        elseif ns.SetCreditsMultiplier(arg1) then
-            ns.CreditsPrint("Multiplier set to " .. arg1 .. " credits per point.")
+    elseif sub == "creditsperrep" then
+        local x, y = arg1, arg2
+        if x == "" or y == "" then
+            ns.CreditsPrint("Usage: /dhb credits creditsperrep <X> <Y>  (means X Credits = Y Rep Points). Current: " ..
+                ns.creditsDb.creditsPerRep.x .. " Credits = " .. ns.creditsDb.creditsPerRep.y .. " Rep Points.")
+        elseif ns.SetCreditsPerRep(x, y) then
+            ns.CreditsPrint("Credit/Rep ratio set to " .. x .. " Credits = " .. y .. " Rep Points.")
         else
-            ns.CreditsPrint("Refused - not a positive number, or you're not a Designated Officer/author account.")
+            ns.CreditsPrint("Refused - both must be positive numbers, or you're not a shared-list officer/author account.")
+        end
+    elseif sub == "reppergold" then
+        local x, y = arg1, arg2
+        if x == "" or y == "" then
+            ns.CreditsPrint("Usage: /dhb credits reppergold <X> <Y>  (means X Rep = Y Gold; not used by anything yet). Current: " ..
+                ns.creditsDb.repPerGold.x .. " Rep = " .. ns.creditsDb.repPerGold.y .. " Gold.")
+        elseif ns.SetRepPerGold(x, y) then
+            ns.CreditsPrint("Rep/Gold ratio set to " .. x .. " Rep = " .. y .. " Gold (not used by anything yet).")
+        else
+            ns.CreditsPrint("Refused - both must be positive numbers, or you're not a shared-list officer/author account.")
         end
     elseif sub == "reset" then
         if arg1 ~= "confirm" then
@@ -779,40 +799,9 @@ function ns.Credits_HandleSlash(rest)
             ns.CreditsPrint("Refused - Designated Officer or author account only.")
         end
 
-    elseif sub == "officer" then
-        if arg1 == "add" and arg2 ~= "" then
-            local list = {}
-            for _, n in ipairs(ns.creditsDb.officers) do table.insert(list, n) end
-            if ListContains(list, arg2) then
-                ns.CreditsPrint(arg2 .. " is already a Designated Officer.")
-            elseif not ns.CanManageCreditsOfficers() then
-                ns.CreditsPrint("Refused - guild leader or author account only.")
-            else
-                table.insert(list, arg2)
-                ns.SetCreditsOfficers(list)
-                ns.CreditsPrint("Added " .. arg2 .. " as a Designated Officer.")
-            end
-        elseif arg1 == "remove" and arg2 ~= "" then
-            local list = {}
-            local found = false
-            for _, n in ipairs(ns.creditsDb.officers) do
-                if ns.NormalizeName(n) ~= ns.NormalizeName(arg2) then
-                    table.insert(list, n)
-                else
-                    found = true
-                end
-            end
-            if not found then
-                ns.CreditsPrint(arg2 .. " isn't a Designated Officer.")
-            elseif not ns.CanManageCreditsOfficers() then
-                ns.CreditsPrint("Refused - guild leader or author account only.")
-            else
-                ns.SetCreditsOfficers(list)
-                ns.CreditsPrint("Removed " .. arg2 .. " as a Designated Officer.")
-            end
-        else
-            ns.CreditsPrint("Usage: /dhb credits officer add|remove <name>")
-        end
+    -- 2026-09-28 (Chris): "/dhb credits officer add|remove" removed -
+    -- the officer list is DH-Bavin's shared one now, managed on the
+    -- Officer Settings page (there is no slash command for it).
 
     elseif sub == "receiver" then
         if arg1 == "add" and arg2 ~= "" then

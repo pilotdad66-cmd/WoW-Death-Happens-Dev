@@ -33,21 +33,36 @@ function ns.InitDB()
         DHStoreDB = {}
     end
     ns.db = DHStoreDB
-    if type(ns.db.officers) ~= "table" then
-        ns.db.officers = {}
-    end
+    -- 2026-09-28 (Chris): ns.db.officers removed - Store Officer status
+    -- now comes from DH-Bavin's shared officer-roles list instead (see
+    -- IsStoreOfficerName below). No migration needed - Store was "NOT
+    -- YET IN-GAME TESTED" as of this same change, so no real officer
+    -- data exists to carry forward. ns.db.officersUpdatedAt is kept
+    -- (still stamped by primaryOfficer changes, see SetPrimaryOfficer).
     if type(ns.db.catalog) ~= "table" then
         ns.db.catalog = {}
     end
     ns.db.officersUpdatedAt = ns.db.officersUpdatedAt or 0
     ns.db.catalogUpdatedAt = ns.db.catalogUpdatedAt or 0
-    -- creditGoldRatio: UPDATED 2026-09-28 (Chris) - 1 credit = 1 gold,
-    -- superseding the earlier 10-credits-per-gold figure (was correct
-    -- as of question #5's original note, changed by Chris this
-    -- session). `== nil` (not `or 1`) so an officer's own explicit
-    -- change - including one that happens to also be 1 - is never
-    -- silently re-stamped as "still the default" on a later login.
-    if ns.db.creditGoldRatio == nil then ns.db.creditGoldRatio = 1 end
+    -- creditGoldRatio: UPDATED AGAIN 2026-09-28 (Chris, item 4/5) - was
+    -- a single decimal ("credits per gold"), now an {x=,y=} pair
+    -- meaning "X Credits = Y Gold", same shape and reasoning as
+    -- DHBavin\Credits.lua's creditsPerRep/repPerGold (that file's own
+    -- header comment has the full writeup - Chris: 3 independent
+    -- ratios, not required to reconcile with each other). Default 1
+    -- Credit = 1 Gold carries over unchanged in the new shape. Type-
+    -- checked (not just nil-checked) so a stale pre-conversion decimal
+    -- left in an existing SavedVariables file is replaced with the
+    -- table default rather than crashing ComputePrices below.
+    -- NOT YET SYNCED to the rest of the guild (this module has no wire
+    -- message for it - Sync.lua never broadcasts ns.db.creditGoldRatio
+    -- today, decimal or table); an officer's change here is local to
+    -- their own client until that's built. Pre-existing gap, not
+    -- introduced by this change - noted for whoever wires up the
+    -- Currency/Conversion UI's Credit/Gold row.
+    if type(ns.db.creditGoldRatio) ~= "table" or type(ns.db.creditGoldRatio.x) ~= "number" then
+        ns.db.creditGoldRatio = { x = 1, y = 1 }
+    end
     if ns.db.discountAppliesToGold == nil then ns.db.discountAppliesToGold = true end
     if ns.db.discountAppliesToCredits == nil then ns.db.discountAppliesToCredits = true end
     -- Repoint the runtime table at the persistent one, same pattern as
@@ -88,14 +103,14 @@ local function IsDonationRecipientName(name)
     return recipient ~= nil and NormalizeName(recipient) == NormalizeName(name)
 end
 
--- Tier 4: Store's own officer list.
+-- Tier 4 (2026-09-28, Chris): no more Store-specific officer list - this
+-- now reads DH-Bavin's single shared "assignable officer roles" list
+-- (also used by Bavin's own donation-editing and Credits config), so
+-- adding someone as an officer once grants Store listing management
+-- too, not a separate roster to maintain in three places. See
+-- DHBavin\Core.lua's IsOfficerName/CanSetEditorsName 2026-09-28 comment.
 function ns.IsStoreOfficerName(name)
-    if not name or not ns.db then return false end
-    local norm = NormalizeName(name)
-    for _, officer in ipairs(ns.db.officers) do
-        if NormalizeName(officer) == norm then return true end
-    end
-    return false
+    return DHTools.Bavin.IsOfficerName(name)
 end
 
 -- Tiers 1-4: create/edit listings, mark sold, unpend.
@@ -108,8 +123,15 @@ function ns.CanManageListings(name)
     return false
 end
 
--- Tiers 1-3: manage the Store Officer roster + primary officer
--- (question #6.4: officers themselves cannot add other officers).
+-- 2026-09-28 (Chris): the shared officer list itself is now managed
+-- entirely through DH-Bavin (Officer Settings page / ns.SetEditors) -
+-- this function is NO LONGER about the officer roster at all, only
+-- about who may set the PRIMARY Store Officer (question #6.4's tier-4
+-- exclusion - "officers themselves cannot add other officers" carries
+-- over as "officers cannot name the primary officer either"), which
+-- Chris asked to keep as its own separate field. Name kept as
+-- CanManageStoreOfficers to avoid touching every call site for what's
+-- now a narrower, single-purpose gate.
 function ns.CanManageStoreOfficers(name)
     if not name then return false end
     if IsAuthorOverrideName(name) then return true end
@@ -130,6 +152,22 @@ end
 function ns.CanManageStoreOfficersLocal()
     if DHTools.IsAuthorAccount and DHTools.IsAuthorAccount() then return true end
     return ns.CanManageStoreOfficers(UnitName("player"))
+end
+
+-- Sets the Credit/Gold ratio ("X Credits = Y Gold" - see InitDB's
+-- comment). Gated the same as listing management (CanManageListingsLocal
+-- - any shared-list officer, guild leader, donation recipient, or the
+-- author account), matching DHBavin\Credits.lua's SetCreditsPerRep/
+-- SetRepPerGold gate (CanManageCreditsConfigLocal) for the other two
+-- ratios - a config value any tier-1-4 person can tune, not restricted
+-- to whoever manages the officer list itself. LOCAL ONLY for now - see
+-- InitDB's "NOT YET SYNCED" note; this does not broadcast to the guild.
+function ns.SetCreditGoldRatio(x, y)
+    if not ns.CanManageListingsLocal() then return false end
+    local nx, ny = tonumber(x), tonumber(y)
+    if not nx or nx <= 0 or not ny or ny <= 0 then return false end
+    ns.db.creditGoldRatio = { x = nx, y = ny }
+    return true
 end
 
 --------------------------------------------------------------------------
@@ -173,8 +211,9 @@ end
 
 -- Returns { goldBase, goldFinal, creditBase (or nil), creditFinal (or
 -- nil), discountPercent } for one listing, computed for the LOCAL
--- viewer. creditBase/creditFinal stay nil until an officer configures
--- ns.db.creditGoldRatio (see InitDB's comment).
+-- viewer. creditBase/creditFinal stay nil only if ns.db.creditGoldRatio
+-- is somehow missing entirely - InitDB always gives it a default, so in
+-- practice this is always populated (see InitDB's comment).
 function ns.ComputePrices(listing)
     local goldBase = listing.goldPrice or 0
     local pct = ns.GetLocalDiscountPercent()
@@ -183,8 +222,9 @@ function ns.ComputePrices(listing)
 
     local creditBase, creditFinal
     local ratio = ns.db.creditGoldRatio
-    if ratio then
-        creditBase = math.floor(goldBase * ratio)
+    if ratio and ratio.y and ratio.y ~= 0 then
+        -- ratio means "X Credits = Y Gold", so credits = gold * (X/Y).
+        creditBase = math.floor(goldBase * (ratio.x / ratio.y))
         creditFinal = ns.db.discountAppliesToCredits
             and math.floor(creditBase * (100 - pct) / 100) or creditBase
     end
@@ -780,17 +820,15 @@ SlashCmdList["DHSTORE"] = function(msg)
             ns.Store_Refresh()
         end
     elseif cmd == "officers" then
-        if not ns.CanManageStoreOfficersLocal() then
-            ns.Print("Refused - you must be the guild leader, the donation recipient, or the author account.")
-        elseif rest == "" then
-            ns.Print("Current Store Officers: " .. table.concat(ns.db.officers, ", "))
+        -- 2026-09-28 (Chris): read-only here now - Store Officers are
+        -- DH-Bavin's shared officer-roles list, managed from the
+        -- Officer Settings page (or /dhb) instead of a Store-specific
+        -- setter.
+        local list = (DHTools.Bavin.db and DHTools.Bavin.db.editors) or {}
+        if #list == 0 then
+            ns.Print("No Store Officers set - manage the shared officer list from DH-Tools' Officer Settings page.")
         else
-            local list = {}
-            for name in rest:gmatch("[^,]+") do
-                table.insert(list, (name:match("^%s*(.-)%s*$")))
-            end
-            ns.SetStoreOfficers(list)
-            ns.Print("Store Officers set to: " .. table.concat(list, ", "))
+            ns.Print("Current Store Officers (shared officer-roles list): " .. table.concat(list, ", "))
         end
     elseif cmd == "primary" then
         if not ns.CanManageStoreOfficersLocal() then

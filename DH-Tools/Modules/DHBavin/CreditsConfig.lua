@@ -36,22 +36,26 @@
 --      deferred. Noted so it isn't forgotten, not because it's coming
 --      soon.
 --   4. Guild leader + Loopi (IsAuthorAccount) - manages who holds the
---      Designated Officer role (ns.CanManageCreditsOfficers, built in
---      Credits.lua) and, unchanged on the existing Config.lua page,
---      the DH-Bavin recipient (Bavin.CanManageRecipient).
+--      shared officer role (ns.CanSetEditorsName/ns.SetEditors,
+--      Core.lua) via DH-Tools Config.lua's Officer Settings page, not
+--      here (2026-09-28, Chris: officer roles combined into one list
+--      across Bavin/Store/Credits and moved off this window - see
+--      that section's own header comment). The DH-Bavin recipient
+--      (Bavin.CanManageRecipient) stays on the Config.lua page too,
+--      unchanged.
 --
 -- Tiers 2 and 4's Settings tab below is what CM1 actually builds today:
--- master toggle, multiplier, both Wall 2 test lists, and the
--- Designated Officers list itself (that last one further gated to tier
--- 4 within this same tab - see BuildSettingsTab's returned refresh
--- closure). Roster/Review Queue/Audit Log tabs are placeholders (CM2/CM7
--- own that data).
+-- master toggle and both Wall 2 test lists (2026-09-28, Chris: officer
+-- roles and the currency ratios removed from this tab entirely - see
+-- BuildSettingsTab's own comment). Roster/Review Queue/Audit Log tabs
+-- are placeholders (CM2/CM7 own that data).
 --
 -- GATING: same refuse-outright-on-open philosophy as PointsEditor.lua/
--- PriorityEditor.lua - if the caller can neither manage credits config
--- locally (any Designated Officer, or the author account) nor manage
--- the officers list (guild leader, or the author account), the window
--- never opens. Closing is always allowed.
+-- PriorityEditor.lua - if the caller cannot manage credits config
+-- locally (any shared-list officer, or the author account) the window
+-- never opens (2026-09-28: dropped the separate "manage the officers
+-- list" branch of this check - that's the Officer Settings page's gate
+-- now, not this window's). Closing is always allowed.
 
 local DHTools = DHTools
 local ns = DHTools.Bavin
@@ -282,11 +286,19 @@ end
 --------------------------------------------------------------------------
 -- Settings tab - CM1's actual deliverable. Wires directly to the
 -- setters Credits.lua already built and permission-checks internally
--- (SetCreditsMasterToggle, SetCreditsMultiplier, AddCreditTestReceiver/
--- RemoveCreditTestReceiver, AddCreditTestSender/RemoveCreditTestSender,
--- SetCreditsOfficers) - this file adds no new permission logic of its
--- own, only UI on top of what's already gated. Returns a refresh
--- closure the outer frame calls on open/tab-switch/incoming sync.
+-- (SetCreditsMasterToggle, AddCreditTestReceiver/
+-- RemoveCreditTestReceiver, AddCreditTestSender/RemoveCreditTestSender)
+-- - this file adds no new permission logic of its own, only UI on top
+-- of what's already gated. Returns a refresh closure the outer frame
+-- calls on open/tab-switch/incoming sync.
+--
+-- 2026-09-28 (Chris, item 5): the Designated Officers list and the
+-- multiplier/ratio controls that used to live in this tab are REMOVED
+-- - officer roles are now the shared list managed on DH-Tools
+-- Config.lua's Officer Settings page (Core.lua's ns.SetEditors), and
+-- the 3 currency ratios (Credit/Rep, Rep/Gold, Credit/Gold) moved to
+-- that same page's new Currency/Conversion section. This tab is left
+-- with just the master toggle and the two Wall 2 test lists.
 --------------------------------------------------------------------------
 local function BuildSettingsTab(content)
     local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -298,7 +310,7 @@ local function BuildSettingsTab(content)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
-    hint:SetText("Master toggle, credit multiplier, and both Wall 2 test lists are any Designated Officer. The Designated Officers list itself is guild leader/author only.")
+    hint:SetText("Master toggle and both Wall 2 test lists are any shared-list officer. Officer roles and the currency ratios now live on the Officer Settings page (DH-Tools Config), not here.")
 
     local statusText = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     statusText:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", 0, -10)
@@ -317,69 +329,7 @@ local function BuildSettingsTab(content)
         ns.CreditsConfig_Refresh()
     end)
 
-    local multLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    multLabel:SetPoint("TOPLEFT", toggleCheck, "BOTTOMLEFT", 2, -16)
-    multLabel:SetText("Multiplier (credits per point):")
-
-    local multEdit = CreateFrame("EditBox", nil, content, "InputBoxTemplate")
-    multEdit:SetSize(60, 20)
-    multEdit:SetPoint("LEFT", multLabel, "RIGHT", 8, -2)
-    multEdit:SetAutoFocus(false)
-    multEdit:SetMaxLetters(8)
-    multEdit:SetScript("OnEscapePressed", multEdit.ClearFocus)
-
-    local multBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-    multBtn:SetSize(50, 20)
-    multBtn:SetText("Set")
-    multBtn:SetPoint("LEFT", multEdit, "RIGHT", 6, 0)
-
-    local multStatus = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    multStatus:SetPoint("LEFT", multBtn, "RIGHT", 8, 0)
-
-    local function TrySetMultiplier()
-        local typed = multEdit:GetText()
-        multEdit:ClearFocus()
-        if ns.SetCreditsMultiplier(typed) then
-            multStatus:SetText("|cff33ff99Set!|r")
-            C_Timer.After(2, function() multStatus:SetText("") end)
-            ns.CreditsConfig_Refresh()
-        else
-            multStatus:SetText("|cffff3333Refused|r")
-        end
-    end
-    multBtn:SetScript("OnClick", TrySetMultiplier)
-    multEdit:SetScript("OnEnterPressed", TrySetMultiplier)
-
-    local officers = CreateNameListSection(content, function() return multLabel end, {
-        title = "Designated Officers",
-        hint = "Guild leader/author only can add or remove names here. Anyone listed gets full access to the rest of this Settings tab (toggle, multiplier, both test lists below).",
-        getList = function() return (ns.creditsDb and ns.creditsDb.officers) or {} end,
-        addFn = function(name)
-            if not ns.CanManageCreditsOfficers() then return false end
-            local norm = ns.NormalizeName(name)
-            for _, n in ipairs(ns.creditsDb.officers) do
-                if ns.NormalizeName(n) == norm then return false end -- already present
-            end
-            local list = {}
-            for _, n in ipairs(ns.creditsDb.officers) do table.insert(list, n) end
-            table.insert(list, name)
-            return ns.SetCreditsOfficers(list)
-        end,
-        removeFn = function(name)
-            if not ns.CanManageCreditsOfficers() then return false end
-            local norm = ns.NormalizeName(name)
-            local list = {}
-            for _, n in ipairs(ns.creditsDb.officers) do
-                if ns.NormalizeName(n) ~= norm then table.insert(list, n) end
-            end
-            return ns.SetCreditsOfficers(list)
-        end,
-        canManageFn = ns.CanManageCreditsOfficers,
-        rowCount = 8,
-        lockedText = "|cffff3333Guild leader/author only.|r",
-    })
-
-    local receivers = CreateNameListSection(content, officers.GetBottomAnchor, {
+    local receivers = CreateNameListSection(content, function() return toggleCheck end, {
         title = "Test Receivers (inbox hook - Wall 2)",
         hint = "Characters listed here get the TEST inbox-mail credit hook turned on for them once logged in, but only while the master toggle above is ON. Isolated from the live donation flow - safe to experiment with.",
         getList = function() return (ns.creditsDb and ns.creditsDb.creditTestReceivers) or {} end,
@@ -453,22 +403,14 @@ local function BuildSettingsTab(content)
             tostring(ns.creditsArmedInbox), tostring(ns.creditsArmedOutgoing)))
 
         toggleCheck:SetChecked(ns.creditsDb.masterToggle)
-        if not multEdit:HasFocus() then
-            multEdit:SetText(tostring(ns.creditsDb.multiplier))
-        end
 
         local canConfig = ns.CanManageCreditsConfigLocal()
         if canConfig then
             toggleCheck:Enable()
-            multEdit:Enable()
-            multBtn:Enable()
         else
             toggleCheck:Disable()
-            multEdit:Disable()
-            multBtn:Disable()
         end
 
-        officers.Refresh()
         receivers.Refresh()
         senders.Refresh()
 
@@ -1549,13 +1491,14 @@ function ns.CreditsConfig_Refresh()
 end
 
 -- Refuses outright (no frame created/shown) unless the caller can
--- either manage credits config locally (any Designated Officer, or the
--- author account) or manage the officers list (guild leader, or the
+-- manage credits config locally (any shared-list officer, or the
 -- author account) - same gating philosophy as PointsEditor.lua/
--- PriorityEditor.lua's CanEditList checks.
+-- PriorityEditor.lua's CanEditList checks. (2026-09-28: dropped the
+-- separate "manage the officers list" branch - that's gated on the
+-- Officer Settings page now, not here.)
 function ns.CreditsConfig_Open()
-    if not (ns.CanManageCreditsConfigLocal() or ns.CanManageCreditsOfficers()) then
-        ns.Print("Only a Designated Officer, the guild leader, or the author account can open Bavin Rep & Credit Config.")
+    if not ns.CanManageCreditsConfigLocal() then
+        ns.Print("Only a shared-list officer or the author account can open Bavin Rep & Credit Config.")
         return
     end
     if not frame then

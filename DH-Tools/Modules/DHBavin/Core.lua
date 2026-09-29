@@ -254,25 +254,42 @@ function ns.CanSetRecipientName(name)
     return RECIPIENT_MANAGER_NAMES[NormalizeName(name)] == true
 end
 
--- 2026-08-05 (Loopi): editor assignment is gated separately from the
--- recipient above - any officer (rankIndex <= 3) or Loopidot, verified
--- live against THIS client's own guild roster cache, never a
--- self-asserted claim. Fails CLOSED if the roster hasn't loaded or the
--- name is unknown, same philosophy as IsGuildLeader. Also the
+-- 2026-09-28 (Chris): editor/officer-list MANAGEMENT is now gated the
+-- SAME as recipient management - guild leader, the current recipient,
+-- or Loopidot - not a rank threshold. This is Bavin/Store/Credits'
+-- single shared "assignable officer roles" list per Chris's feedback:
+-- being an OFFICER (a name IN the list, see IsOfficerName below) still
+-- grants Bavin donation-editing, Store listing management, and Credits
+-- config access same as before, but who can ADD/REMOVE names from that
+-- list is now tightened to match Store's and Credits' existing
+-- threshold (the strictest of the three that used to exist), rather
+-- than loosening those two down to Bavin's old rank<=3. Also the
 -- RECEIVE-SIDE check Sync.lua uses to verify an incoming EDITORS
--- broadcast's claimed sender.
+-- broadcast's claimed sender - the wire message name and storage key
+-- (ns.db.editors, "EDITORS") are deliberately left unchanged; only the
+-- meaning and the management threshold changed, to avoid a protocol/
+-- SavedVariables migration for what's purely an internal rename.
 function ns.CanSetEditorsName(name)
     if not name then return false end
-    if NormalizeName(name) == FULL_PERMISSION_OVERRIDE_NAME then return true end
-    local entry = ns.guildRoster[NormalizeName(name)]
-    -- 2026-09-28 (Chris item 7): threshold is now configurable via the
-    -- new Officer Settings page (DHTools.db.officerVisibleMaxRank,
-    -- default 3) instead of a hardcoded 3 - everything else about this
-    -- check (own roster cache, own Loopidot literal above) is
-    -- deliberately untouched, see Core.lua's Officer permission section
-    -- for why this isn't just delegated to the new shared function.
-    local maxRank = (DHTools.db and DHTools.db.officerVisibleMaxRank) or 3
-    return entry ~= nil and entry.rankIndex ~= nil and entry.rankIndex <= maxRank
+    if ns.IsGuildLeader(name) then return true end -- covers Loopidot too
+    if ns.db.recipient and NormalizeName(ns.db.recipient) == NormalizeName(name) then return true end
+    return false
+end
+
+-- Whether `name` is currently one of the shared officer roles (formerly
+-- "Bavin Editors", now also Store's officers and Credits' Designated
+-- Officers - see CanSetEditorsName's 2026-09-28 comment above). Plain
+-- membership check, no guild-membership/rank requirement of its own -
+-- callers that need "must still be in the guild" layer that on
+-- separately (CanEditList does; Store/Credits' own permission functions
+-- do too).
+function ns.IsOfficerName(name)
+    if not name or not ns.db then return false end
+    local norm = NormalizeName(name)
+    for _, officer in ipairs(ns.db.editors) do
+        if NormalizeName(officer) == norm then return true end
+    end
+    return false
 end
 
 -- Whether the LOCAL player can manage the recipient right now. 2026-08-05:
@@ -497,10 +514,11 @@ function ns.SetRecipient(name)
     return true
 end
 
--- Full-replace, officer-only (rankIndex <= 3, or Loopidot) - same
--- "send the whole small set" simplicity as the Design doc's other short
--- lists. 2026-08-05: gated by CanManageEditors, not CanManageRecipient -
--- the two are separately scoped now (see the Permission model section).
+-- Full-replace, guild-leader/recipient/Loopidot-only as of 2026-09-28
+-- (see CanSetEditorsName above) - same "send the whole small set"
+-- simplicity as the Design doc's other short lists. Gated by
+-- CanManageEditors, not CanManageRecipient - the two are separately
+-- scoped (see the Permission model section).
 function ns.SetEditors(list)
     if not ns.CanManageEditors() then return false end
     ns.db.editors = list
