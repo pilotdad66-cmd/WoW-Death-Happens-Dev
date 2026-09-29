@@ -444,9 +444,16 @@ local function CreateMobMarkerPanel(parent)
     -- hotkey below. Off by default: tracked mobs mark on sight (nameplate
     -- visible), no mouseover needed. Writes live, no Update click needed,
     -- same as the hotkey dropdowns below.
+    -- 2026-09-28 (Chris-reported): was anchored to updateBtn's BOTTOMLEFT,
+    -- but updateBtn sits to the RIGHT of clearAllBtn now that the two
+    -- share one row (see the 2026-09-28 comment above) - that dragged
+    -- this checkbox, and everything chained below it for the rest of the
+    -- page, well right of the actual left margin. Anchor to clearAllBtn
+    -- (the left-most button on that shared row, same height/row as
+    -- updateBtn) instead, so the left margin is restored.
     local requireMouseoverCheck = CreateFrame("CheckButton", "DHToolsMMRequireMouseoverCheck", content, "UICheckButtonTemplate")
     requireMouseoverCheck:SetSize(24, 24)
-    requireMouseoverCheck:SetPoint("TOPLEFT", updateBtn, "BOTTOMLEFT", -4, -14)
+    requireMouseoverCheck:SetPoint("TOPLEFT", clearAllBtn, "BOTTOMLEFT", -4, -14)
 
     local requireMouseoverLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     requireMouseoverLabel:SetPoint("LEFT", requireMouseoverCheck, "RIGHT", 2, 0)
@@ -998,15 +1005,19 @@ local function CreateDangerPanel(parent)
         prevAlertOnText = checkText
     end
 
-    -- Anchored under the row's LEFT edge (firstAlertOnCheck), indented to
-    -- read as belonging to the row above rather than the window's left
-    -- margin (Loopi, 2026-08-14 - same indent amount, now relative to
-    -- the row's start instead of trailing the 3rd option specifically
-    -- now that all three sit on one row, 2026-09-28). Low/High/value
-    -- text sized down to GameFontHighlightSmall for the same reason - a
-    -- smaller, tighter control looks like it's part of the row above it.
+    -- 2026-09-28 (Chris): shares the SAME row as the three radio options
+    -- instead of sitting on its own row below them - there's room, and
+    -- prevAlertOnText is left pointing at the LAST option's text after
+    -- the loop above, which happens to be "X Levels Below Me" (the very
+    -- option this slider belongs to - DANGER_ALERT_ON_OPTIONS' own
+    -- order), so anchoring off it puts the slider right next to its own
+    -- radio option. "LEFT" (not TOPLEFT) matches the checkboxes'
+    -- own anchor style further up this same loop, keeping everything on
+    -- the row vertically centered together. Low/High/value text stay
+    -- sized down to GameFontHighlightSmall - a smaller, tighter control
+    -- reads as part of the row it's on rather than a separate section.
     belowSlider = CreateFrame("Slider", "DHToolsDangerBelowSlider", content, "OptionsSliderTemplate")
-    belowSlider:SetPoint("TOPLEFT", firstAlertOnCheck, "BOTTOMLEFT", 24, -6)
+    belowSlider:SetPoint("LEFT", prevAlertOnText, "RIGHT", 20, 0)
     belowSlider:SetWidth(160)
     belowSlider:SetMinMaxValues(1, 20)
     belowSlider:SetValueStep(1)
@@ -1045,7 +1056,15 @@ local function CreateDangerPanel(parent)
     end
 
     local repeatDelayLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    repeatDelayLabel:SetPoint("TOPLEFT", belowSlider, "BOTTOMLEFT", -24, -16)
+    -- 2026-09-28: was anchored off belowSlider's BOTTOMLEFT with a -24 x
+    -- correction back to the left margin, from when belowSlider sat
+    -- indented on its own row below firstAlertOnCheck. Now that
+    -- belowSlider shares the radio row instead (see above), anchor
+    -- directly to firstAlertOnCheck's own BOTTOMLEFT - the stable left-
+    -- margin reference for that whole row, present and positioned the
+    -- same regardless of which alertOn option is selected (belowSlider
+    -- itself is hidden except when "below" is picked).
+    repeatDelayLabel:SetPoint("TOPLEFT", firstAlertOnCheck, "BOTTOMLEFT", 0, -16)
     repeatDelayLabel:SetText("Repeat Alert Delay:")
 
     local repeatDelaySlider = CreateFrame("Slider", "DHToolsDangerRepeatDelaySlider", content, "OptionsSliderTemplate")
