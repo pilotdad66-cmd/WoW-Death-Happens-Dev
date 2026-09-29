@@ -555,9 +555,9 @@ local function BuildRosterTab(content)
     -- Requires rosterContent's own TOPRIGHT anchor (CreateWindow, below)
     -- so headerRow/each row's RIGHT edge actually tracks a resize.
     local COL_GAP = 8
-    local RANK_WIDTH = 26
+    local RANK_WIDTH = 42 -- room for the sort arrow beside "Rank"
     local NAME_LEFT_GAP = 4
-    local TIER_WIDTH, POINTS_WIDTH, LIFETIME_WIDTH, LASTDON_WIDTH, CREDITS_WIDTH = 76, 76, 60, 86, 32
+    local TIER_WIDTH, POINTS_WIDTH, LIFETIME_WIDTH, LASTDON_WIDTH, CREDITS_WIDTH = 76, 76, 60, 86, 56
 
     local headerRow = CreateFrame("Frame", nil, content)
     headerRow:SetPoint("TOPLEFT", prevPageBtn, "BOTTOMLEFT", 0, -10)
@@ -596,10 +596,14 @@ local function BuildRosterTab(content)
         return btn
     end
 
-    local rankHeader = HeaderCell("Rank", RANK_WIDTH)
+    -- Rank / Tier / Points / Credits sortable too (2026-09-29, Loopi).
+    -- Tier and Points have no order of their own - both derive from
+    -- lifetime points - so clicking either sorts by Rank (key "rank"),
+    -- and the arrow shows on all three while that order is active.
+    local rankHeader = SortableHeaderCell("Rank", RANK_WIDTH, "rank")
     rankHeader:SetPoint("LEFT", 0, 0)
 
-    local creditsHeader = HeaderCell("Credits", CREDITS_WIDTH)
+    local creditsHeader = SortableHeaderCell("Credits", CREDITS_WIDTH, "credits")
     creditsHeader:SetPoint("RIGHT", headerRow, "RIGHT", 0, 0)
 
     local lastDonationHeader = SortableHeaderCell("Last Donation", LASTDON_WIDTH, "lastDonationDate")
@@ -608,10 +612,10 @@ local function BuildRosterTab(content)
     local lifetimeHeader = SortableHeaderCell("Lifetime", LIFETIME_WIDTH, "lifetimePoints")
     lifetimeHeader:SetPoint("RIGHT", lastDonationHeader, "LEFT", -COL_GAP, 0)
 
-    local pointsHeader = HeaderCell("Points", POINTS_WIDTH)
+    local pointsHeader = SortableHeaderCell("Points", POINTS_WIDTH, "rank")
     pointsHeader:SetPoint("RIGHT", lifetimeHeader, "LEFT", -COL_GAP, 0)
 
-    local tierHeader = HeaderCell("Tier", TIER_WIDTH)
+    local tierHeader = SortableHeaderCell("Tier", TIER_WIDTH, "rank")
     tierHeader:SetPoint("RIGHT", pointsHeader, "LEFT", -COL_GAP, 0)
 
     -- The stretch column - see the block comment above.
@@ -718,6 +722,12 @@ local function BuildRosterTab(content)
             local av, bv
             if sortState.key == "lifetimePoints" then
                 av, bv = a.lifetimePoints or 0, b.lifetimePoints or 0
+            elseif sortState.key == "rank" then
+                -- Rank 1 = highest lifetime points, so "ascending" (rank 1
+                -- first) is lifetime descending: compare the negatives.
+                av, bv = -(a.lifetimePoints or 0), -(b.lifetimePoints or 0)
+            elseif sortState.key == "credits" then
+                av, bv = tonumber(a.credits) or 0, tonumber(b.credits) or 0
             elseif sortState.key == "lastDonationDate" then
                 av, bv = a.lastDonationDate or "", b.lastDonationDate or ""
             else
@@ -790,8 +800,12 @@ local function BuildRosterTab(content)
             end
         end
         HeaderText(nameHeader, "mainToon")
+        HeaderText(rankHeader, "rank")
+        HeaderText(tierHeader, "rank")
+        HeaderText(pointsHeader, "rank")
         HeaderText(lifetimeHeader, "lifetimePoints")
         HeaderText(lastDonationHeader, "lastDonationDate")
+        HeaderText(creditsHeader, "credits")
 
         if not ns.creditsDb then
             for _, row in ipairs(rows) do row:Hide() end
@@ -874,6 +888,10 @@ local function BuildRosterTab(content)
         Refresh()
     end)
     nameHeader:SetScript("OnClick", function() SetSort("mainToon", true) end)
+    rankHeader:SetScript("OnClick", function() SetSort("rank", true) end)
+    tierHeader:SetScript("OnClick", function() SetSort("rank", true) end)
+    pointsHeader:SetScript("OnClick", function() SetSort("rank", true) end)
+    creditsHeader:SetScript("OnClick", function() SetSort("credits", false) end)
     lifetimeHeader:SetScript("OnClick", function() SetSort("lifetimePoints", false) end)
     lastDonationHeader:SetScript("OnClick", function() SetSort("lastDonationDate", false) end)
 
