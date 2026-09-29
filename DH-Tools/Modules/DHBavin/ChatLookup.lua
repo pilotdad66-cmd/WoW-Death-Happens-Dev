@@ -12,8 +12,10 @@
 --
 -- REPLY PRIORITY (identical outcome on every client, so who happens to
 -- answer never changes what gets said):
---   1. Not tradable - Quest item or Bind on Pickup. Overrides any
---      ItemPoints entry (a price is moot if the item can't change hands).
+--   1. Not tradable - Bind on Pickup or Quest item. Overrides any
+--      ItemPoints entry (a price is moot if the item can't change
+--      hands). Terse "[Item Name] cannot be traded (BoP)"/"(Quest
+--      item)" wording, no trailing sentence (2026-09-28, Chris).
 --   2. Has data - an ItemPoints.lua entry (or a live override) with a
 --      non-nil `detail` line (ns.GetItemPoints already resolves override
 --      vs. baseline - see Core.lua's own comment on that function).
@@ -57,11 +59,21 @@ function ns.TryClassifyLookup(link)
         return nil
     end
 
-    if itemClassID == ITEM_CLASS_QUEST or bindType == BIND_ON_PICKUP then
-        -- 2026-09-13 (Loopi): wording changed at Loopi's request - was
-        -- "is not tradable and has no value other than using it or
-        -- vendoring it."
-        return "DH-Tools: cannot be traded. Use it, Vendor it, or DE it."
+    if bindType == BIND_ON_PICKUP then
+        -- 2026-09-28 (Chris): wording changed again - was "DH-Tools:
+        -- cannot be traded. Use it, Vendor it, or DE it." (no item
+        -- name, plus a now-unwanted trailing sentence). Chris's exact
+        -- spec: "DH-Tools: [Item Name] cannot be traded (BoP)", no
+        -- redundant text after it.
+        return "DH-Tools: " .. itemName .. " cannot be traded (BoP)."
+    elseif itemClassID == ITEM_CLASS_QUEST then
+        -- Not explicitly covered by Chris's 2026-09-28 wording change
+        -- (he named BoP specifically), but extended the same terse
+        -- name+reason shape here for consistency rather than leaving
+        -- this one branch with the old wordier phrasing - easy to
+        -- revert to something else if Chris wants quest items to read
+        -- differently.
+        return "DH-Tools: " .. itemName .. " cannot be traded (Quest item)."
     end
 
     -- 2026-09-13 (Loopi): pcall safety net - a hidden Lua error here
