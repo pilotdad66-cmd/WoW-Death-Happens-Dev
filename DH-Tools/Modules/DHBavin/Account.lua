@@ -396,15 +396,12 @@ function ns.Account_Refresh()
         -- different numbers don't read as a discrepancy.
         local cap = ns.CreditsTierCaps and ns.CreditsTierCaps[rec.tier]
         local curPts = math.floor((tonumber(rec.points) or 0) + 0.5)
-        local detail = "Current Tier Points: |cffffd100" .. Num(curPts) .. "|r"
-            .. "   Lifetime Points: |cffffd100" .. Num(rec.lifetimePoints) .. "|r"
-        if cap then
-            -- Counts DOWN as points are earned; at Exalted the next step is
-            -- the next Prestige lap rather than another tier.
-            local label = (rec.tier == "Exalted") and "To Next Prestige" or "To Next Tier"
-            detail = detail .. "   " .. label .. ": |cffffd100" .. Num(math.max(0, cap - curPts)) .. "|r"
-        end
-        frame.repDetail:SetText(detail)
+        -- "Tier Points: xxx/yyy" already shows how far to the next tier (yyy is
+        -- the tier's cap; at Exalted it is the prestige lap size), so there is
+        -- no separate "to next tier" number.
+        local tierPts = Num(curPts) .. (cap and ("/" .. Num(cap)) or "")
+        frame.repDetail:SetText("Tier Points: |cffffd100" .. tierPts .. "|r"
+            .. "   Total Points: |cffffd100" .. Num(rec.lifetimePoints) .. "|r")
         -- lifetimeCredits only ever goes up (credits can be spent, this can't);
         -- records saved before the field existed fall back to the balance.
         local lifeCredits = tonumber(rec.lifetimeCredits) or tonumber(rec.credits) or 0
