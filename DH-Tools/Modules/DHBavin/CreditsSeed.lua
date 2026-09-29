@@ -126,6 +126,7 @@ function ns.CreditsSeed_Import()
             alts = alts,
             points = points,
             credits = 0, -- seeded at 0 for everyone at go-live (Chris, 2026-09-25)
+            lifetimeCredits = 0, -- same go-live rule: nothing earned yet
             tier = tier,
             prestige = prestige,
             lifetimePoints = tonumber(lifetimePoints) or 0,
@@ -179,6 +180,7 @@ function ns.Credits_SetAsNewMain(altName, rawGoldAmount, latestDonation)
         alts = {},
         points = points,
         credits = 0, -- same go-live convention as CreditsSeed_Import above: credits start at 0, only lifetimePoints/tier/prestige come from history
+        lifetimeCredits = 0, -- same go-live rule as credits above
         tier = tier,
         prestige = prestige,
         lifetimePoints = lifetimePoints,

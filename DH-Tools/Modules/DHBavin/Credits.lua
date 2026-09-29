@@ -70,13 +70,30 @@ function ns.InitCreditsDB()
 
     -- Ledger (Identity model v2, 2026-09-25): keyed by discordName -
     -- { discordName, mainToon, alts = {...}, points, credits, tier,
-    -- prestige, lifetimePoints, lastDonationDate, lastUpdated }. Empty
+    -- prestige, lifetimePoints, lifetimeCredits, lastDonationDate,
+    -- lastUpdated }. points = progress inside the CURRENT tier/prestige
+    -- lap (resets on tier-up); lifetimePoints never resets. credits =
+    -- spendable balance (goes down on a charge); lifetimeCredits =
+    -- total ever earned, only ever goes up (2026-09-29, Loopi) - use
+    -- ns.Credits_AdjustCredits to change either so that stays true. Empty
     -- until CM2 seeds it from Step 0's validated seed-dataset.csv.
     -- Superseded the original mainName-keyed shape (no altOverrides
     -- table any more - an alt is a direct member of its account's
     -- `alts` list, not a separate override pointing at a name).
     if type(ns.creditsDb.ledger) ~= "table" then
         ns.creditsDb.ledger = {}
+    end
+    -- lifetimeCredits migration (2026-09-29): records saved before the
+    -- field existed get it from their current balance - the only earned
+    -- total that can be known for them (credits seeded at 0 at go-live
+    -- and nothing has been spent yet). Also enforces the invariant
+    -- lifetimeCredits >= credits for any record found violating it.
+    for _, rec in pairs(ns.creditsDb.ledger) do
+        if type(rec) == "table" then
+            local bal = tonumber(rec.credits) or 0
+            local life = tonumber(rec.lifetimeCredits)
+            if not life or life < bal then rec.lifetimeCredits = bal end
+        end
     end
     -- toonIndex: bare-toon-name(lower) -> discordName, rebuilt whenever
     -- ledger membership changes (seed import, link, unlink, set-as-new-
@@ -177,6 +194,26 @@ end
 -- discordName, so resolution is a single table lookup instead of a
 -- ledger scan.
 --------------------------------------------------------------------------
+
+-- The one place a ledger record's credit numbers should change (used by
+-- the future mail-processing flows and CM3 sync receive). A positive
+-- delta is an EARN: raises the balance and lifetimeCredits together. A
+-- negative delta is a SPEND/charge: lowers the balance only, never below
+-- 0 here (callers block an unaffordable charge first), and never touches
+-- lifetimeCredits. Returns the new balance, or nil for a bad record.
+function ns.Credits_AdjustCredits(rec, delta)
+    if type(rec) ~= "table" then return nil end
+    delta = tonumber(delta) or 0
+    local bal = tonumber(rec.credits) or 0
+    local life = tonumber(rec.lifetimeCredits) or bal
+    if delta > 0 then
+        life = life + delta
+    end
+    bal = math.max(0, bal + delta)
+    rec.credits = bal
+    rec.lifetimeCredits = math.max(life, bal)
+    return bal
+end
 
 -- Rebuilds toonIndex from the ledger's current mainToon/alts fields.
 -- Called after any bulk change (seed import); Link/Unlink/SetAsNewMain

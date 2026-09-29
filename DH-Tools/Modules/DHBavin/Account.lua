@@ -276,6 +276,13 @@ local function UpdateRow(row, d)
     row.statusText:SetText(status)
 end
 
+-- Whole number with thousands separators (BreakUpLargeNumbers is a client
+-- global; plain tostring keeps the headless harness working).
+local function Num(n)
+    n = math.floor((tonumber(n) or 0) + 0.5)
+    return BreakUpLargeNumbers and BreakUpLargeNumbers(n) or tostring(n)
+end
+
 local function Fs(parent, template)
     local fs = parent:CreateFontString(nil, "OVERLAY", template or "GameFontHighlight")
     fs:SetJustifyH("LEFT")
@@ -290,6 +297,26 @@ local function CreateAccountFrame()
     if f.TitleText then f.TitleText:SetText("My Account") end
     tinsert(UISpecialFrames, "DHBavinAccountFrame")
     DHTools.InitStandaloneWindow(f)
+
+    -- Resizable like every other DH-Tools window: bottom-right grip, same
+    -- SetResizeBounds / SetMinResize+SetMaxResize fallback as Config.lua.
+    -- The character list is anchored to the frame's corners, so it (and its
+    -- row pool) follows the new size on its own.
+    f:SetResizable(true)
+    if f.SetResizeBounds then
+        pcall(f.SetResizeBounds, f, 480, 360, 800, 800)
+    else
+        pcall(f.SetMinResize, f, 480, 360)
+        pcall(f.SetMaxResize, f, 800, 800)
+    end
+    local grip = CreateFrame("Button", nil, f)
+    grip:SetSize(16, 16)
+    grip:SetPoint("BOTTOMRIGHT", -4, 4)
+    grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    grip:SetScript("OnMouseDown", function() f:StartSizing("BOTTOMRIGHT") end)
+    grip:SetScript("OnMouseUp", function() f:StopMovingOrSizing() end)
 
     f.mainText = Fs(f, "GameFontNormalLarge")
     f.mainText:SetPoint("TOPLEFT", 16, -36)
@@ -342,7 +369,7 @@ local function CreateAccountFrame()
 
     f.footer = Fs(f, "GameFontDisableSmall")
     f.footer:SetPoint("BOTTOMLEFT", 16, 12)
-    f.footer:SetPoint("RIGHT", -16, 0)
+    f.footer:SetPoint("RIGHT", -26, 0) -- clear of the resize grip
     f.footer:SetWordWrap(true)
     f.footer:SetText("Level and class for characters outside the guild appear once you've logged into them with DH-Tools. Green * = online.")
 
@@ -364,13 +391,30 @@ function ns.Account_Refresh()
         local tier = rec.tier or "?"
         local prestige = tonumber(rec.prestige) or 0
         frame.repText:SetText("Reputation: |cffffd100" .. tostring(tier) .. (prestige > 0 and (" P" .. prestige) or "") .. "|r")
-        frame.repDetail:SetText("Points: " .. tostring(rec.points or 0) .. "   Lifetime points: " .. tostring(rec.lifetimePoints or 0))
-        frame.creditsText:SetText("Store Credits: |cffffd100" .. tostring(rec.credits or 0) .. "|r")
+        -- rec.points is progress inside the CURRENT tier (resets on tier-up /
+        -- prestige); rec.lifetimePoints never resets. Label them so the two
+        -- different numbers don't read as a discrepancy.
+        local cap = ns.CreditsTierCaps and ns.CreditsTierCaps[rec.tier]
+        local curPts = math.floor((tonumber(rec.points) or 0) + 0.5)
+        local detail = "Current Tier Points: |cffffd100" .. Num(curPts) .. "|r"
+            .. "   Lifetime Points: |cffffd100" .. Num(rec.lifetimePoints) .. "|r"
+        if cap then
+            -- Counts DOWN as points are earned; at Exalted the next step is
+            -- the next Prestige lap rather than another tier.
+            local label = (rec.tier == "Exalted") and "To Next Prestige" or "To Next Tier"
+            detail = detail .. "   " .. label .. ": |cffffd100" .. Num(math.max(0, cap - curPts)) .. "|r"
+        end
+        frame.repDetail:SetText(detail)
+        -- lifetimeCredits only ever goes up (credits can be spent, this can't);
+        -- records saved before the field existed fall back to the balance.
+        local lifeCredits = tonumber(rec.lifetimeCredits) or tonumber(rec.credits) or 0
+        frame.creditsText:SetText("Credits Balance: |cffffd100" .. Num(rec.credits) .. "|r"
+            .. "   Lifetime Credits: |cffffd100" .. Num(lifeCredits) .. "|r")
         frame.noteText:SetText("")
     else
         frame.repText:SetText("Reputation: |cff888888not synced yet|r")
         frame.repDetail:SetText("")
-        frame.creditsText:SetText("Store Credits: |cff888888not synced yet|r")
+        frame.creditsText:SetText("Credits Balance: |cff888888not synced yet|r")
         frame.noteText:SetText("Reputation and Store Credits come from the guild ledger, which isn't shared to your client yet. They'll show here once it is.")
     end
     frame.list:SetData(data)

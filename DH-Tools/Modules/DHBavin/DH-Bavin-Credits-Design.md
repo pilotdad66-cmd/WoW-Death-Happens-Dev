@@ -348,7 +348,13 @@ items out:
   Unlike points, credits do **not** reset on a tier or prestige
   change - only points reset; credits are a wholly separate running
   balance that only moves on a donation (up) or an officer's
-  credit-charge mail (down).
+  credit-charge mail (down). A separate **lifetimeCredits** total
+  (added 2026-09-29, Loopi) counts every credit ever earned - it goes
+  up with each donation and is never reduced by a charge, mirroring
+  lifetimePoints. Seeded at 0 at go-live like the balance itself;
+  records saved before the field existed are migrated from their
+  current balance in `InitCreditsDB`. The My Account window shows
+  Credits Balance and Lifetime Credits side by side.
 
 This sits on top of what DH-Bavin already has, not next to it: the
 per-item point values are the same `ItemPoints.lua` catalog the
@@ -937,9 +943,19 @@ New message types over DH-Bavin's existing prefix/chunking convention:
   broadcasts on every processed mail, scoped to that small recipient
   set rather than GUILD-wide.
 - A targeted push (`LEDGERPUSH|mainName|points|credits|tier|prestige|
-  lifetimePoints`) addressed directly to the affected player - not a
-  GUILD broadcast, since individual balances shouldn't go out to
-  everyone.
+  lifetimePoints|lifetimeCredits`) addressed directly to the affected
+  player - not a GUILD broadcast, since individual balances shouldn't
+  go out to everyone. `lifetimeCredits` (added 2026-09-29, Loopi) is
+  the LAST field on purpose: a receiver that gets a push without it
+  (older sender) treats it as absent and falls back to its own record's
+  value, or to `credits` if it has none; and an older receiver simply
+  ignores the extra trailing field. Because CM3 is unbuilt there is no
+  deployed wire format to break, so this needs no prefix bump on its
+  own - the CM3 prefix decision below covers it. Receive applies it
+  through `ns.Credits_AdjustCredits`-style rules: never lower an
+  existing `lifetimeCredits`, and never accept a value below `credits`.
+  Any full-ledger SYNCDATA record carries `lifetimeCredits` in the same
+  trailing position, with the same fallback rules.
 - A login-time pull request/response for a player's own numbers.
 
 Whether this needs a prefix version bump (the existing convention,

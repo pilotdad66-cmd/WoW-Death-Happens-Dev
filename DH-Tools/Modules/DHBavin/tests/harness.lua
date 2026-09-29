@@ -1097,6 +1097,7 @@ check("Seeded row is keyed by discordName == mainToon at seed time",
 check("Seeded row copies AltRoster's alt list",
     seedRec and #seedRec.alts == 2 and seedRec.alts[1] == "AltOne" and seedRec.alts[2] == "AltTwo")
 check("Credits always seed at 0 regardless of lifetime points (go-live rule)", seedRec and seedRec.credits == 0)
+check("lifetimeCredits seeds at 0 too (nothing earned yet at go-live)", seedRec and seedRec.lifetimeCredits == 0)
 local expTier, expPrestige, expPoints = ns.Credits_TierStateForLifetime(1500)
 check("Seeded tier/prestige/points match Credits_TierStateForLifetime exactly",
     seedRec.tier == expTier and seedRec.prestige == expPrestige and seedRec.points == expPoints)
@@ -1243,6 +1244,41 @@ check("Promotion without permission is refused", (function()
     ns.db.editors = prior
     return result
 end)() == false)
+
+--------------------------------------------------------------------------
+print("== Credits: lifetimeCredits ==")
+check("Set-as-New-Main rows carry lifetimeCredits = 0 too",
+    ns.creditsDb.ledger["NewGuy"] and ns.creditsDb.ledger["NewGuy"].lifetimeCredits == 0)
+do
+    local rec = { credits = 0, lifetimeCredits = 0 }
+    ns.Credits_AdjustCredits(rec, 100)
+    check("An earn raises balance and lifetimeCredits together", rec.credits == 100 and rec.lifetimeCredits == 100)
+    ns.Credits_AdjustCredits(rec, -40)
+    check("A charge lowers the balance but never lifetimeCredits", rec.credits == 60 and rec.lifetimeCredits == 100)
+    ns.Credits_AdjustCredits(rec, 25)
+    check("A later earn adds to both again", rec.credits == 85 and rec.lifetimeCredits == 125)
+    ns.Credits_AdjustCredits(rec, -1000)
+    check("An over-charge floors the balance at 0 and leaves lifetimeCredits alone",
+        rec.credits == 0 and rec.lifetimeCredits == 125)
+    local legacy = { credits = 30 } -- record saved before the field existed
+    ns.Credits_AdjustCredits(legacy, -10)
+    check("A legacy record (no lifetimeCredits) never ends up with lifetime < balance",
+        legacy.credits == 20 and legacy.lifetimeCredits >= legacy.credits)
+    check("A non-table record is refused", ns.Credits_AdjustCredits(nil, 5) == nil)
+end
+do
+    -- InitCreditsDB migration: old record gets lifetimeCredits from its balance;
+    -- a record violating lifetime >= balance is repaired; a good one is untouched.
+    DHBavinCreditsDB = ns.creditsDb
+    ns.creditsDb.ledger["LegacyAcct"] = { discordName = "LegacyAcct", mainToon = "LegacyAcct", alts = {}, credits = 50 }
+    ns.creditsDb.ledger["BadAcct"] = { discordName = "BadAcct", mainToon = "BadAcct", alts = {}, credits = 80, lifetimeCredits = 10 }
+    ns.creditsDb.ledger["GoodAcct"] = { discordName = "GoodAcct", mainToon = "GoodAcct", alts = {}, credits = 20, lifetimeCredits = 500 }
+    ns.InitCreditsDB()
+    check("Migration: legacy record gets lifetimeCredits = its balance", ns.creditsDb.ledger["LegacyAcct"].lifetimeCredits == 50)
+    check("Migration: lifetimeCredits below balance is repaired up to the balance", ns.creditsDb.ledger["BadAcct"].lifetimeCredits == 80)
+    check("Migration: a valid lifetimeCredits is left alone", ns.creditsDb.ledger["GoodAcct"].lifetimeCredits == 500)
+    ns.creditsDb.ledger["LegacyAcct"], ns.creditsDb.ledger["BadAcct"], ns.creditsDb.ledger["GoodAcct"] = nil, nil, nil
+end
 
 --------------------------------------------------------------------------
 print("== Credits: Credits_ResetTestData ==")
