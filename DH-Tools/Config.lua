@@ -1541,28 +1541,27 @@ local function CreateOfficerSettingsPanel(parent)
     recipientEdit:SetScript("OnEnterPressed", TrySetRecipient)
 
     --------------------------------------------------------------------
-    -- Officer Roles (2026-09-28, Chris items 3/5) - COMBINED list, was
-    -- three separately-owned lists (Bavin's own Editors, Store's own
-    -- Store Officers, Credits' own Designated Officers). Now one shared
-    -- list (DHBavin's ns.db.editors, via Bavin.SetEditors/Bavin.db.editors
-    -- - unchanged storage/wire name, see that file's own 2026-09-28
-    -- header comment). Membership grants Bavin donation-editing, Store
-    -- listing management, AND Credits config access all at once.
-    -- Recipient (above) and Primary Officer (Store section, below) stay
-    -- their own separate single-name roles, not folded in here, per
-    -- Chris's explicit answer. Add-by-name mechanics unchanged from the
-    -- old Editors section, just relabeled.
+    -- Distribution Officers (2026-09-28, Chris, reposted officer-role
+    -- list) - reverted from the same-day "combined Officer Roles" merge
+    -- back to its own list (DHBavin's ns.db.editors, via
+    -- Bavin.SetEditors/Bavin.db.editors - unchanged storage/wire name).
+    -- Distribution Officers can send items via mail, collect CoD,
+    -- and/or deduct credits from user accounts - so membership grants
+    -- Bavin donation-list editing AND Credits config access, but NOT
+    -- Store listing management (that's its own separate Store Officers
+    -- list, below, under the Store heading). Recipient (above) stays
+    -- its own separate single-name role, not folded in here.
     --------------------------------------------------------------------
     local editorsTitle = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     editorsTitle:SetPoint("TOPLEFT", recipientSuggestButtons[BAVIN_SUGGEST_ROWS], "BOTTOMLEFT", -4, -10)
-    editorsTitle:SetText("Officer Roles (in addition to the recipient):")
+    editorsTitle:SetText("Distribution Officers (in addition to the recipient):")
 
     local editorsHint = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     editorsHint:SetPoint("TOPLEFT", editorsTitle, "BOTTOMLEFT", 4, -2)
     editorsHint:SetPoint("RIGHT", -16, 0)
     editorsHint:SetJustifyH("LEFT")
     editorsHint:SetWordWrap(true)
-    editorsHint:SetText("Grants Bavin donation-list editing, Store listing management, and Bavin Credits config access, all at once. Adding/removing names here is guild leader/recipient/author only.")
+    editorsHint:SetText("Grants Bavin donation-list editing and Bavin Credits config access (mail items, collect CoD, deduct credits). Adding/removing names here is guild leader/recipient/author only.")
 
     local editorAddLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     editorAddLabel:SetPoint("TOPLEFT", editorsHint, "BOTTOMLEFT", -4, -8)
@@ -1632,7 +1631,7 @@ local function CreateOfficerSettingsPanel(parent)
     -- 2026-09-28 (Chris item 3): "decrease the vertical gap between the
     -- selection box and the list of current role holders" - was -10.
     currentEditorsTitle:SetPoint("TOPLEFT", editorSuggestButtons[BAVIN_SUGGEST_ROWS], "BOTTOMLEFT", -4, -4)
-    currentEditorsTitle:SetText("Current officers:")
+    currentEditorsTitle:SetText("Current Distribution Officers:")
 
     local BAVIN_CURRENT_EDITOR_ROWS = 10
     local currentEditorRows = {}
@@ -1661,10 +1660,8 @@ local function CreateOfficerSettingsPanel(parent)
     --------------------------------------------------------------------
     -- Credit & Reputation System - a button to open Bavin's own separate
     -- Rep & Credit Config window. Gated on Bavin.CanManageCreditsConfigLocal
-    -- (any name in the combined Officer Roles list above, or the author
-    -- account) - same shared-list gate as everything else on this page
-    -- now (2026-09-28: Credits no longer keeps a separate officer list,
-    -- see DHBavin\Credits.lua's own header comment).
+    -- (any name in the Distribution Officers list above, guild leader,
+    -- donation recipient, or the author account).
     --------------------------------------------------------------------
     local creditsTitle = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     creditsTitle:SetText("Credit & Reputation System (in development):")
@@ -1733,10 +1730,11 @@ local function CreateOfficerSettingsPanel(parent)
     -- that's what ComputePrices actually uses for Store's Credits
     -- column. One small row-builder shared by all three rather than
     -- three near-duplicate blocks. Gated the same way each ratio's own
-    -- setter already gates itself - any name in Officer Roles above
-    -- (Bavin.CanManageCreditsConfigLocal for the two Bavin rows,
-    -- DHTools.Store.CanManageListingsLocal for the Store row), or the
-    -- author account.
+    -- setter already gates itself: Credit/Rep and Rep/Gold by
+    -- Bavin.CanManageCreditsConfigLocal (Distribution Officers above,
+    -- guild leader, donation recipient, or author); Credit/Gold by
+    -- DHTools.Store.CanManageListingsLocal (Store Officers, below under
+    -- the Store heading, guild leader, donation recipient, or author).
     --------------------------------------------------------------------
     local currencyHeading = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     currencyHeading:SetPoint("TOPLEFT", creditsOpenBtn, "BOTTOMLEFT", -4, -20)
@@ -1747,7 +1745,7 @@ local function CreateOfficerSettingsPanel(parent)
     currencyHint:SetPoint("RIGHT", -16, 0)
     currencyHint:SetJustifyH("LEFT")
     currencyHint:SetWordWrap(true)
-    currencyHint:SetText("Officer Roles above can set these. The three ratios are independent - none of them need to reconcile with each other or with each other's defaults.")
+    currencyHint:SetText("Credit/Rep and Rep/Gold: Distribution Officers above can set these. Credit/Gold: Store Officers below (under Store) can set that one. The three ratios are independent - none of them need to reconcile with each other or with each other's defaults.")
 
     -- Row builder: "X <unitX> = Y <unitY>", a Set button, status text,
     -- and an optional note line underneath. Returns the row table;
@@ -1956,18 +1954,167 @@ local function CreateOfficerSettingsPanel(parent)
     primaryEdit:SetScript("OnEnterPressed", TrySetPrimary)
 
     --------------------------------------------------------------------
-    -- Store Officers section REMOVED (2026-09-28, Chris items 3/5) -
-    -- Store listing management is now covered by the combined Officer
-    -- Roles list above (DHTools.Store.IsStoreOfficerName delegates to
-    -- Bavin.IsOfficerName - see that file's own 2026-09-28 comment).
-    -- The old single-decimal "Credits per Gold" control is also REMOVED
-    -- from here - it's the Credit/Gold row in the Currency/Conversion
-    -- section above now (DHTools.Store.SetCreditGoldRatio). Only the
-    -- rep-tier discount toggles (Store-specific, not an officer role or
-    -- a named ratio) stay on this page.
+    -- Store Officers (2026-09-28, Chris, reposted officer-role list) -
+    -- back to its own separate list (DHTools.Store.db.officers via
+    -- SetStoreOfficers/IsStoreOfficerName, Core.lua) - the same-day
+    -- merge into the combined Officer Roles list is reversed. Store
+    -- Officers get GUI access to add/remove Store listings and
+    -- manually override prices; they do NOT get Distribution Officer
+    -- access (mail/CoD/credits) or vice versa - two separate rosters.
+    -- Add/remove mechanics mirror the Distribution Officers section
+    -- above. Adding/removing names here, and setting the Primary
+    -- Officer above, is guild leader/recipient/author only (Store
+    -- Officers themselves cannot).
     --------------------------------------------------------------------
-    local discountLabel1 = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    discountLabel1:SetPoint("TOPLEFT", primarySuggestButtons[STORE_SUGGEST_ROWS], "BOTTOMLEFT", -4, -16)
+    local storeOfficersTitle = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    storeOfficersTitle:SetPoint("TOPLEFT", primarySuggestButtons[STORE_SUGGEST_ROWS], "BOTTOMLEFT", -4, -14)
+    storeOfficersTitle:SetText("Store Officers:")
+
+    local storeOfficersHint = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    storeOfficersHint:SetPoint("TOPLEFT", storeOfficersTitle, "BOTTOMLEFT", 4, -2)
+    storeOfficersHint:SetPoint("RIGHT", -16, 0)
+    storeOfficersHint:SetJustifyH("LEFT")
+    storeOfficersHint:SetWordWrap(true)
+    storeOfficersHint:SetText("Grants access to the Store GUI for adding/removing listings and overriding prices. Adding/removing names here is guild leader/recipient/author only.")
+
+    local storeOfficerAddLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    storeOfficerAddLabel:SetPoint("TOPLEFT", storeOfficersHint, "BOTTOMLEFT", -4, -8)
+    storeOfficerAddLabel:SetText("Add:")
+
+    local storeOfficerAddEdit = CreateFrame("EditBox", "DHToolsStoreOfficerAddEdit", content, "InputBoxTemplate")
+    storeOfficerAddEdit:SetSize(140, 20)
+    storeOfficerAddEdit:SetPoint("LEFT", storeOfficerAddLabel, "RIGHT", 10, -2)
+    storeOfficerAddEdit:SetAutoFocus(false)
+    storeOfficerAddEdit:SetMaxLetters(24)
+    storeOfficerAddEdit:SetScript("OnEscapePressed", storeOfficerAddEdit.ClearFocus)
+
+    local storeOfficerAddBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    storeOfficerAddBtn:SetSize(60, 20)
+    storeOfficerAddBtn:SetText("Add")
+    storeOfficerAddBtn:SetPoint("LEFT", storeOfficerAddEdit, "RIGHT", 6, 0)
+
+    local storeOfficerAddStatus = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    storeOfficerAddStatus:SetPoint("LEFT", storeOfficerAddBtn, "RIGHT", 8, 0)
+
+    local storeOfficerSuggestButtons = BuildStoreSuggestPool(storeOfficerAddLabel)
+
+    local function UpdateStoreOfficerSuggestions(typed)
+        PopulateStoreSuggestions(storeOfficerSuggestButtons, typed, function(name)
+            storeOfficerAddEdit:SetText(name)
+            storeOfficerAddEdit:ClearFocus()
+            PopulateStoreSuggestions(storeOfficerSuggestButtons, "", function() end)
+        end)
+    end
+    storeOfficerAddEdit:SetScript("OnTextChanged", function(self)
+        UpdateStoreOfficerSuggestions(self:GetText())
+    end)
+
+    -- Forward-declared - RebuildCurrentStoreOfficerRows (defined below,
+    -- after currentStoreOfficerRows exists) repositions discountLabel1
+    -- (created further down) to sit right under however many rows are
+    -- currently shown, same "dynamic bottom anchor" idiom as
+    -- RebuildCurrentEditorRows/creditsTitle above.
+    local discountLabel1
+    local RebuildCurrentStoreOfficerRows
+
+    local function TryAddStoreOfficer()
+        local typed = storeOfficerAddEdit:GetText()
+        storeOfficerAddEdit:ClearFocus()
+        UpdateStoreOfficerSuggestions("")
+        if typed == "" then return end
+        local current = {}
+        local existing = (DHTools.Store.db and DHTools.Store.db.officers) or {}
+        for _, n in ipairs(existing) do
+            if n == typed then
+                storeOfficerAddStatus:SetText("|cffff3333Already a Store Officer|r")
+                return
+            end
+            table.insert(current, n)
+        end
+        table.insert(current, typed)
+        if DHTools.Store.SetStoreOfficers(current) then
+            storeOfficerAddEdit:SetText("")
+            storeOfficerAddStatus:SetText("|cff33ff99Added!|r")
+            C_Timer.After(2, function() storeOfficerAddStatus:SetText("") end)
+            if RebuildCurrentStoreOfficerRows then RebuildCurrentStoreOfficerRows() end
+        else
+            storeOfficerAddStatus:SetText("|cffff3333Refused (guild leader/recipient/author only)|r")
+        end
+    end
+    storeOfficerAddBtn:SetScript("OnClick", TryAddStoreOfficer)
+    storeOfficerAddEdit:SetScript("OnEnterPressed", TryAddStoreOfficer)
+
+    local currentStoreOfficersTitle = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    currentStoreOfficersTitle:SetPoint("TOPLEFT", storeOfficerSuggestButtons[STORE_SUGGEST_ROWS], "BOTTOMLEFT", -4, -4)
+    currentStoreOfficersTitle:SetText("Current Store Officers:")
+
+    local STORE_CURRENT_OFFICER_ROWS = 10
+    local currentStoreOfficerRows = {}
+    local prevStoreOfficerAnchor = currentStoreOfficersTitle
+    for i = 1, STORE_CURRENT_OFFICER_ROWS do
+        local row = CreateFrame("Frame", nil, content)
+        row:SetSize(300, 18)
+        if i == 1 then
+            row:SetPoint("TOPLEFT", prevStoreOfficerAnchor, "BOTTOMLEFT", 4, -6)
+        else
+            row:SetPoint("TOPLEFT", prevStoreOfficerAnchor, "BOTTOMLEFT", 0, -2)
+        end
+        local text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        text:SetPoint("LEFT", 0, 0)
+        row.text = text
+        local removeBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+        removeBtn:SetSize(60, 18)
+        removeBtn:SetPoint("LEFT", text, "RIGHT", 10, 0)
+        removeBtn:SetText("Remove")
+        row.removeBtn = removeBtn
+        row:Hide()
+        currentStoreOfficerRows[i] = row
+        prevStoreOfficerAnchor = row
+    end
+
+    RebuildCurrentStoreOfficerRows = function()
+        local canManage = DHTools.Store.CanManageStoreOfficersLocal()
+        local officers = (DHTools.Store.db and DHTools.Store.db.officers) or {}
+        local lastShown -- last VISIBLE row this pass, or nil if the list is empty
+        for i, row in ipairs(currentStoreOfficerRows) do
+            local name = officers[i]
+            if not name then
+                row:Hide()
+            else
+                row:Show()
+                row.text:SetText(name)
+                row.removeBtn:SetScript("OnClick", function()
+                    local list = {}
+                    for _, n in ipairs(officers) do
+                        if n ~= name then table.insert(list, n) end
+                    end
+                    if DHTools.Store.SetStoreOfficers(list) then
+                        RebuildCurrentStoreOfficerRows()
+                    end
+                end)
+                if canManage then
+                    row.removeBtn:Enable()
+                else
+                    row.removeBtn:Disable()
+                end
+                lastShown = row
+            end
+        end
+
+        discountLabel1:ClearAllPoints()
+        if lastShown then
+            discountLabel1:SetPoint("TOPLEFT", lastShown, "BOTTOMLEFT", -4, -16)
+        else
+            discountLabel1:SetPoint("TOPLEFT", currentStoreOfficersTitle, "BOTTOMLEFT", 0, -16)
+        end
+    end
+
+    --------------------------------------------------------------------
+    -- Rep-tier discount toggles (Store-specific, not an officer role or
+    -- a named ratio).
+    --------------------------------------------------------------------
+    discountLabel1 = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    discountLabel1:SetPoint("TOPLEFT", currentStoreOfficersTitle, "BOTTOMLEFT", -4, -16)
     discountLabel1:SetText("Apply Rep Tier Cost Reduction to")
 
     local goldCheck = CreateFrame("CheckButton", "DHToolsStoreGoldDiscountCheck", content, "UICheckButtonTemplate")
@@ -2104,6 +2251,17 @@ local function CreateOfficerSettingsPanel(parent)
         end
 
         local canManageStore = DHTools.Store.CanManageStoreOfficersLocal()
+
+        storeOfficerAddEdit:SetText("")
+        UpdateStoreOfficerSuggestions("")
+        if canManageStore then
+            storeOfficerAddEdit:Enable()
+            storeOfficerAddBtn:Enable()
+        else
+            storeOfficerAddEdit:Disable()
+            storeOfficerAddBtn:Disable()
+        end
+        RebuildCurrentStoreOfficerRows()
 
         primaryEdit:SetText(db.primaryOfficer or "")
         UpdatePrimarySuggestions("")

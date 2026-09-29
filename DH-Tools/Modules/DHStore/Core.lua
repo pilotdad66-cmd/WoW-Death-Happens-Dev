@@ -33,12 +33,14 @@ function ns.InitDB()
         DHStoreDB = {}
     end
     ns.db = DHStoreDB
-    -- 2026-09-28 (Chris): ns.db.officers removed - Store Officer status
-    -- now comes from DH-Bavin's shared officer-roles list instead (see
-    -- IsStoreOfficerName below). No migration needed - Store was "NOT
-    -- YET IN-GAME TESTED" as of this same change, so no real officer
-    -- data exists to carry forward. ns.db.officersUpdatedAt is kept
-    -- (still stamped by primaryOfficer changes, see SetPrimaryOfficer).
+    -- 2026-09-28 (Chris, reposted officer-role list): Store Officers
+    -- are their OWN separate list again, decoupled from DH-Bavin's
+    -- Distribution Officers list - reverses the same-day merge this
+    -- comment used to describe. See IsStoreOfficerName/SetStoreOfficers
+    -- below.
+    if type(ns.db.officers) ~= "table" then
+        ns.db.officers = {}
+    end
     if type(ns.db.catalog) ~= "table" then
         ns.db.catalog = {}
     end
@@ -103,14 +105,21 @@ local function IsDonationRecipientName(name)
     return recipient ~= nil and NormalizeName(recipient) == NormalizeName(name)
 end
 
--- Tier 4 (2026-09-28, Chris): no more Store-specific officer list - this
--- now reads DH-Bavin's single shared "assignable officer roles" list
--- (also used by Bavin's own donation-editing and Credits config), so
--- adding someone as an officer once grants Store listing management
--- too, not a separate roster to maintain in three places. See
--- DHBavin\Core.lua's IsOfficerName/CanSetEditorsName 2026-09-28 comment.
+-- Tier 4 (2026-09-28, Chris, reposted officer-role list): back to its
+-- own local Store Officer roster (ns.db.officers) - the same-day merge
+-- into DH-Bavin's shared list this comment used to describe is
+-- reversed. Store Officer and Distribution Officer are two separate
+-- rosters; DH-Bavin's IsOfficerName now means "Distribution Officer"
+-- only (see that file's own comment).
 function ns.IsStoreOfficerName(name)
-    return DHTools.Bavin.IsOfficerName(name)
+    if not name or type(ns.db.officers) ~= "table" then return false end
+    local norm = NormalizeName(name)
+    for _, officerName in ipairs(ns.db.officers) do
+        if NormalizeName(officerName) == norm then
+            return true
+        end
+    end
+    return false
 end
 
 -- Tiers 1-4: create/edit listings, mark sold, unpend.
@@ -123,15 +132,12 @@ function ns.CanManageListings(name)
     return false
 end
 
--- 2026-09-28 (Chris): the shared officer list itself is now managed
--- entirely through DH-Bavin (Officer Settings page / ns.SetEditors) -
--- this function is NO LONGER about the officer roster at all, only
--- about who may set the PRIMARY Store Officer (question #6.4's tier-4
--- exclusion - "officers themselves cannot add other officers" carries
--- over as "officers cannot name the primary officer either"), which
--- Chris asked to keep as its own separate field. Name kept as
--- CanManageStoreOfficers to avoid touching every call site for what's
--- now a narrower, single-purpose gate.
+-- 2026-09-28 (Chris, reposted officer-role list): Store Officer(s) are
+-- "configurable via type down box by 1, 2 or 3" - author, guild leader,
+-- or donation recipient. Governs BOTH adding/removing Store Officers
+-- (SetStoreOfficers below) and naming the Primary Store Officer
+-- (SetPrimaryOfficer, Sync.lua) - Store Officers themselves cannot do
+-- either (question #6.4's tier-4 exclusion carries over unchanged).
 function ns.CanManageStoreOfficers(name)
     if not name then return false end
     if IsAuthorOverrideName(name) then return true end
@@ -152,6 +158,19 @@ end
 function ns.CanManageStoreOfficersLocal()
     if DHTools.IsAuthorAccount and DHTools.IsAuthorAccount() then return true end
     return ns.CanManageStoreOfficers(UnitName("player"))
+end
+
+-- Replaces the Store Officer roster wholesale (same shape as DH-Bavin's
+-- ns.SetEditors) - gated by CanManageStoreOfficersLocal (tiers 1-3
+-- only, question #6.4's tier-4 exclusion). Broadcasts to the guild via
+-- Sync.lua so every client's copy stays in sync (last-writer-wins on
+-- ns.db.officersUpdatedAt, same pattern as primaryOfficer).
+function ns.SetStoreOfficers(list)
+    if not ns.CanManageStoreOfficersLocal() then return false end
+    ns.db.officers = list
+    ns.db.officersUpdatedAt = time()
+    ns.Sync_BroadcastOfficers()
+    return true
 end
 
 -- Sets the Credit/Gold ratio ("X Credits = Y Gold" - see InitDB's
@@ -820,15 +839,23 @@ SlashCmdList["DHSTORE"] = function(msg)
             ns.Store_Refresh()
         end
     elseif cmd == "officers" then
-        -- 2026-09-28 (Chris): read-only here now - Store Officers are
-        -- DH-Bavin's shared officer-roles list, managed from the
-        -- Officer Settings page (or /dhb) instead of a Store-specific
-        -- setter.
-        local list = (DHTools.Bavin.db and DHTools.Bavin.db.editors) or {}
-        if #list == 0 then
-            ns.Print("No Store Officers set - manage the shared officer list from DH-Tools' Officer Settings page.")
+        if not ns.CanManageStoreOfficersLocal() then
+            ns.Print("Refused - you must be the guild leader, the donation recipient, or the author account.")
+        elseif rest == "" then
+            local list = ns.db.officers or {}
+            if #list == 0 then
+                ns.Print("No Store Officers set.")
+            else
+                ns.Print("Current Store Officers: " .. table.concat(list, ", "))
+            end
         else
-            ns.Print("Current Store Officers (shared officer-roles list): " .. table.concat(list, ", "))
+            local names = {}
+            for name in rest:gmatch("[^,]+") do
+                name = name:match("^%s*(.-)%s*$")
+                if name ~= "" then tinsert(names, name) end
+            end
+            ns.SetStoreOfficers(names)
+            ns.Print("Store Officers set to: " .. (#names > 0 and table.concat(names, ", ") or "|cffff3333none|r"))
         end
     elseif cmd == "primary" then
         if not ns.CanManageStoreOfficersLocal() then

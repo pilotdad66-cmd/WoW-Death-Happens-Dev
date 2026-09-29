@@ -105,19 +105,17 @@ end
 --------------------------------------------------------------------------
 -- Primary officer: public API + broadcast
 --------------------------------------------------------------------------
--- 2026-09-28 (Chris): the STOREOFFICERS message used to carry a whole
--- officer roster alongside primaryOfficer ("folded into ONE wire
--- message... primary-officer selection is just another field of that
--- same roster state"). The roster half is gone now - Store Officer
--- status comes from DH-Bavin's shared officer-roles list (its own
--- EDITORS broadcast already keeps that in sync guild-wide), so this
--- message now carries ONLY primaryOfficer. Kept the message name
--- (STOREOFFICERS) since Store was never in-game tested on the old
--- shape - nothing to stay compatible with.
-
+-- 2026-09-28 (Chris, reposted officer-role list): STOREOFFICERS carries
+-- Store's own officer roster again (primary + the full list), reversing
+-- the same-day merge this comment used to describe - Store Officer
+-- status is once more Store's own ns.db.officers, not DH-Bavin's shared
+-- list. Officer names are character names, so they can't contain "|"
+-- or ",", making a plain comma-join/split safe (same assumption
+-- DH-Bavin's own EDITORS message relies on).
 function ns.Sync_BroadcastOfficers()
     local primary = (ns.db and ns.db.primaryOfficer) or ""
-    ns.Sync_Send("STOREOFFICERS", primary)
+    local officersCSV = table.concat((ns.db and ns.db.officers) or {}, ",")
+    ns.Sync_Send("STOREOFFICERS", primary .. "|" .. officersCSV)
 end
 
 -- Gated by ns.CanManageStoreOfficersLocal() (Core.lua) - mutates +
@@ -274,21 +272,23 @@ local function ChunkEncoded(encoded)
 end
 
 -- Replies to a STORESYNCREQ from `targetName` with our current full
--- state (primary officer, catalog), chunked and whispered back.
--- Answered unconditionally - "relaying, not asserting", same GATING
--- idiom as DH-Bavin's Sync_SendState. 2026-09-28 (Chris): dropped
--- officers/officersUpdatedAt - Store Officer status now comes from
--- DH-Bavin's own shared list/sync, not this module's.
+-- state (primary officer, officer roster, catalog), chunked and
+-- whispered back. Answered unconditionally - "relaying, not asserting",
+-- same GATING idiom as DH-Bavin's Sync_SendState. 2026-09-28 (Chris,
+-- reposted officer-role list): officersCSV is back - see
+-- Sync_BroadcastOfficers' comment.
 function ns.Sync_SendState(targetName)
     local primary = (ns.db and ns.db.primaryOfficer) or ""
+    local officersCSV = table.concat((ns.db and ns.db.officers) or {}, ",")
     local officersUpdatedAt = (ns.db and ns.db.officersUpdatedAt) or 0
     local catalogUpdatedAt = (ns.db and ns.db.catalogUpdatedAt) or 0
     local entries = EncodeListings()
 
-    -- primary/*UpdatedAt can't contain "|" (names/numbers never do);
-    -- entries is the one field that does, so it goes last - same
-    -- ordering reasoning as DH-Bavin's own SendState payload.
-    local payload = primary .. "|" .. officersUpdatedAt
+    -- primary/officersCSV/*UpdatedAt can't contain "|" (names, commas,
+    -- and numbers never do); entries is the one field that does, so it
+    -- goes last - same ordering reasoning as DH-Bavin's own SendState
+    -- payload.
+    local payload = primary .. "|" .. officersCSV .. "|" .. officersUpdatedAt
         .. "|" .. catalogUpdatedAt .. "|" .. entries
 
     local chunks = ChunkEncoded(payload)
@@ -316,11 +316,18 @@ function ns.Sync_OnAddonMessage(prefix, message, _channel, sender)
     if not msgType then return end
 
     if msgType == "STOREOFFICERS" then
-        -- 2026-09-28 (Chris): primaryOfficer only now - see
-        -- Sync_BroadcastOfficers' comment.
+        -- 2026-09-28 (Chris, reposted officer-role list): primary +
+        -- full officer roster again - see Sync_BroadcastOfficers'
+        -- comment.
         if not ns.CanManageStoreOfficers(senderShort) then return end
-        local primary = rest
+        local primary, officersCSV = rest:match("^([^|]*)|(.*)$")
+        if not primary then return end
         ns.db.primaryOfficer = (primary ~= "" and primary) or nil
+        local officers = {}
+        for name in officersCSV:gmatch("[^,]+") do
+            table.insert(officers, name)
+        end
+        ns.db.officers = officers
         ns.db.officersUpdatedAt = time()
 
     elseif msgType == "LISTING" then
@@ -374,12 +381,12 @@ function ns.Sync_OnAddonMessage(prefix, message, _channel, sender)
 end
 
 -- Reassembles a chunked STORESYNCDATA reply and, once complete, applies
--- it - primary and catalog each gated by their OWN version stamp
--- (last-writer-wins), same k-0012/k-0019 pattern as DH-Bavin's own
+-- it - primary+officers and catalog each gated by their OWN version
+-- stamp (last-writer-wins), same k-0012/k-0019 pattern as DH-Bavin's own
 -- SYNCDATA branch: an incoming snapshot only replaces ours if it's
 -- STRICTLY newer, otherwise it's silently ignored (not trusted just for
--- answering first). 2026-09-28 (Chris): dropped the officers field -
--- see Sync_SendState's comment.
+-- answering first). 2026-09-28 (Chris, reposted officer-role list):
+-- officersCSV is back - see Sync_SendState's comment.
 function ns.Sync_HandleSyncData(rest, sender)
     local header, data = rest:match("^(%d+/%d+)|(.*)$")
     if not header then return end
@@ -400,13 +407,18 @@ function ns.Sync_HandleSyncData(rest, sender)
     local fullData = table.concat(buf.chunks)
     ns.syncBuffers[sender] = nil
 
-    local primary, officersUpdatedAtStr, catalogUpdatedAtStr, entriesEncoded =
-        fullData:match("^([^|]*)|([^|]*)|([^|]*)|(.*)$")
+    local primary, officersCSV, officersUpdatedAtStr, catalogUpdatedAtStr, entriesEncoded =
+        fullData:match("^([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.*)$")
     if not primary then return end
 
     local incomingOfficersUpdatedAt = tonumber(officersUpdatedAtStr) or 0
     if incomingOfficersUpdatedAt > (ns.db.officersUpdatedAt or 0) then
         ns.db.primaryOfficer = (primary ~= "" and primary) or nil
+        local officers = {}
+        for name in officersCSV:gmatch("[^,]+") do
+            table.insert(officers, name)
+        end
+        ns.db.officers = officers
         ns.db.officersUpdatedAt = incomingOfficersUpdatedAt
     end
 
