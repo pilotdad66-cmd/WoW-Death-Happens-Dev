@@ -342,7 +342,12 @@ local QUALITY_NAMES = { [0] = "Poor", [1] = "Common", [2] = "Uncommon", [3] = "R
 local function GetFilteredSortedListings()
     local list = {}
     local needle = searchText:lower()
-    for _, l in pairs(ns.catalog) do
+    -- Real catalog plus the local-only test listings (never in ns.catalog,
+    -- so they can never be encoded onto the wire by Sync.lua).
+    local all = {}
+    for _, l in pairs(ns.catalog) do all[#all + 1] = l end
+    for _, l in pairs(ns.testListings or {}) do all[#all + 1] = l end
+    for _, l in ipairs(all) do
         local name, _, itemQuality, _, _, itemType, itemSubType = l.itemLink and GetItemInfo(l.itemLink)
         name = name or l.itemLink or ("item " .. tostring(l.itemId or "?"))
         local matchesSearch = needle == "" or name:lower():find(needle, 1, true) ~= nil
@@ -364,18 +369,18 @@ local function CreateListingRow(row)
 
     row.nameText = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     row.nameText:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
-    row.nameText:SetWidth(220)
+    row.nameText:SetWidth(170)
     row.nameText:SetJustifyH("LEFT")
     row.nameText:SetWordWrap(false)
 
     row.goldText = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     row.goldText:SetPoint("LEFT", row.nameText, "RIGHT", 4, 0)
-    row.goldText:SetWidth(120)
+    row.goldText:SetWidth(110)
     row.goldText:SetJustifyH("LEFT")
 
     row.creditText = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     row.creditText:SetPoint("LEFT", row.goldText, "RIGHT", 4, 0)
-    row.creditText:SetWidth(90)
+    row.creditText:SetWidth(80)
     row.creditText:SetJustifyH("LEFT")
 
     row.buyBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
@@ -394,6 +399,20 @@ local function CreateListingRow(row)
     row.unpendBtn:SetSize(64, 20)
     row.unpendBtn:SetPoint("RIGHT", row.soldBtn, "LEFT", -4, 0)
     row.unpendBtn:SetText("Unpend")
+
+    -- Item tooltip on hover (row.listing is set each UpdateListingRow).
+    row:EnableMouse(true)
+    row:SetScript("OnEnter", function(self)
+        local l = self.listing
+        if not l or not l.itemLink then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetHyperlink(l.itemLink)
+        if l.isTest then
+            GameTooltip:AddLine("TEST LISTING - local only, not shared", 1, 0.5, 0)
+        end
+        GameTooltip:Show()
+    end)
+    row:SetScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
 -- WoW's FontString has no native strikethrough style - this is the
@@ -423,6 +442,7 @@ local function FormatPriceCell(base, final, applied)
 end
 
 local function UpdateListingRow(row, listing, dataIndex)
+    row.listing = listing
     local link = listing.itemLink
     local name, quality = link and GetItemInfo(link)
     local texture = link and select(10, GetItemInfo(link))
@@ -454,12 +474,22 @@ local function UpdateListingRow(row, listing, dataIndex)
         row.unpendBtn:SetPoint("RIGHT", row.soldBtn, "LEFT", -4, 0)
     end
 
+    -- Test listings (listing.isTest) are handled purely locally: no wire
+    -- message, no mail. "Sold" doubles as remove for real listings too.
     row.soldBtn:SetScript("OnClick", function()
-        ns.MarkListingSold(listing.listingId)
+        if listing.isTest then
+            ns.testListings[listing.listingId] = nil
+        else
+            ns.MarkListingSold(listing.listingId)
+        end
         if frame and frame:IsShown() then ns.Store_Refresh() end
     end)
     row.unpendBtn:SetScript("OnClick", function()
-        ns.UnpendListing(listing.listingId)
+        if listing.isTest then
+            listing.pendingBy = nil
+        else
+            ns.UnpendListing(listing.listingId)
+        end
         if frame and frame:IsShown() then ns.Store_Refresh() end
     end)
 
@@ -471,7 +501,10 @@ local function UpdateListingRow(row, listing, dataIndex)
         row.buyBtn:Enable()
     end
     row.buyBtn:SetScript("OnClick", function()
-        if ns.MarkListingPending(listing.listingId) then
+        if listing.isTest then
+            listing.pendingBy = UnitName("player")
+            ns.Print("TEST listing: purchase simulated locally - nothing was sent.")
+        elseif ns.MarkListingPending(listing.listingId) then
             ns.SendPurchaseRequestMail(listing)
             ns.Print("Purchase request sent for " .. displayName .. " - visit a mailbox if it didn't send.")
         end
@@ -488,7 +521,10 @@ local function UpdateDiscountBadge(badge)
     local tier, prestige = ns.GetLocalTierState()
     local pct = ns.GetLocalDiscountPercent()
     local label = tier .. (prestige > 0 and (" P" .. prestige) or "")
-    badge:SetText(label .. ": " .. pct .. "% off")
+    -- badge is a Button with a .text FontString (a bare FontString cannot
+    -- take SetScript, which is what left the window half-built/blank).
+    badge.text:SetText(label .. ": " .. pct .. "% off")
+    badge:SetWidth(math.max(60, badge.text:GetStringWidth() + 6))
     badge:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
         GameTooltip:SetText("DH-Store discount", 1, 1, 1)
@@ -581,6 +617,46 @@ local function CreateCategoryButton(parent, indent)
     return btn
 end
 
+-- Returns { {name=, subs={names}}, ... }. Prefers the AH-style
+-- GetAuctionItemClasses/SubClasses; if this client lacks them (or they
+-- error), falls back to GetItemClassInfo/GetItemSubClassInfo over the
+-- known class IDs. Never throws - an empty list just means a bare
+-- "All Categories" panel.
+local FALLBACK_CLASS_IDS = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 15, 16, 17, 18 }
+local function GetItemClassList()
+    local out = {}
+    if GetAuctionItemClasses then
+        local ok, classes = pcall(function() return { GetAuctionItemClasses() } end)
+        if ok and classes and #classes > 0 then
+            for classIndex, className in ipairs(classes) do
+                local subs = {}
+                if GetAuctionItemSubClasses then
+                    local ok2, s = pcall(function() return { GetAuctionItemSubClasses(classIndex) } end)
+                    if ok2 and s then subs = s end
+                end
+                out[#out + 1] = { name = className, subs = subs }
+            end
+            return out
+        end
+    end
+    if GetItemClassInfo then
+        for _, classId in ipairs(FALLBACK_CLASS_IDS) do
+            local cname = GetItemClassInfo(classId)
+            if cname and cname ~= "" then
+                local subs = {}
+                if GetItemSubClassInfo then
+                    for subId = 0, 20 do
+                        local sname = GetItemSubClassInfo(classId, subId)
+                        if sname and sname ~= "" then subs[#subs + 1] = sname end
+                    end
+                end
+                out[#out + 1] = { name = cname, subs = subs }
+            end
+        end
+    end
+    return out
+end
+
 local function BuildCategoryPanel(parent)
     local panel = CreateFrame("Frame", "DHStoreCategoryPanel", parent)
     panel:SetWidth(CATEGORY_PANEL_WIDTH)
@@ -604,8 +680,9 @@ local function BuildCategoryPanel(parent)
     end)
     tinsert(categoryButtons, { btn = allBtn, kind = "all" })
 
-    local classes = { GetAuctionItemClasses() }
-    for classIndex, className in ipairs(classes) do
+    local classes = GetItemClassList()
+    for classIndex, classEntry in ipairs(classes) do
+        local className = classEntry.name
         local classBtn = CreateCategoryButton(content, 4)
         classBtn.text:SetText(className)
         classBtn:SetScript("OnClick", function()
@@ -619,8 +696,7 @@ local function BuildCategoryPanel(parent)
         end)
         tinsert(categoryButtons, { btn = classBtn, kind = "class", className = className, classIndex = classIndex })
 
-        local subclasses = { GetAuctionItemSubClasses(classIndex) }
-        for _, subclassName in ipairs(subclasses) do
+        for _, subclassName in ipairs(classEntry.subs) do
             local subBtn = CreateCategoryButton(content, 16)
             subBtn.text:SetText(subclassName)
             subBtn:SetScript("OnClick", function()
@@ -633,39 +709,237 @@ local function BuildCategoryPanel(parent)
     return panel
 end
 
-local function CreateStoreFrame()
-    frame = CreateFrame("Frame", "DHStoreFrame", UIParent, "BasicFrameTemplateWithInset")
-    frame:SetSize(740, 460)
-    frame:SetPoint("CENTER")
-    if frame.TitleText then frame.TitleText:SetText("DH-Store") end
-    tinsert(UISpecialFrames, "DHStoreFrame")
-    DHTools.InitStandaloneWindow(frame)
+--------------------------------------------------------------------------
+-- Window layout (2026-09-29, Chris: "build out the basic structure
+-- completely"). Left: AH-style category browser. Right, top to bottom:
+-- search + quality filter; the officer-only Add Listing strip (drag an
+-- item onto the slot); column headers; the scrolling listing table.
+-- Bottom bar: the viewer's gold, Store Credits and tier-discount badge
+-- (question #10's "lower-left balance readout"), plus a listing count.
+--------------------------------------------------------------------------
 
-    -- Left column: AH-style category browser (question #3).
-    frame.categoryPanel = BuildCategoryPanel(frame)
-    frame.categoryPanel:SetPoint("TOPLEFT", 12, -32)
-    frame.categoryPanel:SetPoint("BOTTOMLEFT", 12, 14)
-    RelayoutCategoryPanel()
+local FRAME_W, FRAME_H = 860, 520
+local RIGHT_X = 190 -- everything right of the category panel starts here
+-- Column widths shared with CreateListingRow above - keep in sync.
+local COL_NAME_W, COL_GOLD_W = 170, 110
 
-    local RIGHT_X = 190 -- everything below sits right of the category panel
+local function FormatGoldInput(x)
+    local s = string.format("%.2f", x)
+    if s:find("%.") then
+        s = s:gsub("0+$", "")
+        s = s:gsub("%.$", "")
+    end
+    return s
+end
 
-    frame.searchEdit = CreateFrame("EditBox", "DHStoreSearchEdit", frame, "InputBoxTemplate")
-    frame.searchEdit:SetSize(160, 20)
-    frame.searchEdit:SetPoint("TOPLEFT", RIGHT_X, -32)
-    frame.searchEdit:SetAutoFocus(false)
-    frame.searchEdit:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
-    frame.searchEdit:SetScript("OnTextChanged", function(self)
-        searchText = (self:GetText() or ""):match("^%s*(.-)%s*$")
+local function UpdateBalances()
+    if not frame or not frame.goldText then return end
+    frame.goldText:SetText("Gold: |cffffffff" .. ns.FormatMoney(GetMoney and GetMoney() or 0) .. "|r")
+    local rec = DHTools.Bavin and DHTools.Bavin.GetLocalAccountRecord and DHTools.Bavin.GetLocalAccountRecord()
+    if rec and rec.credits ~= nil then
+        frame.creditsText:SetText("Store Credits: |cffffffff" .. tostring(rec.credits) .. "|r")
+    else
+        frame.creditsText:SetText("Store Credits: |cff888888not synced yet|r")
+    end
+    UpdateDiscountBadge(frame.discountBadge)
+end
+
+-- Officer-only "Add Listing" strip. Drag an item from your bags onto the
+-- slot (or click the slot while holding an item); the gold price is
+-- pre-filled from ItemPoints.lua x quantity when the item is known there
+-- and can be overwritten by hand (the manual override question #5 keeps).
+local function BuildAddListingStrip(parent)
+    local strip = CreateFrame("Frame", nil, parent)
+    strip:SetHeight(58)
+
+    local label = strip:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    label:SetPoint("TOPLEFT", 4, -2)
+    label:SetText("Add listing - drag an item from your bags onto the slot:")
+
+    strip.status = strip:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    strip.status:SetPoint("LEFT", label, "RIGHT", 10, 0)
+
+    local slot = CreateFrame("Button", "DHStoreAddSlot", strip)
+    slot:SetSize(32, 32)
+    slot:SetPoint("TOPLEFT", label, "BOTTOMLEFT", 0, -6)
+    local slotBg = slot:CreateTexture(nil, "BACKGROUND")
+    slotBg:SetAllPoints()
+    slotBg:SetColorTexture(0.15, 0.15, 0.15, 0.9)
+    slot.icon = slot:CreateTexture(nil, "ARTWORK")
+    slot.icon:SetPoint("TOPLEFT", 2, -2)
+    slot.icon:SetPoint("BOTTOMRIGHT", -2, 2)
+    slot.icon:Hide()
+    slot.plus = slot:CreateFontString(nil, "OVERLAY", "GameFontDisableLarge")
+    slot.plus:SetPoint("CENTER")
+    slot.plus:SetText("+")
+    local slotHl = slot:CreateTexture(nil, "HIGHLIGHT")
+    slotHl:SetAllPoints()
+    slotHl:SetColorTexture(1, 1, 1, 0.15)
+
+    strip.itemName = strip:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    strip.itemName:SetPoint("LEFT", slot, "RIGHT", 8, 0)
+    strip.itemName:SetWidth(190)
+    strip.itemName:SetJustifyH("LEFT")
+    strip.itemName:SetWordWrap(false)
+    strip.itemName:SetText("|cff888888(no item chosen)|r")
+
+    local qtyLabel = strip:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    qtyLabel:SetPoint("LEFT", strip.itemName, "RIGHT", 8, 0)
+    qtyLabel:SetText("Qty")
+    strip.qtyEdit = CreateFrame("EditBox", "DHStoreAddQtyEdit", strip, "InputBoxTemplate")
+    strip.qtyEdit:SetSize(40, 20)
+    strip.qtyEdit:SetPoint("LEFT", qtyLabel, "RIGHT", 8, 0)
+    strip.qtyEdit:SetAutoFocus(false)
+    strip.qtyEdit:SetNumeric(true)
+    strip.qtyEdit:SetMaxLetters(4)
+    strip.qtyEdit:SetText("1")
+    strip.qtyEdit:SetScript("OnEscapePressed", strip.qtyEdit.ClearFocus)
+
+    local goldLabel = strip:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    goldLabel:SetPoint("LEFT", strip.qtyEdit, "RIGHT", 12, 0)
+    goldLabel:SetText("Gold")
+    strip.goldEdit = CreateFrame("EditBox", "DHStoreAddGoldEdit", strip, "InputBoxTemplate")
+    strip.goldEdit:SetSize(72, 20)
+    strip.goldEdit:SetPoint("LEFT", goldLabel, "RIGHT", 8, 0)
+    strip.goldEdit:SetAutoFocus(false)
+    strip.goldEdit:SetMaxLetters(10)
+    strip.goldEdit:SetScript("OnEscapePressed", strip.goldEdit.ClearFocus)
+
+    strip.addBtn = CreateFrame("Button", nil, strip, "UIPanelButtonTemplate")
+    strip.addBtn:SetSize(92, 22)
+    strip.addBtn:SetPoint("LEFT", strip.goldEdit, "RIGHT", 10, 0)
+    strip.addBtn:SetText("Add Listing")
+
+    local function SetStatus(text, ok)
+        strip.status:SetText((ok and "|cff33ff99" or "|cffff3333") .. text .. "|r")
+        C_Timer.After(4, function() strip.status:SetText("") end)
+    end
+
+    -- Pre-fill the gold box from ItemPoints.lua unless the officer has
+    -- typed their own number (goldManual).
+    function strip.AutoFillGold()
+        if strip.goldManual or not strip.itemLink then return end
+        local name = GetItemInfo(strip.itemLink)
+        local unit = name and DHTools.Bavin.GetItemGoldValue and DHTools.Bavin.GetItemGoldValue(name)
+        local qty = tonumber(strip.qtyEdit:GetText()) or 1
+        strip.goldEdit:SetText(unit and FormatGoldInput(unit * qty) or "")
+    end
+    strip.goldEdit:SetScript("OnTextChanged", function(_, userInput)
+        if userInput then strip.goldManual = true end
+    end)
+    strip.qtyEdit:SetScript("OnTextChanged", function(_, userInput)
+        if userInput then strip.AutoFillGold() end
+    end)
+
+    function strip.SetItem(itemId, itemLink)
+        strip.itemId, strip.itemLink = itemId, itemLink
+        local _, _, _, _, _, _, _, _, _, texture = GetItemInfo(itemLink or itemId)
+        slot.icon:SetTexture(texture or "Interface\\Icons\\INV_Misc_QuestionMark")
+        slot.icon:Show()
+        slot.plus:Hide()
+        strip.itemName:SetText(itemLink or ("item " .. tostring(itemId)))
+        strip.goldManual = false
+        strip.AutoFillGold()
+    end
+
+    function strip.Reset()
+        strip.itemId, strip.itemLink, strip.goldManual = nil, nil, false
+        slot.icon:Hide()
+        slot.plus:Show()
+        strip.itemName:SetText("|cff888888(no item chosen)|r")
+        strip.qtyEdit:SetText("1")
+        strip.goldEdit:SetText("")
+    end
+
+    local function TakeCursorItem()
+        local kind, itemId, itemLink = GetCursorInfo()
+        if kind ~= "item" then return end
+        ClearCursor()
+        strip.SetItem(itemId, itemLink)
+    end
+    slot:SetScript("OnReceiveDrag", TakeCursorItem)
+    slot:SetScript("OnClick", TakeCursorItem)
+    slot:SetScript("OnEnter", function(self)
+        if strip.itemLink then
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetHyperlink(strip.itemLink)
+            GameTooltip:Show()
+        end
+    end)
+    slot:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    strip.addBtn:SetScript("OnClick", function()
+        if not ns.CanManageListingsLocal() then
+            SetStatus("Refused - Store Officers only.", false)
+            return
+        end
+        if not strip.itemLink then
+            SetStatus("Drag an item onto the slot first.", false)
+            return
+        end
+        local qty = math.floor(tonumber(strip.qtyEdit:GetText()) or 0)
+        if qty < 1 then
+            SetStatus("Enter a quantity of 1 or more.", false)
+            return
+        end
+        local gold = tonumber(strip.goldEdit:GetText())
+        if not gold or gold <= 0 then
+            SetStatus("No price on file - enter a gold price.", false)
+            return
+        end
+        local copper = math.floor(gold * 10000 + 0.5)
+        local listingId = ns.AddOrEditListing(nil, strip.itemId, strip.itemLink, qty, copper)
+        ns.Print("Listed: " .. strip.itemLink .. " x" .. qty .. " for " .. ns.FormatMoney(copper)
+            .. " (ID " .. listingId .. ")")
+        strip.Reset()
+        SetStatus("Listed!", true)
         ns.Store_Refresh()
     end)
 
-    frame.qualityDropdown = CreateFrame("Frame", "DHStoreQualityDropdown", frame, "UIDropDownMenuTemplate")
-    frame.qualityDropdown:SetPoint("LEFT", frame.searchEdit, "RIGHT", 4, -2)
-    UIDropDownMenu_SetWidth(frame.qualityDropdown, 90)
-    UIDropDownMenu_Initialize(frame.qualityDropdown, function(_, level)
+    return strip
+end
+
+local function CreateStoreFrame()
+    local f = CreateFrame("Frame", "DHStoreFrame", UIParent, "BasicFrameTemplateWithInset")
+    f:SetSize(FRAME_W, FRAME_H)
+    f:SetPoint("CENTER")
+    if f.TitleText then f.TitleText:SetText("DH-Store") end
+    tinsert(UISpecialFrames, "DHStoreFrame")
+    DHTools.InitStandaloneWindow(f)
+    frame = f
+
+    -- Left column: AH-style category browser (question #3).
+    f.categoryPanel = BuildCategoryPanel(f)
+    f.categoryPanel:SetPoint("TOPLEFT", 12, -32)
+    f.categoryPanel:SetPoint("BOTTOMLEFT", 12, 50)
+    RelayoutCategoryPanel()
+
+    -- Search + quality filter.
+    f.searchEdit = CreateFrame("EditBox", "DHStoreSearchEdit", f, "InputBoxTemplate")
+    f.searchEdit:SetSize(180, 20)
+    f.searchEdit:SetPoint("TOPLEFT", RIGHT_X + 4, -34)
+    f.searchEdit:SetAutoFocus(false)
+    f.searchEdit:SetScript("OnEscapePressed", f.searchEdit.ClearFocus)
+    f.searchEdit:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    f.searchEdit:SetScript("OnTextChanged", function(self)
+        searchText = (self:GetText() or ""):match("^%s*(.-)%s*$")
+        ns.Store_Refresh()
+    end)
+    local searchHint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    searchHint:SetPoint("LEFT", f.searchEdit, "LEFT", 6, 0)
+    searchHint:SetText("Search items...")
+    f.searchEdit:HookScript("OnEditFocusGained", function() searchHint:Hide() end)
+    f.searchEdit:HookScript("OnEditFocusLost", function(self)
+        if (self:GetText() or "") == "" then searchHint:Show() end
+    end)
+
+    f.qualityDropdown = CreateFrame("Frame", "DHStoreQualityDropdown", f, "UIDropDownMenuTemplate")
+    f.qualityDropdown:SetPoint("LEFT", f.searchEdit, "RIGHT", -6, -2)
+    UIDropDownMenu_SetWidth(f.qualityDropdown, 100)
+    UIDropDownMenu_Initialize(f.qualityDropdown, function(_, level)
         local function Pick(q)
             qualityFilter = q
-            UIDropDownMenu_SetText(frame.qualityDropdown, q and QUALITY_NAMES[q] or "All qualities")
+            UIDropDownMenu_SetText(f.qualityDropdown, q and QUALITY_NAMES[q] or "All qualities")
             CloseDropDownMenus()
             ns.Store_Refresh()
         end
@@ -673,56 +947,135 @@ local function CreateStoreFrame()
         allInfo.text = "All qualities"
         allInfo.func = function() Pick(nil) end
         UIDropDownMenu_AddButton(allInfo, level)
-        for q, qname in pairs(QUALITY_NAMES) do
+        for q = 0, 5 do
             local info = UIDropDownMenu_CreateInfo()
-            info.text = qname
+            info.text = QUALITY_NAMES[q]
             info.func = function() Pick(q) end
             UIDropDownMenu_AddButton(info, level)
         end
     end)
-    UIDropDownMenu_SetText(frame.qualityDropdown, "All qualities")
+    UIDropDownMenu_SetText(f.qualityDropdown, "All qualities")
 
-    frame.discountBadge = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    frame.discountBadge:SetPoint("TOPRIGHT", -32, -20)
-    UpdateDiscountBadge(frame.discountBadge)
+    -- Officer-only Add Listing strip (shown/hidden by ns.Store_Reflow).
+    f.addStrip = BuildAddListingStrip(f)
+    f.addStrip:SetPoint("TOPLEFT", f.searchEdit, "BOTTOMLEFT", -4, -6)
+    f.addStrip:SetPoint("RIGHT", f, "RIGHT", -16, 0)
 
-    frame.hint = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    frame.hint:SetPoint("TOPLEFT", frame.searchEdit, "BOTTOMLEFT", 0, -6)
-    frame.hint:SetPoint("RIGHT", -16, 0)
-    frame.hint:SetJustifyH("LEFT")
-    frame.hint:SetWordWrap(true)
-    frame.hint:SetText("Officers: manage listings with /dhs list|sold|unpend - see /dhs help.")
+    -- Column headers, aligned with CreateListingRow's columns.
+    f.header = CreateFrame("Frame", nil, f)
+    f.header:SetHeight(16)
+    local function HeaderText(text, x)
+        local fs = f.header:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("LEFT", x, 0)
+        fs:SetText(text)
+        return fs
+    end
+    HeaderText("Item", 34)
+    HeaderText("Gold", 34 + COL_NAME_W + 4)
+    HeaderText("Store Credits", 34 + COL_NAME_W + 4 + COL_GOLD_W + 4)
+    local headerLine = f.header:CreateTexture(nil, "ARTWORK")
+    headerLine:SetColorTexture(1, 1, 1, 0.15)
+    headerLine:SetHeight(1)
+    headerLine:SetPoint("BOTTOMLEFT", 0, 0)
+    headerLine:SetPoint("BOTTOMRIGHT", 0, 0)
 
-    frame.scrollList = DHTools.Widgets.CreateScrollList(frame, {
+    f.scrollList = DHTools.Widgets.CreateScrollList(f, {
         rowHeight = 30,
         rightInset = 24,
         createRow = CreateListingRow,
         updateRow = UpdateListingRow,
         emptyText = "No listings yet.",
     })
-    frame.scrollList.frame:SetPoint("TOPLEFT", frame.hint, "BOTTOMLEFT", -4, -8)
-    frame.scrollList.frame:SetPoint("BOTTOMRIGHT", -30, 14)
+    f.scrollList.frame:SetPoint("TOPLEFT", f.header, "BOTTOMLEFT", 0, -2)
+    f.scrollList.frame:SetPoint("BOTTOMRIGHT", -30, 50)
 
-    frame:SetScript("OnShow", ns.Store_Refresh)
+    -- Bottom bar: balances + discount badge (lower-left, question #10),
+    -- listing count (lower-right).
+    local bar = f:CreateTexture(nil, "ARTWORK")
+    bar:SetColorTexture(1, 1, 1, 0.15)
+    bar:SetHeight(1)
+    bar:SetPoint("BOTTOMLEFT", 12, 40)
+    bar:SetPoint("BOTTOMRIGHT", -12, 40)
+
+    f.goldText = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    f.goldText:SetPoint("BOTTOMLEFT", 16, 16)
+    f.creditsText = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    f.creditsText:SetPoint("LEFT", f.goldText, "RIGHT", 28, 0)
+
+    -- The badge is a Button (not a bare FontString) because a FontString
+    -- can't take OnEnter/OnLeave - the tooltip needs a mouse-enabled frame.
+    f.discountBadge = CreateFrame("Button", nil, f)
+    f.discountBadge:SetSize(220, 18)
+    f.discountBadge:SetPoint("LEFT", f.creditsText, "RIGHT", 28, 0)
+    f.discountBadge.text = f.discountBadge:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    f.discountBadge.text:SetPoint("LEFT")
+
+    f.countText = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    f.countText:SetPoint("BOTTOMRIGHT", -16, 18)
+
+    f:RegisterEvent("PLAYER_MONEY")
+    f:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+    f:SetScript("OnEvent", function(self, event)
+        if not self:IsShown() then return end
+        if event == "PLAYER_MONEY" then
+            UpdateBalances()
+        elseif event == "GET_ITEM_INFO_RECEIVED" then
+            self.scrollList:Refresh()
+            if self.addStrip:IsShown() then self.addStrip.AutoFillGold() end
+        end
+    end)
+
+    f:SetScript("OnShow", function() ns.Store_Refresh() end)
 end
 
--- Re-renders the badge and re-filters/re-sorts the catalog into the
+-- Officers see the Add Listing strip; everyone else gets the header/list
+-- moved up into its space.
+function ns.Store_Reflow()
+    if not frame or not frame.addStrip then return end
+    local isOfficer = ns.CanManageListingsLocal() and true or false
+    frame.addStrip:SetShown(isOfficer)
+    frame.header:ClearAllPoints()
+    if isOfficer then
+        frame.header:SetPoint("TOPLEFT", frame.addStrip, "BOTTOMLEFT", 0, -4)
+    else
+        frame.header:SetPoint("TOPLEFT", frame.searchEdit, "BOTTOMLEFT", -4, -8)
+    end
+    frame.header:SetPoint("RIGHT", frame, "RIGHT", -30, 0)
+end
+
+-- Re-renders balances/badge and re-filters/re-sorts the catalog into the
 -- scroll list. Call after any local mutation or an incoming Sync.lua
 -- delta that should be visible immediately.
 function ns.Store_Refresh()
-    if not frame or not frame:IsShown() then return end
-    UpdateDiscountBadge(frame.discountBadge)
-    frame.scrollList:SetData(GetFilteredSortedListings())
+    if not frame or not frame:IsShown() or not frame.scrollList then return end
+    ns.Store_Reflow()
+    UpdateBalances()
+    local listings = GetFilteredSortedListings()
+    frame.scrollList:SetData(listings)
+    frame.countText:SetText(#listings .. (#listings == 1 and " listing" or " listings"))
 end
 
 function ns.Store_Toggle()
-    if not frame then CreateStoreFrame() end
+    if not frame then
+        -- Build under pcall: a half-built window used to be left behind
+        -- on any construction error (it then opened blank every time).
+        -- On failure, hide the wreck, forget it, and say what broke so
+        -- the next open retries from scratch.
+        local ok, err = pcall(CreateStoreFrame)
+        if not ok then
+            if frame then frame:Hide() end
+            frame = nil
+            ns.Print("|cffff3333Couldn't build the Store window:|r " .. tostring(err))
+            return
+        end
+    end
     if frame:IsShown() then
         frame:Hide()
     else
         frame:Show()
     end
 end
+
 
 --------------------------------------------------------------------------
 -- Event wiring - same "gate on IsModuleEnabled, one shared handler"
@@ -753,6 +1106,7 @@ local function ShowHelp()
     ns.Print("Commands:")
     ns.Print("  /dhs                       - open the Store browse window")
     ns.Print("  /dhs list <shift-click item> <qty> [gold] - officer: add/edit a listing (gold auto-sourced from ItemPoints.lua; give a decimal like 5.5 to override)")
+    ns.Print("  /dhs testitem | cleartest  - officer: add/remove a local-only sample listing (not shared)")
     ns.Print("  /dhs sold <listingId>      - officer: mark a listing sold")
     ns.Print("  /dhs unpend <listingId>    - officer: revert a pending listing to available")
     ns.Print("  /dhs officers <name1,name2,...> - tier 1-3: set the Store Officer roster")
@@ -808,6 +1162,35 @@ local function HandleListCommand(rest)
     ns.Store_Refresh()
 end
 
+--------------------------------------------------------------------------
+-- TEST ITEM (remove this block, the ns.testListings reads in
+-- GetFilteredSortedListings/UpdateListingRow, and the testitem/cleartest
+-- slash branches when no longer needed).
+-- Local-only sample listing so the empty store's layout can be checked
+-- in-game. Lives in ns.testListings, NEVER ns.catalog, so Sync.lua can
+-- never encode/broadcast it; not persisted (gone on /reload).
+--------------------------------------------------------------------------
+ns.testListings = {}
+
+function ns.AddTestListing()
+    local id = "TEST-" .. tostring(time())
+    ns.testListings[id] = {
+        listingId = id,
+        itemId = 6948,
+        itemLink = "|cffffffff|Hitem:6948::::::::::::::|h[Hearthstone]|h|r",
+        quantity = 1,
+        goldPrice = 50000, -- 5g, copper
+        listedBy = UnitName("player"),
+        listedAt = time(),
+        isTest = true,
+    }
+    return id
+end
+
+function ns.ClearTestListings()
+    ns.testListings = {}
+end
+
 SLASH_DHSTORE1 = "/dhs"
 SlashCmdList["DHSTORE"] = function(msg)
     msg = msg or ""
@@ -818,6 +1201,22 @@ SlashCmdList["DHSTORE"] = function(msg)
         ns.Store_Toggle()
     elseif cmd == "list" then
         HandleListCommand(rest)
+    elseif cmd == "testitem" then
+        if not ns.CanManageListingsLocal() then
+            ns.Print("Refused - you must be a Store Officer or higher.")
+        else
+            ns.AddTestListing()
+            ns.Print("Added a local-only TEST listing (Hearthstone, 5g). /dhs cleartest removes it.")
+            ns.Store_Refresh()
+        end
+    elseif cmd == "cleartest" then
+        if not ns.CanManageListingsLocal() then
+            ns.Print("Refused - you must be a Store Officer or higher.")
+        else
+            ns.ClearTestListings()
+            ns.Print("Cleared local TEST listings.")
+            ns.Store_Refresh()
+        end
     elseif cmd == "sold" then
         if not ns.CanManageListingsLocal() then
             ns.Print("Refused - you must be a Store Officer or higher.")

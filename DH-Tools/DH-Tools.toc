@@ -49,6 +49,7 @@ Modules\DHBavin\ReviewQueue.lua
 Modules\DHBavin\AltRoster.lua
 Modules\DHBavin\CreditsSeed.lua
 Modules\DHBavin\CreditsConfig.lua
+Modules\DHBavin\Account.lua
 Modules\DHBavin\ItemPoints.lua
 Modules\DHBavin\PointsEditor.lua
 Modules\DHBavin\PriorityEditor.lua

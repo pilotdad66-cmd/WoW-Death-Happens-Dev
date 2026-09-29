@@ -563,6 +563,11 @@ local function BuildQuickMenu()
                 DHTools.Store.Store_Toggle()
             end
         end },
+        { text = "View my Account", notCheckable = true, func = function()
+            if DHTools.Bavin and DHTools.Bavin.Account_Toggle then
+                DHTools.Bavin.Account_Toggle()
+            end
+        end },
         DIVIDER,
         { text = "DH-Tools Settings", notCheckable = true, func = function()
             DHTools:Config_Open("Tools")
@@ -595,6 +600,11 @@ local function BuildMenu()
         { text = "Open DH Store", notCheckable = true, func = function()
             if DHTools.Store and DHTools.Store.Store_Toggle then
                 DHTools.Store.Store_Toggle()
+            end
+        end },
+        { text = "View my Account", notCheckable = true, func = function()
+            if DHTools.Bavin and DHTools.Bavin.Account_Toggle then
+                DHTools.Bavin.Account_Toggle()
             end
         end },
         DIVIDER,

@@ -624,6 +624,7 @@ local function ShowHelp()
     ns.Print("Commands:")
     ns.Print("  /dhb                  - show the current Donation Recipient, Distribution Officers and item count")
     ns.Print("  /dhb config           - open the Bavin Points settings page")
+    ns.Print("  /dhb account          - open the View my Account window (your characters, reputation and Store Credits)")
     ns.Print("  /dhb items            - list the priority list's current items")
     ns.Print("  /dhb points           - open the Bavin Points editor (Donation Recipient/Distribution Officers only; everyone else sees it read-only)")
     ns.Print("  /dhb credits          - Credit & Reputation System status/config (TEST PHASE - see /dhb credits with no args for the sub-command list)")
@@ -693,6 +694,8 @@ SlashCmdList["DHBAVIN"] = function(msg)
         else
             ns.Print("Config UI didn't load correctly.")
         end
+    elseif cmd == "account" then
+        if ns.Account_Toggle then ns.Account_Toggle() else ns.Print("Account window didn't load correctly.") end
     elseif cmd == "items" then
         ShowItems()
     elseif cmd == "points" then
