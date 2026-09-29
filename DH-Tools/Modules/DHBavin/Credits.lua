@@ -768,7 +768,7 @@ function ns.Credits_HandleSlash(rest)
         elseif ns.SetCreditsMasterToggle(arg1 == "on") then
             ns.CreditsPrint("Master toggle set to " .. arg1:upper() .. ".")
         else
-            ns.CreditsPrint("Refused - Designated Officer or author account only.")
+            ns.CreditsPrint("Refused - Designated Officer only.")
         end
     elseif sub == "creditsperrep" then
         local x, y = arg1, arg2
@@ -778,7 +778,7 @@ function ns.Credits_HandleSlash(rest)
         elseif ns.SetCreditsPerRep(x, y) then
             ns.CreditsPrint("Credit/Rep ratio set to " .. x .. " Credits = " .. y .. " Rep Points.")
         else
-            ns.CreditsPrint("Refused - both must be positive numbers, or you're not a shared-list officer/author account.")
+            ns.CreditsPrint("Refused - both must be positive numbers, or you're not a shared-list officer.")
         end
     elseif sub == "reppergold" then
         local x, y = arg1, arg2
@@ -788,7 +788,7 @@ function ns.Credits_HandleSlash(rest)
         elseif ns.SetRepPerGold(x, y) then
             ns.CreditsPrint("Rep/Gold ratio set to " .. x .. " Rep = " .. y .. " Gold (not used by anything yet).")
         else
-            ns.CreditsPrint("Refused - both must be positive numbers, or you're not a shared-list officer/author account.")
+            ns.CreditsPrint("Refused - both must be positive numbers, or you're not a shared-list officer.")
         end
     elseif sub == "reset" then
         if arg1 ~= "confirm" then
@@ -796,7 +796,7 @@ function ns.Credits_HandleSlash(rest)
         elseif ns.Credits_ResetTestData() then
             -- ns.Credits_ResetTestData already prints confirmation.
         else
-            ns.CreditsPrint("Refused - Designated Officer or author account only.")
+            ns.CreditsPrint("Refused - Designated Officer only.")
         end
 
     -- 2026-09-28 (Chris): "/dhb credits officer add|remove" removed -
@@ -808,13 +808,13 @@ function ns.Credits_HandleSlash(rest)
             if ns.AddCreditTestReceiver(arg2) then
                 ns.CreditsPrint("Added " .. arg2 .. " to creditTestReceivers (inbox hook).")
             else
-                ns.CreditsPrint("Refused, or already on the list - Designated Officer/author account only.")
+                ns.CreditsPrint("Refused, or already on the list - Designated Officer only.")
             end
         elseif arg1 == "remove" and arg2 ~= "" then
             if ns.RemoveCreditTestReceiver(arg2) then
                 ns.CreditsPrint("Removed " .. arg2 .. " from creditTestReceivers. Full disarm needs /reload on that character.")
             else
-                ns.CreditsPrint("Refused, or not on the list - Designated Officer/author account only.")
+                ns.CreditsPrint("Refused, or not on the list - Designated Officer only.")
             end
         else
             ns.CreditsPrint("Usage: /dhb credits receiver add|remove <name>")
@@ -824,13 +824,13 @@ function ns.Credits_HandleSlash(rest)
             if ns.AddCreditTestSender(arg2) then
                 ns.CreditsPrint("Added " .. arg2 .. " to creditTestSenders (outgoing hook).")
             else
-                ns.CreditsPrint("Refused, or already on the list - Designated Officer/author account only.")
+                ns.CreditsPrint("Refused, or already on the list - Designated Officer only.")
             end
         elseif arg1 == "remove" and arg2 ~= "" then
             if ns.RemoveCreditTestSender(arg2) then
                 ns.CreditsPrint("Removed " .. arg2 .. " from creditTestSenders. Full disarm needs /reload on that character.")
             else
-                ns.CreditsPrint("Refused, or not on the list - Designated Officer/author account only.")
+                ns.CreditsPrint("Refused, or not on the list - Designated Officer only.")
             end
         else
             ns.CreditsPrint("Usage: /dhb credits sender add|remove <name>")

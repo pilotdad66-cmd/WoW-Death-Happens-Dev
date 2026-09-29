@@ -337,7 +337,7 @@ local function BuildSettingsTab(content)
         removeFn = ns.RemoveCreditTestReceiver,
         canManageFn = ns.CanManageCreditsConfigLocal,
         rowCount = 8,
-        lockedText = "|cffff3333Designated Officer/author only.|r",
+        lockedText = "|cffff3333Designated Officer only.|r",
     })
 
     local senders = CreateNameListSection(content, receivers.GetBottomAnchor, {
@@ -348,7 +348,7 @@ local function BuildSettingsTab(content)
         removeFn = ns.RemoveCreditTestSender,
         canManageFn = ns.CanManageCreditsConfigLocal,
         rowCount = 8,
-        lockedText = "|cffff3333Designated Officer/author only.|r",
+        lockedText = "|cffff3333Designated Officer only.|r",
     })
 
     -- Two-click confirm (mirrors the slash command's "reset confirm"
@@ -447,7 +447,7 @@ local function BuildRosterTab(content)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
-    hint:SetText("Every main's seeded reputation/credit standing. Rank is always by Lifetime Points, regardless of the active sort. Click a column title (Name/Lifetime/Last Donation) to sort by it - click again to flip direction. Click a name marked [+] to show its alts. Seeding is Designated Officer/author only; re-running it overwrites the row for any name in the historical data (SeedData.lua) without touching rows for names outside that dataset.")
+    hint:SetText("Every main's seeded reputation/credit standing. Rank is always by Lifetime Points, regardless of the active sort. Click a column title (Name/Lifetime/Last Donation) to sort by it - click again to flip direction. Click a name marked [+] to show its alts. Seeding is Designated Officer only; re-running it overwrites the row for any name in the historical data (SeedData.lua) without touching rows for names outside that dataset.")
 
     -- Seed button - two-click confirm, mirrors Settings tab's Reset Test Data.
     local seedBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
@@ -862,7 +862,7 @@ local function BuildReviewQueueTab(content)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
-    hint:SetText("Donor names that aren't tied to an account yet - either Step 0 couldn't map them as of its last run, or an officer removed them from an account's alt list. Linking or setting as a new main here is Designated Officer/author only and takes effect immediately for live crediting. \"New Main\" seeds the row's real historical lifetime total (raw gold x10, same convention as everywhere else).")
+    hint:SetText("Donor names that aren't tied to an account yet - either Step 0 couldn't map them as of its last run, or an officer removed them from an account's alt list. Linking or setting as a new main here is Designated Officer only and takes effect immediately for live crediting. \"New Main\" seeds the row's real historical lifetime total (raw gold x10, same convention as everywhere else).")
 
     local filterLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     filterLabel:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", -2, -12)
@@ -1498,7 +1498,7 @@ end
 -- Officer Settings page now, not here.)
 function ns.CreditsConfig_Open()
     if not ns.CanManageCreditsConfigLocal() then
-        ns.Print("Only a shared-list officer or the author account can open Bavin Rep & Credit Config.")
+        ns.Print("Only a shared-list officer can open Bavin Rep & Credit Config.")
         return
     end
     if not frame then

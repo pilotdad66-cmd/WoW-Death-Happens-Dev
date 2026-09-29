@@ -773,7 +773,7 @@ end
 -- Register with DH-Tools
 --------------------------------------------------------------------------
 DHTools.RegisterModule("bavin", {
-    name = "Bavin",
+    name = "Bavin Points",
     desc = "Lets the guild's mail collector publish a priority want-list; highlights matching items in your bags and helps mail them in.",
     default = true,
     OnEnable = ns.InitDB,

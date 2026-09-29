@@ -840,7 +840,7 @@ SlashCmdList["DHSTORE"] = function(msg)
         end
     elseif cmd == "officers" then
         if not ns.CanManageStoreOfficersLocal() then
-            ns.Print("Refused - you must be the guild leader, the donation recipient, or the author account.")
+            ns.Print("Refused - you must be the guild leader or the donation recipient.")
         elseif rest == "" then
             local list = ns.db.officers or {}
             if #list == 0 then
@@ -859,7 +859,7 @@ SlashCmdList["DHSTORE"] = function(msg)
         end
     elseif cmd == "primary" then
         if not ns.CanManageStoreOfficersLocal() then
-            ns.Print("Refused - you must be the guild leader, the donation recipient, or the author account.")
+            ns.Print("Refused - you must be the guild leader or the donation recipient.")
         elseif rest == "" then
             ns.Print("Primary Store Officer: " .. (ns.db.primaryOfficer or "|cffff3333not set|r"))
         else

@@ -55,7 +55,7 @@ local function CreateToolsPanel(parent)
     scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
 
     local content = CreateFrame("Frame", nil, scrollFrame)
-    content:SetSize(1, 480) -- width set in Refresh; generous fixed estimate
+    content:SetSize(1, 640) -- width set in Refresh; generous fixed estimate
     scrollFrame:SetScrollChild(content)
 
     local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -90,6 +90,7 @@ local function CreateToolsPanel(parent)
     local ROW_BLOCK_HEIGHT = 56 -- vertical space per row: checkbox + its description line
     local checks = {}
     local rowNum = 0
+    local lastRowDesc -- previous row's description FontString (see AddRow)
     -- Rows whose module declares `requires` (2026-09-28, DH-Store
     -- dependency mechanism) - key -> { check, requiresKey, normalColor }.
     -- Tracked separately from `checks` (every real-module row) so
@@ -106,10 +107,18 @@ local function CreateToolsPanel(parent)
     -- Returns the checkbox so callers can wire it up further.
     local function AddRow(labelText, descText, comingSoon, tag)
         rowNum = rowNum + 1
-        local yOffset = -14 - (rowNum - 1) * ROW_BLOCK_HEIGHT
 
+        -- 2026-09-29: rows now chain off the previous row's description
+        -- (its real, wrapped height) instead of a fixed per-row Y - a
+        -- description that wraps to 2+ lines (Quests) used to run into
+        -- the next checkbox. The -22 undoes the description's own +22
+        -- indent so x never drifts (the original 2026-07-17 bug).
         local check = CreateFrame("CheckButton", "DHToolsToolsCheck" .. rowNum, content, "UICheckButtonTemplate")
-        check:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", 0, yOffset)
+        if lastRowDesc then
+            check:SetPoint("TOPLEFT", lastRowDesc, "BOTTOMLEFT", -22, -8)
+        else
+            check:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", 0, -14)
+        end
         local checkText = _G[check:GetName() .. "Text"]
 
         if comingSoon then
@@ -129,7 +138,9 @@ local function CreateToolsPanel(parent)
         desc:SetPoint("TOPLEFT", check, "BOTTOMLEFT", 22, -2)
         desc:SetPoint("RIGHT", -16, 0)
         desc:SetJustifyH("LEFT")
+        desc:SetWordWrap(true)
         desc:SetText(descText or "")
+        lastRowDesc = desc
 
         return check
     end
@@ -709,7 +720,7 @@ local function CreateBavinPanel(parent)
 
     local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 16, -16)
-    title:SetText("Bavin")
+    title:SetText("Bavin Points")
 
     local hint = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     hint:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
@@ -1384,37 +1395,34 @@ local function CreateOfficerSettingsPanel(parent)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
-    hint:SetText("Every officer-gated setting across all modules, in one place: who can see this window, who holds each officer role, and the currency conversion rates.")
+    hint:SetText("Every officer-gated setting across all modules, in one place: who can see the Officer Settings button, who holds each officer role, and the currency conversion rates.")
 
     --------------------------------------------------------------------
     -- Section 2: access restriction by guild rank (DH-Tools-wide, not
     -- per-module - see Core.lua's DHTools.IsOfficerLocal/IsOfficerName)
     --------------------------------------------------------------------
-    local rankHeading = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    rankHeading:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", 0, -18)
-    rankHeading:SetText("Access Restriction by Guild Rank")
+    -- 2026-09-29 (Chris): the rank control is a compact sub-title line
+    -- directly under the window title, with no explanation of its own -
+    -- the main explanation below covers it. The main hint is re-anchored
+    -- underneath (it was created above, before this row existed).
+    local rankLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    rankLabel:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
+    rankLabel:SetText("Show the Officer Settings button to guild rank 0 through:")
 
-    local rankDesc = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    rankDesc:SetPoint("TOPLEFT", rankHeading, "BOTTOMLEFT", 4, -6)
-    rankDesc:SetPoint("RIGHT", -16, 0)
-    rankDesc:SetJustifyH("LEFT")
-    rankDesc:SetWordWrap(true)
-    rankDesc:SetText("Only guild members whose rank falls within this range can see the Officer Settings button. Rank 0 is the Guild Master and higher numbers are lower ranks (default 3). Takes effect the next time this window opens.")
-
-    local rankLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    rankLabel:SetPoint("TOPLEFT", rankDesc, "BOTTOMLEFT", 0, -10)
-    rankLabel:SetText("Show to guild rank 0 through:")
+    hint:ClearAllPoints()
+    hint:SetPoint("TOPLEFT", rankLabel, "BOTTOMLEFT", 0, -12)
+    hint:SetPoint("RIGHT", -16, 0)
 
     local rankEdit = CreateFrame("EditBox", "DHToolsOfficerRankEdit", content, "InputBoxTemplate")
-    rankEdit:SetSize(40, 20)
-    rankEdit:SetPoint("LEFT", rankLabel, "RIGHT", 10, -2)
+    rankEdit:SetSize(26, 18)
+    rankEdit:SetPoint("LEFT", rankLabel, "RIGHT", 10, -1)
     rankEdit:SetAutoFocus(false)
     rankEdit:SetNumeric(true)
     rankEdit:SetMaxLetters(1)
     rankEdit:SetScript("OnEscapePressed", rankEdit.ClearFocus)
 
     local rankBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-    rankBtn:SetSize(60, 20)
+    rankBtn:SetSize(44, 18)
     rankBtn:SetPoint("LEFT", rankEdit, "RIGHT", 6, 0)
     rankBtn:SetText("Set")
 
@@ -1437,7 +1445,7 @@ local function CreateOfficerSettingsPanel(parent)
     local topDivider = content:CreateTexture(nil, "ARTWORK")
     topDivider:SetColorTexture(1, 1, 1, 0.15)
     topDivider:SetHeight(1)
-    topDivider:SetPoint("TOPLEFT", rankLabel, "BOTTOMLEFT", -4, -14)
+    topDivider:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", -4, -14)
     topDivider:SetPoint("RIGHT", -16, 0)
 
     --------------------------------------------------------------------
@@ -2136,10 +2144,10 @@ local ABOUT_MODULE_COMMANDS = {
     { cmd = "/dht", label = "DH-Tools (this window: /dht config)" },
     { cmd = "/mm", label = "Mob Marker" },
     { cmd = "/dhq", label = "Quests" },
-    { cmd = "/dhb", label = "Bavin" },
+    { cmd = "/dhb", label = "Bavin Points" },
+    { cmd = "/dhs", label = "Store" },
     { cmd = "/dhdanger", label = "Danger" },
     { cmd = "/dhm", label = "Macros" },
-    { cmd = "/dhs", label = "Store" },
     { cmd = "/dhair", label = "Air Service" },
 }
 
@@ -2380,7 +2388,7 @@ function DHTools:Config_Open(pageKey)
             table.insert(pageNames, "OfficerSettings")
         end
         table.insert(pageNames, "About")
-        local pageLabels = { Tools = "Tools", MobMarker = "Mob Marker", Quests = "Quests", Bavin = "Bavin", Danger = "Danger", Macros = "Macros", Store = "Store", OfficerSettings = "Officer Settings", About = "About" }
+        local pageLabels = { Tools = "Tools", MobMarker = "Mob Marker", Quests = "Quests", Bavin = "Bavin Points", Danger = "Danger", Macros = "Macros", Store = "Store", OfficerSettings = "Officer Settings", About = "About" }
         local prevBtn
         for _, name in ipairs(pageNames) do
             local btn = CreateFrame("Button", nil, nav, "UIPanelButtonTemplate")
