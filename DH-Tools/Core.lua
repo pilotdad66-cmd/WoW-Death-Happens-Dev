@@ -397,7 +397,7 @@ local LINK_STAGGER = 0.4 -- per link index, so one client winning 2+ of a
                           -- chat throttle can silently drop rapid sends)
 local CHAT_MAX_LEN = 255 -- guild chat's own hard cap
 
-local FALLBACK_TEXT = "Nobody online has the DH-Bavin module enabled. Please install DH-Tools and enable the DH-Bavin module."
+local FALLBACK_TEXT = "Nobody online has the Bavin Points module enabled. Please install DH-Tools and enable the Bavin Points module."
 
 -- key -> true once a CLAIM for it has been heard (including our own, the
 -- instant we broadcast it) - in-memory only, cleared by relog/reload same

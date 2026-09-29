@@ -374,7 +374,7 @@ local function GetOrCreateAttachButton(itemButton)
         end
         local attachBtn = _G["SendMailAttachment" .. slotIndex]
         if not attachBtn then
-            ns.Print("Couldn't find the mail attachment slot - this client's mail frame may differ from what DH-Bavin expects. See claude\\DH-Bavin\\STATUS.md.")
+            ns.Print("Couldn't find the mail attachment slot - this client's mail frame may differ from what Bavin Points expects. See claude\\DH-Bavin\\STATUS.md.")
             return
         end
         DoPickupContainerItem(bagID, slotID)

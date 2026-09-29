@@ -96,5 +96,5 @@ function ns.TryClassifyLookup(link)
     -- 2026-09-25 (Chris): dropped the "Please message him to let him
     -- know." sentence - it doesn't apply when there's genuinely no data
     -- on file yet.
-    return "DH-Tools: Bavin has no data for " .. itemName .. "."
+    return "DH-Tools: Bavin Points has no data for " .. itemName .. "."
 end

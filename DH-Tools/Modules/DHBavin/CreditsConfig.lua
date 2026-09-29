@@ -24,9 +24,9 @@
 -- writeup):
 --   1. Regular member - read-only, own balance. A SEPARATE window
 --      (CM6, minimap-launched), not this one - this window never opens
---      for a player who is neither a Designated Officer nor guild
+--      for a player who is neither a Distribution Officer nor guild
 --      leader/author (see CreditsConfig_Open's gate below).
---   2. Designated Officer - views everyone, resolves alt/identity
+--   2. Distribution Officer - views everyone, resolves alt/identity
 --      conflicts. CM2's job - the Roster/Review Queue tabs below are
 --      placeholders until that milestone lands.
 --   3. Mail recipient (Bavin) - eventually able to hand-edit the raw
@@ -292,7 +292,7 @@ end
 -- of what's already gated. Returns a refresh closure the outer frame
 -- calls on open/tab-switch/incoming sync.
 --
--- 2026-09-28 (Chris, item 5): the Designated Officers list and the
+-- 2026-09-28 (Chris, item 5): the Distribution Officers list and the
 -- multiplier/ratio controls that used to live in this tab are REMOVED
 -- - officer roles are now the shared list managed on DH-Tools
 -- Config.lua's Officer Settings page (Core.lua's ns.SetEditors), and
@@ -337,7 +337,7 @@ local function BuildSettingsTab(content)
         removeFn = ns.RemoveCreditTestReceiver,
         canManageFn = ns.CanManageCreditsConfigLocal,
         rowCount = 8,
-        lockedText = "|cffff3333Designated Officer only.|r",
+        lockedText = "|cffff3333Distribution Officer only.|r",
     })
 
     local senders = CreateNameListSection(content, receivers.GetBottomAnchor, {
@@ -348,7 +348,7 @@ local function BuildSettingsTab(content)
         removeFn = ns.RemoveCreditTestSender,
         canManageFn = ns.CanManageCreditsConfigLocal,
         rowCount = 8,
-        lockedText = "|cffff3333Designated Officer only.|r",
+        lockedText = "|cffff3333Distribution Officer only.|r",
     })
 
     -- Two-click confirm (mirrors the slash command's "reset confirm"
@@ -447,7 +447,7 @@ local function BuildRosterTab(content)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
-    hint:SetText("Every main's seeded reputation/credit standing. Rank is always by Lifetime Points, regardless of the active sort. Click a column title (Name/Lifetime/Last Donation) to sort by it - click again to flip direction. Click a name marked [+] to show its alts. Seeding is Designated Officer only; re-running it overwrites the row for any name in the historical data (SeedData.lua) without touching rows for names outside that dataset.")
+    hint:SetText("Every main's seeded reputation/credit standing. Rank is always by Lifetime Points, regardless of the active sort. Click a column title (Name/Lifetime/Last Donation) to sort by it - click again to flip direction. Click a name marked [+] to show its alts. Seeding is Distribution Officer only; re-running it overwrites the row for any name in the historical data (SeedData.lua) without touching rows for names outside that dataset.")
 
     -- Seed button - two-click confirm, mirrors Settings tab's Reset Test Data.
     local seedBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
@@ -862,7 +862,7 @@ local function BuildReviewQueueTab(content)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
-    hint:SetText("Donor names that aren't tied to an account yet - either Step 0 couldn't map them as of its last run, or an officer removed them from an account's alt list. Linking or setting as a new main here is Designated Officer only and takes effect immediately for live crediting. \"New Main\" seeds the row's real historical lifetime total (raw gold x10, same convention as everywhere else).")
+    hint:SetText("Donor names that aren't tied to an account yet - either Step 0 couldn't map them as of its last run, or an officer removed them from an account's alt list. Linking or setting as a new main here is Distribution Officer only and takes effect immediately for live crediting. \"New Main\" seeds the row's real historical lifetime total (raw gold x10, same convention as everywhere else).")
 
     local filterLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     filterLabel:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", -2, -12)
@@ -1441,7 +1441,7 @@ local function CreateWindow()
     local auditContent = CreateFrame("Frame", nil, scrollFrame)
     auditContent:SetPoint("TOPLEFT", scrollFrame, "TOPLEFT", 0, 0)
     auditContent:SetSize(1, 140)
-    BuildPlaceholderTab(auditContent, "Audit Log", "Available once CM7 lands: full transaction log (Processor view), a \"what I sent\" filter for Designated Officers, and members' own last-50 view.")
+    BuildPlaceholderTab(auditContent, "Audit Log", "Available once CM7 lands: full transaction log (Processor view), a \"what I sent\" filter for Distribution Officers, and members' own last-50 view.")
     tabs.audit.content = auditContent
 
     ns.CreditsConfig_SelectTab("settings")

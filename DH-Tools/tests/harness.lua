@@ -381,7 +381,7 @@ check("a CHAT_MSG_ADDON on an unrelated prefix is ignored by the version checker
 
 local ITEM_LINK = "|cffffffff|Hitem:12345:0:0:0:0:0:0:0|h[Test Item]|h|r"
 local ITEM_LINK2 = "|cffffffff|Hitem:67890:0:0:0:0:0:0:0|h[Second Item]|h|r"
-local FALLBACK_TEXT = "Nobody online has the DH-Bavin module enabled. Please install DH-Tools and enable the DH-Bavin module."
+local FALLBACK_TEXT = "Nobody online has the Bavin Points module enabled. Please install DH-Tools and enable the Bavin Points module."
 
 local classifyResult -- what ns.Bavin.TryClassifyLookup returns this test
 ns.Bavin = {

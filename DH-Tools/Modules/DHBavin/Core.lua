@@ -27,7 +27,7 @@ DHTools.Bavin = DHTools.Bavin or {}
 local ns = DHTools.Bavin
 
 function ns.Print(msg)
-    DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99DH-Bavin:|r " .. msg)
+    DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99Bavin Points:|r " .. msg)
 end
 
 -- 2026-07-29: ns.db is DHBavinDB, its own top-level SavedVariables (see
@@ -623,15 +623,15 @@ end)
 local function ShowHelp()
     ns.Print("Commands:")
     ns.Print("  /dhb                  - show the current recipient/editors/item count")
-    ns.Print("  /dhb config           - open the Bavin settings page")
+    ns.Print("  /dhb config           - open the Bavin Points settings page")
     ns.Print("  /dhb items            - list the priority list's current items")
     ns.Print("  /dhb points           - open the Bavin Points editor (recipient/editor only; everyone else sees it read-only)")
     ns.Print("  /dhb credits          - Credit & Reputation System status/config (TEST PHASE - see /dhb credits with no args for the sub-command list)")
     ns.Print("  /dhb priority         - open the Priority List editor: type an item name, list narrows as you type, click to add/remove (recipient/editor only)")
     ns.Print("  /dhb additem <link>   - fallback: shift-click an item after typing this to add it by name (recipient/editor only) - for the rare item not in the Bavin Points list, which /dhb priority searches")
     ns.Print("  /dhb removeitem <name> - remove an item from the priority list by exact name (recipient/editor only)")
-    ns.Print("  /dhb on               - enable the Bavin module")
-    ns.Print("  /dhb off              - disable the Bavin module")
+    ns.Print("  /dhb on               - enable the Bavin Points module")
+    ns.Print("  /dhb off              - disable the Bavin Points module")
     ns.Print("  /dhb help             - show this list")
     ns.Print("Recipient/editors are set from the config page (guild leader only).")
 end

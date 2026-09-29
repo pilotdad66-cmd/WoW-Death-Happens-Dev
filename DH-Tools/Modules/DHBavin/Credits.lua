@@ -48,7 +48,7 @@ DHTools.Bavin = DHTools.Bavin or {}
 local ns = DHTools.Bavin
 
 function ns.CreditsPrint(msg)
-    DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99DH-Bavin Credits:|r " .. msg)
+    DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99Bavin Credits:|r " .. msg)
 end
 
 -- 2026-09-28 (Chris): "100 rep = 1 credit" as a whole-number ratio pair
@@ -113,7 +113,7 @@ function ns.InitCreditsDB()
     if type(ns.creditsDb.creditTestSenders) ~= "table" then
         ns.creditsDb.creditTestSenders = {}
     end
-    -- 2026-09-28 (Chris): no more Designated Officers list here - see
+    -- 2026-09-28 (Chris): no more Distribution Officers list here - see
     -- this file's header comment. ns.creditsDb.officers (if present from
     -- an earlier test build) is simply left alone and unread; harmless.
     -- Credit/Rep and Rep/Gold ratios, each an {x=, y=} pair
@@ -135,7 +135,7 @@ end
 --------------------------------------------------------------------------
 -- Permission model
 --------------------------------------------------------------------------
--- 2026-09-28 (Chris): Designated Officers is no longer a Credits-owned
+-- 2026-09-28 (Chris): Distribution Officers is no longer a Credits-owned
 -- list - see this file's header comment. "Officer" status for Credits
 -- config purposes now comes straight from DH-Bavin's shared officer-
 -- roles list (Core.lua's IsOfficerName), which also grants Bavin
@@ -691,7 +691,7 @@ end
 -- Wipes the test-scoped credit data (ledger, alt-override table,
 -- transaction log) back to empty - callable at any point during CM2-CM8
 -- testing, distinct from CM9's cutover flip and Step 9.5's full reseed.
--- LOCAL only for CM1: each Designated Officer/Bavin runs this on their
+-- LOCAL only for CM1: each Distribution Officer/Bavin runs this on their
 -- own client. No broadcast yet - CM3 hasn't defined the ledger sync wire
 -- format this would need to ride, so this deliberately doesn't guess at
 -- one; officers coordinate a reset verbally during the test phase.
@@ -768,7 +768,7 @@ function ns.Credits_HandleSlash(rest)
         elseif ns.SetCreditsMasterToggle(arg1 == "on") then
             ns.CreditsPrint("Master toggle set to " .. arg1:upper() .. ".")
         else
-            ns.CreditsPrint("Refused - Designated Officer only.")
+            ns.CreditsPrint("Refused - Distribution Officer only.")
         end
     elseif sub == "creditsperrep" then
         local x, y = arg1, arg2
@@ -796,7 +796,7 @@ function ns.Credits_HandleSlash(rest)
         elseif ns.Credits_ResetTestData() then
             -- ns.Credits_ResetTestData already prints confirmation.
         else
-            ns.CreditsPrint("Refused - Designated Officer only.")
+            ns.CreditsPrint("Refused - Distribution Officer only.")
         end
 
     -- 2026-09-28 (Chris): "/dhb credits officer add|remove" removed -
@@ -808,13 +808,13 @@ function ns.Credits_HandleSlash(rest)
             if ns.AddCreditTestReceiver(arg2) then
                 ns.CreditsPrint("Added " .. arg2 .. " to creditTestReceivers (inbox hook).")
             else
-                ns.CreditsPrint("Refused, or already on the list - Designated Officer only.")
+                ns.CreditsPrint("Refused, or already on the list - Distribution Officer only.")
             end
         elseif arg1 == "remove" and arg2 ~= "" then
             if ns.RemoveCreditTestReceiver(arg2) then
                 ns.CreditsPrint("Removed " .. arg2 .. " from creditTestReceivers. Full disarm needs /reload on that character.")
             else
-                ns.CreditsPrint("Refused, or not on the list - Designated Officer only.")
+                ns.CreditsPrint("Refused, or not on the list - Distribution Officer only.")
             end
         else
             ns.CreditsPrint("Usage: /dhb credits receiver add|remove <name>")
@@ -824,13 +824,13 @@ function ns.Credits_HandleSlash(rest)
             if ns.AddCreditTestSender(arg2) then
                 ns.CreditsPrint("Added " .. arg2 .. " to creditTestSenders (outgoing hook).")
             else
-                ns.CreditsPrint("Refused, or already on the list - Designated Officer only.")
+                ns.CreditsPrint("Refused, or already on the list - Distribution Officer only.")
             end
         elseif arg1 == "remove" and arg2 ~= "" then
             if ns.RemoveCreditTestSender(arg2) then
                 ns.CreditsPrint("Removed " .. arg2 .. " from creditTestSenders. Full disarm needs /reload on that character.")
             else
-                ns.CreditsPrint("Refused, or not on the list - Designated Officer only.")
+                ns.CreditsPrint("Refused, or not on the list - Distribution Officer only.")
             end
         else
             ns.CreditsPrint("Usage: /dhb credits sender add|remove <name>")
