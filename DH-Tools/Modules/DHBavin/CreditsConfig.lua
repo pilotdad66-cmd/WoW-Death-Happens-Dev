@@ -492,11 +492,37 @@ local function BuildRosterTab(content)
 
     -- Sorting lives on the column headers themselves (2026-09-25, Chris:
     -- "activated by clicking on the column title, not by a separate
-    -- box"). No page controls - the tab's outer ScrollFrame already
-    -- handles a tall list (2026-09-25, Chris: "just one scrollable
-    -- list"), so the row pool below simply grows to fit.
+    -- box"). The row pool below grows on demand, but only one page's
+    -- worth of accounts is ever rendered (see the pagination block just
+    -- below - the earlier "no page controls" approach timed out at ~1100
+    -- accounts).
     local sortState = { key = "mainToon", ascending = true }
     local expanded = {}   -- discordName -> true when its alts are shown
+
+    -- Pagination (2026-09-29, Loopi: "script ran too long" opening the
+    -- Roster with the full ~1100-account seed loaded - the same failure
+    -- the Review Queue hit on 2026-09-25 and fixed with 100/page). The
+    -- unbounded row pool tried to build a frame + ~9 regions per account
+    -- in one tick. Now only ROSTER_MAINS_PER_PAGE accounts are rendered
+    -- at a time (plus their alt sub-rows when expanded, which are cheap
+    -- and don't count toward the page size, so expanding never reshuffles
+    -- which mains are on the page). Rank stays global - it is computed
+    -- from the whole ledger, not the page.
+    local ROSTER_MAINS_PER_PAGE = 100
+    local pageState = { page = 1 }
+
+    local prevPageBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    prevPageBtn:SetPoint("TOPLEFT", seedBtn, "BOTTOMLEFT", -2, -10)
+    prevPageBtn:SetSize(60, 20)
+    prevPageBtn:SetText("< Prev")
+
+    local pageLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    pageLabel:SetPoint("LEFT", prevPageBtn, "RIGHT", 8, 0)
+
+    local nextPageBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    nextPageBtn:SetPoint("LEFT", pageLabel, "RIGHT", 8, 0)
+    nextPageBtn:SetSize(60, 20)
+    nextPageBtn:SetText("Next >")
 
     -- Column header line - fixed x-offsets matching each row's
     -- FontStrings below, sized to fit the window's default ~480px
@@ -534,7 +560,7 @@ local function BuildRosterTab(content)
     local TIER_WIDTH, POINTS_WIDTH, LIFETIME_WIDTH, LASTDON_WIDTH, CREDITS_WIDTH = 76, 76, 60, 86, 32
 
     local headerRow = CreateFrame("Frame", nil, content)
-    headerRow:SetPoint("TOPLEFT", seedBtn, "BOTTOMLEFT", -2, -14)
+    headerRow:SetPoint("TOPLEFT", prevPageBtn, "BOTTOMLEFT", 0, -10)
     headerRow:SetPoint("RIGHT", content, "RIGHT", -16, 0)
     headerRow:SetHeight(16)
 
@@ -732,7 +758,15 @@ local function BuildRosterTab(content)
     -- Interleaves each main with its alt sub-rows (only when expanded)
     -- into a single flat list the row pool renders in order.
     local function BuildDisplayList()
-        local mains = SortedLedger()
+        local allMains = SortedLedger()
+        local totalPages = math.max(1, math.ceil(#allMains / ROSTER_MAINS_PER_PAGE))
+        if pageState.page > totalPages then pageState.page = totalPages end
+        if pageState.page < 1 then pageState.page = 1 end
+        local pageStart = (pageState.page - 1) * ROSTER_MAINS_PER_PAGE
+        local mains = {}
+        for i = pageStart + 1, math.min(#allMains, pageStart + ROSTER_MAINS_PER_PAGE) do
+            mains[#mains + 1] = allMains[i]
+        end
         local display = {}
         for _, rec in ipairs(mains) do
             local alts = rec.alts
@@ -744,7 +778,7 @@ local function BuildRosterTab(content)
                 end
             end
         end
-        return display, #mains
+        return display, #allMains, totalPages
     end
 
     Refresh = function()
@@ -764,7 +798,10 @@ local function BuildRosterTab(content)
             return
         end
 
-        local display = BuildDisplayList()
+        local display, totalMains, totalPages = BuildDisplayList()
+        pageLabel:SetText(("Page %d/%d (%d total)"):format(pageState.page, totalPages, totalMains))
+        if pageState.page <= 1 then prevPageBtn:Disable() else prevPageBtn:Enable() end
+        if pageState.page >= totalPages then nextPageBtn:Disable() else nextPageBtn:Enable() end
         local ranks = RankMap()
         EnsureRowCount(#display)
         for i, row in ipairs(rows) do
@@ -825,8 +862,17 @@ local function BuildRosterTab(content)
             sortState.key = key
             sortState.ascending = defaultAscending
         end
+        pageState.page = 1 -- a new order starts from the top
         Refresh()
     end
+    prevPageBtn:SetScript("OnClick", function()
+        pageState.page = pageState.page - 1
+        Refresh()
+    end)
+    nextPageBtn:SetScript("OnClick", function()
+        pageState.page = pageState.page + 1
+        Refresh()
+    end)
     nameHeader:SetScript("OnClick", function() SetSort("mainToon", true) end)
     lifetimeHeader:SetScript("OnClick", function() SetSort("lifetimePoints", false) end)
     lastDonationHeader:SetScript("OnClick", function() SetSort("lastDonationDate", false) end)
