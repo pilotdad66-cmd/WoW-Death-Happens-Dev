@@ -134,7 +134,35 @@ local function CreateToolsPanel(parent)
         return check
     end
 
+    -- 2026-09-28 (Chris feedback): checkbox display order no longer
+    -- follows raw .toc load order (mobmarker, quests, bavin, danger,
+    -- air, macros, store) - reordered to match the same Bavin/Store-
+    -- adjacent grouping the Config nav and Officer Settings page already
+    -- use (Store depends on Bavin, so they read better together), with
+    -- Air last since it has its own separate window and isn't part of
+    -- this nav at all. Display order ONLY - does not touch
+    -- DHTools.moduleOrder itself (registration/activation order, .toc
+    -- load order), so module activation and dependency checks are
+    -- unaffected.
+    local TOOLS_ROW_ORDER = { "mobmarker", "quests", "bavin", "store", "danger", "macros", "air" }
+    local rowOrder, seenInRowOrder = {}, {}
+    for _, key in ipairs(TOOLS_ROW_ORDER) do
+        if DHTools.modules[key] then
+            table.insert(rowOrder, key)
+            seenInRowOrder[key] = true
+        end
+    end
+    -- Any module not explicitly listed above (e.g. a new one registered
+    -- later that nobody updated this list for) still gets a row -
+    -- appended after the fixed order, in its normal moduleOrder position
+    -- - so a forgotten update here never silently drops a module.
     for _, key in ipairs(DHTools.moduleOrder) do
+        if not seenInRowOrder[key] then
+            table.insert(rowOrder, key)
+        end
+    end
+
+    for _, key in ipairs(rowOrder) do
         local def = DHTools.modules[key]
         local check = AddRow(def.name, def.desc, false)
         check:SetScript("OnClick", function(self)

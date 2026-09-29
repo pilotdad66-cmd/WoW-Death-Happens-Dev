@@ -508,7 +508,10 @@ local function CreateMessagesPanel(parent)
     -- gets resized.
     local scrollFrame = CreateFrame("ScrollFrame", "DHAirMessagesScroll", panel, "UIPanelScrollFrameTemplate")
     scrollFrame:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -10)
-    scrollFrame:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -28, 4) -- -28: room for the template's scrollbar
+    -- 44 (not 4): leaves room for the fixed Save Changes footer pinned to
+    -- panel's own bottom edge (see saveBtn below, 2026-09-28) - the footer
+    -- must never overlap the last row of scrollable content.
+    scrollFrame:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -28, 44) -- -28: room for the template's scrollbar
     scrollFrame:EnableMouseWheel(true)
     scrollFrame:SetScript("OnMouseWheel", function(self, delta)
         local cur = self:GetVerticalScroll()
@@ -532,10 +535,10 @@ local function CreateMessagesPanel(parent)
         .. "\"Whisper to Target\" sends privately to the player being summoned instead of a chat channel.")
     hint:SetWordWrap(true)
 
-    -- Forward-declared (saveBtn/giEdit created further down) - same trick
-    -- Options page's code-phrase Save button already uses.
+    -- Forward-declared (saveBtn/giEdit/unsavedLabel created further down) -
+    -- same trick Options page's code-phrase Save button already uses.
     local rows = {}
-    local saveBtn, giEdit
+    local saveBtn, giEdit, unsavedLabel
     local textDirty = {} -- key -> bool; CHANNELS' keys plus "__guildInstructions"
 
     local function AnyFieldDirty()
@@ -545,7 +548,13 @@ local function CreateMessagesPanel(parent)
         return false
     end
     local function RefreshSaveState()
-        if saveBtn then saveBtn:SetEnabled(AnyFieldDirty()) end
+        local dirty = AnyFieldDirty()
+        if saveBtn then saveBtn:SetEnabled(dirty) end
+        -- 2026-09-28 (Chris-reported): a plain enabled/disabled button was
+        -- easy to miss entirely - spell it out in text too.
+        if unsavedLabel then
+            unsavedLabel:SetText(dirty and "|cffffcc00Unsaved changes|r" or "")
+        end
     end
     local function OnFieldChanged(key, isUserInput)
         textDirty[key] = isUserInput and true or false
@@ -696,32 +705,18 @@ local function CreateMessagesPanel(parent)
     local destClearedEdit, destClearedBg = CreateWrapMessageBox(scrollChild, "DHAirDestClearedMsg", destClearedLabel, 0, -8, 2,
         function() return DHAir.db.destClearedMessage end, OnFieldChanged, "__destClearedMessage")
 
-    saveBtn = CreateFrame("Button", nil, scrollChild, "UIPanelButtonTemplate")
-    saveBtn:SetSize(130, 22)
-    saveBtn:SetPoint("TOP", destClearedBg, "BOTTOM", 0, -16)
-    saveBtn:SetPoint("LEFT", hint, "LEFT", 0, 0)
-    saveBtn:SetText("Save Changes")
-    saveBtn:SetScript("OnClick", function()
-        for _, info in ipairs(CHANNELS) do
-            DHAir.db.messages[info.key].text = rows[info.key].edit:GetText()
-        end
-        DHAir.db.guildInstructions = giEdit:GetText()
-        DHAir.db.destSetMessage = destSetEdit:GetText()
-        DHAir.db.destClearedMessage = destClearedEdit:GetText()
-        textDirty = {}
-        RefreshSaveState()
-    end)
-    saveBtn:Disable()
-
-    -- Restore Default Messages (2026-08-16: moved to the bottom, below
-    -- Save Changes, per Loopi - it's a reset action, kept visually last
-    -- and separate from the everyday Save Changes flow). Writes db AND
-    -- widget text directly (bypassing panel.Refresh's dirty-guard below on
-    -- purpose - restoring defaults should always win over an in-progress
-    -- edit, unlike a routine page-revisit refresh).
+    -- Restore Default Messages (2026-08-16: at the bottom of the scrolling
+    -- content, below the Destination Whisper boxes, per Loopi - it's a
+    -- reset action, kept visually last and separate from the everyday
+    -- Save Changes flow, which now lives outside this scroll region
+    -- entirely - see saveBtn below). Writes db AND widget text directly
+    -- (bypassing panel.Refresh's dirty-guard below on purpose - restoring
+    -- defaults should always win over an in-progress edit, unlike a
+    -- routine page-revisit refresh).
     local resetBtn = CreateFrame("Button", nil, scrollChild, "UIPanelButtonTemplate")
     resetBtn:SetSize(180, 22)
-    resetBtn:SetPoint("TOPLEFT", saveBtn, "BOTTOMLEFT", 0, -10)
+    resetBtn:SetPoint("TOP", destClearedBg, "BOTTOM", 0, -16)
+    resetBtn:SetPoint("LEFT", hint, "LEFT", 0, 0)
     resetBtn:SetText("Restore Default Messages")
     resetBtn:SetScript("OnClick", function()
         for _, info in ipairs(CHANNELS) do
@@ -736,6 +731,43 @@ local function CreateMessagesPanel(parent)
         textDirty = {}
         panel.Refresh()
     end)
+
+    -- Save Changes (2026-09-28, Chris-reported: a Warlock editing the
+    -- Guild Chat row near the TOP of this page had no idea a Save button
+    -- even existed - it used to sit at the very bottom of a long
+    -- scrolling page, below Guild Instructions and both Destination
+    -- Whisper boxes, easily off-screen below the fold with nothing
+    -- hinting there was more to scroll to. Pinned to `panel` itself (not
+    -- `scrollChild`) as a fixed footer instead, so it's ALWAYS visible
+    -- regardless of scroll position or window size - same reasoning as
+    -- `title` staying fixed at the top. unsavedLabel next to it makes
+    -- "you have changes to save" readable at a glance too, not just an
+    -- enabled/disabled button someone might not notice.
+    saveBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    saveBtn:SetSize(130, 22)
+    saveBtn:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 16, 10)
+    saveBtn:SetText("Save Changes")
+    saveBtn:SetScript("OnClick", function()
+        for _, info in ipairs(CHANNELS) do
+            DHAir.db.messages[info.key].text = rows[info.key].edit:GetText()
+        end
+        DHAir.db.guildInstructions = giEdit:GetText()
+        DHAir.db.destSetMessage = destSetEdit:GetText()
+        DHAir.db.destClearedMessage = destClearedEdit:GetText()
+        textDirty = {}
+        RefreshSaveState()
+    end)
+    saveBtn:Disable()
+
+    unsavedLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    unsavedLabel:SetPoint("LEFT", saveBtn, "RIGHT", 10, 0)
+    unsavedLabel:SetText("")
+
+    local footerDivider = panel:CreateTexture(nil, "ARTWORK")
+    footerDivider:SetColorTexture(1, 1, 1, 0.15)
+    footerDivider:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 0, 40)
+    footerDivider:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, 40)
+    footerDivider:SetHeight(1)
 
     panel.Refresh = function()
         for _, info in ipairs(CHANNELS) do

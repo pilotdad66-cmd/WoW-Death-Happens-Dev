@@ -27,10 +27,11 @@
 -- Credits vs. Reputation points: NOT the same number (2026-09-24,
 -- Chris) - points are the tier-tracked reputation total, credits are a
 -- separate spendable balance earned at creditMultiplier credits-per-
--- point (default 0.60, officer-configurable - see DH-Bavin-Credits-
--- Design.md's "Multiplier" decision, value corrected 2026-09-24 from
--- the doc's original 0.7 draft). This file's config just carries the
--- multiplier; CM4's crediting logic is what actually applies it.
+-- point (default 0.01, officer-configurable - see DH-Bavin-Credits-
+-- Design.md's "Multiplier" decision; updated 2026-09-28, Chris: new
+-- ratio is 100 rep = 1 credit = 1 gold, superseding the earlier 0.60
+-- figure). This file's config just carries the multiplier; CM4's
+-- crediting logic is what actually applies it.
 
 local DHTools = DHTools
 DHTools.Bavin = DHTools.Bavin or {}
@@ -40,7 +41,7 @@ function ns.CreditsPrint(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99DH-Bavin Credits:|r " .. msg)
 end
 
-local DEFAULT_MULTIPLIER = 0.60 -- credits per reputation point (2026-09-24, Chris)
+local DEFAULT_MULTIPLIER = 0.01 -- credits per reputation point (100 rep = 1 credit, 2026-09-28, Chris)
 
 --------------------------------------------------------------------------
 -- Wall 1: SavedVariables

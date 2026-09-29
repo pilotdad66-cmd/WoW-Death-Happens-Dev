@@ -41,13 +41,13 @@ function ns.InitDB()
     end
     ns.db.officersUpdatedAt = ns.db.officersUpdatedAt or 0
     ns.db.catalogUpdatedAt = ns.db.catalogUpdatedAt or 0
-    -- creditGoldRatio: CONFIRMED 2026-09-28 (Chris) - 10 credits per
-    -- gold, no longer just a recollection needing verification (see
-    -- question #5's original note). `== nil` (not `or 10`) so an
-    -- officer's own explicit change - including one that happens to
-    -- also be 10 - is never silently re-stamped as "still the default"
-    -- on a later login.
-    if ns.db.creditGoldRatio == nil then ns.db.creditGoldRatio = 10 end
+    -- creditGoldRatio: UPDATED 2026-09-28 (Chris) - 1 credit = 1 gold,
+    -- superseding the earlier 10-credits-per-gold figure (was correct
+    -- as of question #5's original note, changed by Chris this
+    -- session). `== nil` (not `or 1`) so an officer's own explicit
+    -- change - including one that happens to also be 1 - is never
+    -- silently re-stamped as "still the default" on a later login.
+    if ns.db.creditGoldRatio == nil then ns.db.creditGoldRatio = 1 end
     if ns.db.discountAppliesToGold == nil then ns.db.discountAppliesToGold = true end
     if ns.db.discountAppliesToCredits == nil then ns.db.discountAppliesToCredits = true end
     -- Repoint the runtime table at the persistent one, same pattern as
