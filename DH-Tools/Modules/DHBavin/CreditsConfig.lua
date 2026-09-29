@@ -557,7 +557,7 @@ local function BuildRosterTab(content)
     local COL_GAP = 8
     local RANK_WIDTH = 42 -- room for the sort arrow beside "Rank"
     local NAME_LEFT_GAP = 4
-    local TIER_WIDTH, POINTS_WIDTH, LIFETIME_WIDTH, LASTDON_WIDTH, CREDITS_WIDTH = 76, 76, 60, 86, 56
+    local TIER_WIDTH, POINTS_WIDTH, LIFETIME_WIDTH, LASTDON_WIDTH, CREDITS_WIDTH = 76, 76, 60, 86, 70
 
     local headerRow = CreateFrame("Frame", nil, content)
     headerRow:SetPoint("TOPLEFT", prevPageBtn, "BOTTOMLEFT", 0, -10)
