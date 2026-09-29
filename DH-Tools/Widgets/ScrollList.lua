@@ -42,9 +42,32 @@ function ns.Widgets.CreateScrollList(parent, opts)
     nameCounter = nameCounter + 1
     local frameName = "DHToolsScrollList" .. nameCounter
 
-    local scrollFrame = CreateFrame("Frame", frameName, parent, "HybridScrollFrameTemplate")
+    -- MUST be a "ScrollFrame" (not "Frame"): the template's ScrollChild and
+    -- SetVerticalScroll only exist on a real ScrollFrame. Created as a plain
+    -- Frame, HybridScrollFrame_SetOffset died calling the missing
+    -- SetVerticalScroll and HybridScrollFrame_Update found no scrollChild.
+    local scrollFrame = CreateFrame("ScrollFrame", frameName, parent, "HybridScrollFrameTemplate")
     scrollFrame.data = {}
     scrollFrame.buttonHeight = rowHeight -- HybridScrollFrame_GetOffset divides by this
+    scrollFrame.stepSize = rowHeight     -- mouse-wheel step
+
+    -- Blizzard's code reads lowercase scrollChild/scrollBar; the template's
+    -- own child key casing and the scrollbar are not guaranteed, so wire
+    -- both explicitly.
+    local scrollChild = scrollFrame.scrollChild or scrollFrame.ScrollChild
+    if not scrollChild then
+        scrollChild = CreateFrame("Frame", frameName .. "ScrollChild", scrollFrame)
+    end
+    scrollChild:SetSize(1, 1)
+    scrollFrame:SetScrollChild(scrollChild)
+    scrollFrame.scrollChild = scrollChild
+
+    local scrollBar = CreateFrame("Slider", frameName .. "ScrollBar", scrollFrame, "HybridScrollBarTemplate")
+    scrollBar:SetPoint("TOPRIGHT", scrollFrame, "TOPRIGHT", 0, -16)
+    scrollBar:SetPoint("BOTTOMRIGHT", scrollFrame, "BOTTOMRIGHT", 0, 16)
+    scrollBar:SetMinMaxValues(0, 0)
+    scrollBar:SetValue(0)
+    scrollFrame.scrollBar = scrollBar
 
     local emptyText
     if opts.emptyText then
@@ -65,12 +88,14 @@ function ns.Widgets.CreateScrollList(parent, opts)
         local needed = math.floor(height / rowHeight) + 1 -- +1 for a partial row at the bottom
         while #scrollFrame.buttons < needed do
             local index = #scrollFrame.buttons + 1
-            local row = CreateFrame("Button", frameName .. "Row" .. index, scrollFrame)
+            -- Rows live in the scroll child (Blizzard's layout), so the
+            -- frame's sub-row vertical scroll shifts them correctly.
+            local row = CreateFrame("Button", frameName .. "Row" .. index, scrollChild)
             row:SetHeight(rowHeight)
-            row:SetPoint("LEFT", scrollFrame, "LEFT", 0, 0)
-            row:SetPoint("RIGHT", scrollFrame, "RIGHT", -rightInset, 0)
+            row:SetPoint("LEFT", scrollChild, "LEFT", 0, 0)
+            row:SetPoint("RIGHT", scrollChild, "RIGHT", 0, 0)
             if index == 1 then
-                row:SetPoint("TOP", scrollFrame, "TOP", 0, 0)
+                row:SetPoint("TOP", scrollChild, "TOP", 0, 0)
             else
                 row:SetPoint("TOP", scrollFrame.buttons[index - 1], "BOTTOM", 0, 0)
             end
@@ -101,7 +126,8 @@ function ns.Widgets.CreateScrollList(parent, opts)
         HybridScrollFrame_Update(scrollFrame, count * rowHeight, scrollFrame:GetHeight())
     end
 
-    scrollFrame:SetScript("OnSizeChanged", function()
+    scrollFrame:SetScript("OnSizeChanged", function(_, width)
+        scrollChild:SetWidth(math.max(1, (width or scrollFrame:GetWidth()) - rightInset))
         EnsureButtons()
         scrollFrame.update()
     end)
@@ -115,7 +141,7 @@ function ns.Widgets.CreateScrollList(parent, opts)
     function list:SetData(dataArray)
         scrollFrame.data = dataArray or {}
         HybridScrollFrame_SetOffset(scrollFrame, 0)
-        if scrollFrame.scrollBar then scrollFrame.scrollBar:SetValue(0) end
+        scrollBar:SetValue(0)
         scrollFrame.update()
     end
 
