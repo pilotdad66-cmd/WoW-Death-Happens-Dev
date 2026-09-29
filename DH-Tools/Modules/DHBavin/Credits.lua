@@ -364,6 +364,41 @@ function ns.Credits_UnlinkAlt(altName)
     return true
 end
 
+-- Officer-initiated main swap (Roster tab right-click "Promote to Main",
+-- 2026-09-29): the named ALT becomes the account's main toon and the old
+-- main takes its slot in the alt list, so the account ALWAYS has a main.
+-- The ledger key (discordName) and every number on the record - points,
+-- credits, lifetime totals, history - are untouched; per Identity model v2
+-- a main-swap is only a field edit. Returns true, newMain on success.
+function ns.Credits_PromoteToMain(altName)
+    if not ns.CanManageCreditsConfigLocal() then return false end
+    if not altName or altName == "" or not ns.creditsDb then return false end
+    if not ns.creditsDb.toonIndex then ns.Credits_RebuildToonIndex() end
+    local key = ns.NormalizeName(altName):lower()
+    local discordName = ns.creditsDb.toonIndex[key]
+    local rec = discordName and ns.creditsDb.ledger[discordName]
+    if not rec then return false end
+    if rec.mainToon and rec.mainToon:lower() == key then return false end -- already the main
+    local idx
+    for i, a in ipairs(rec.alts or {}) do
+        if a:lower() == key then idx = i break end
+    end
+    if not idx then return false end
+    local newMain = rec.alts[idx]
+    local oldMain = rec.mainToon
+    if oldMain and oldMain ~= "" then
+        rec.alts[idx] = oldMain -- old main takes the promoted alt's slot
+    else
+        table.remove(rec.alts, idx)
+    end
+    rec.mainToon = newMain
+    ns.Credits_RebuildToonIndex()
+    if ns.CreditsSync_Changed then
+        ns.CreditsSync_Changed({ discordName }, nil)
+    end
+    return true, newMain
+end
+
 -- Read-only lookup for UI (Review Queue tab) - which account's mainToon
 -- currently claims altName as an ALT (never returns a name for its own
 -- account's main toon - that's not what "linked as an alt" means here).

@@ -1313,6 +1313,63 @@ check("Reset with permission wipes ledger, toonIndex, dynamic Review Queue, tran
 check("A name resolves back to self-fallback after reset", ns.Credits_ResolveMain("MainA") == "MainA")
 
 --------------------------------------------------------------------------
+-- Credits: Credits_PromoteToMain (Roster right-click menu)
+--------------------------------------------------------------------------
+print("== Credits: Credits_PromoteToMain ==")
+do
+    resetState()
+    inGuild = true
+    guildRosterEntries = {
+        { name = "Officer1", rankIndex = 3 },
+        { name = "Officer2", rankIndex = 3 },
+        { name = "Member1", rankIndex = 5 },
+    }
+    ns.UpdateGuildRosterCache()
+    currentPlayerName = "Officer1"
+    ns.db.editors = { "Officer1", "Officer2" }
+    ns.CreditsSeedData = { MainA = { lifetimePoints = 4321 } }
+    ns.CreditsAltRoster = { MainA = { "AltA1", "AltA2" } }
+    ns.CreditsSeed_Import()
+    local rec = ns.creditsDb.ledger["MainA"]
+    rec.credits, rec.lifetimeCredits = 40, 90
+    outboxLog = {}
+
+    local ok, newMain = ns.Credits_PromoteToMain("AltA1")
+    check("Promoting an alt succeeds and reports the new main", ok == true and newMain == "AltA1")
+    check("The alt is now the account's main toon", rec.mainToon == "AltA1")
+    local hasOld, hasNew = false, false
+    for _, a in ipairs(rec.alts) do
+        if a == "MainA" then hasOld = true end
+        if a == "AltA1" then hasNew = true end
+    end
+    check("The old main became an alt of the same account", hasOld)
+    check("The promoted toon is no longer listed as an alt", not hasNew)
+    check("The account keeps the same number of alts", #rec.alts == 2)
+    check("The ledger key (discordName) is unchanged", ns.creditsDb.ledger["MainA"] == rec and ns.creditsDb.ledger["AltA1"] == nil)
+    check("Points and credit history are untouched",
+        rec.lifetimePoints == 4321 and rec.credits == 40 and rec.lifetimeCredits == 90)
+    check("Every toon still resolves to the same account",
+        ns.creditsDb.toonIndex["maina"] == "MainA" and ns.creditsDb.toonIndex["alta1"] == "MainA"
+        and ns.creditsDb.toonIndex["alta2"] == "MainA")
+    check("Promote is announced to online officers as a record change",
+        (function()
+            local sent = ""
+            for _, e in ipairs(outboxLog) do
+                if e.target == "Officer2" then sent = sent .. e.text end
+            end
+            return sent:find("R:MainA|AltA1|", 1, true) ~= nil
+        end)())
+
+    check("Promoting the current main is refused", ns.Credits_PromoteToMain("AltA1") == false)
+    check("Promoting an unknown name is refused", ns.Credits_PromoteToMain("Nobody") == false)
+    check("Promoting the previous main back works and restores it",
+        ns.Credits_PromoteToMain("MainA") == true and rec.mainToon == "MainA")
+
+    currentPlayerName = "Member1"
+    check("A non-officer cannot promote", ns.Credits_PromoteToMain("AltA2") == false and rec.mainToon == "MainA")
+end
+
+--------------------------------------------------------------------------
 -- Credits: CM3 officer ledger sync (CreditsSync.lua)
 --------------------------------------------------------------------------
 print("== Credits: CM3 ledger sync ==")

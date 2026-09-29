@@ -76,6 +76,21 @@ function ns.GetLocalAccountRecord()
     return nil
 end
 
+-- The window normally shows the LOCAL player's account. The Roster tab's
+-- right-click "Show Account" (CreditsConfig.lua) reuses it for any ledger
+-- account by setting viewKey (a ledger key / discordName); nil = mine.
+local viewKey = nil
+
+local function ViewedRecord()
+    if viewKey then
+        local db = ns.creditsDb
+        local rec = db and db.ledger and db.ledger[viewKey]
+        if rec then return rec, viewKey end
+        viewKey = nil -- account vanished (e.g. test reset): fall back to mine
+    end
+    return ns.GetLocalAccountRecord()
+end
+
 local function IsBadName(n)
     -- Some shipped roster names carry mojibake (U+FFFD) from the CSV
     -- import; never show those.
@@ -90,10 +105,10 @@ local function ResolveAccountToons()
     local lme = me:lower()
     local main, alts, source
 
-    local rec = ns.GetLocalAccountRecord()
+    local rec = ViewedRecord()
     if rec and rec.mainToon and rec.mainToon ~= "" then
         main, alts, source = rec.mainToon, rec.alts or {}, "ledger"
-    else
+    elseif not viewKey then
         for mainName, list in pairs(ns.CreditsAltRoster or {}) do
             local hit = mainName:lower() == lme
             if not hit then
@@ -104,9 +119,10 @@ local function ResolveAccountToons()
             if hit then main, alts, source = mainName, list, "roster" break end
         end
     end
-    if not main then main, alts, source = me, {}, "self" end
+    if not main then main, alts, source = (viewKey or me), {}, "self" end
 
     local out, seen = {}, {}
+    local viewingOther = viewKey ~= nil
     local function add(name, isMain)
         if IsBadName(name) then return end
         local k = name:lower()
@@ -120,14 +136,18 @@ local function ResolveAccountToons()
     table.sort(sortedAlts, function(a, b) return a:lower() < b:lower() end)
     for _, a in ipairs(sortedAlts) do add(a, false) end
 
-    local realm = GetRealmName and GetRealmName() or ""
-    local extras = {}
-    for _, r in pairs(CharStore()) do
-        if r.realm == realm then extras[#extras + 1] = r.name end
+    -- The extras (other characters this WoW account has logged into) and
+    -- the logged-in character are only provably part of MY account.
+    if not viewingOther then
+        local realm = GetRealmName and GetRealmName() or ""
+        local extras = {}
+        for _, r in pairs(CharStore()) do
+            if r.realm == realm then extras[#extras + 1] = r.name end
+        end
+        table.sort(extras, function(a, b) return a:lower() < b:lower() end)
+        for _, n in ipairs(extras) do add(n, false) end
+        add(me, false)
     end
-    table.sort(extras, function(a, b) return a:lower() < b:lower() end)
-    for _, n in ipairs(extras) do add(n, false) end
-    add(me, false)
 
     return out, source, main
 end
@@ -378,6 +398,7 @@ local function CreateAccountFrame()
         if ns.RequestGuildRoster then ns.RequestGuildRoster() end
         ns.Account_Refresh()
     end)
+    f:SetScript("OnHide", function() viewKey = nil end)
     return f
 end
 
@@ -385,8 +406,11 @@ function ns.Account_Refresh()
     if not frame or not frame:IsShown() then return end
     local data, main = BuildAccountData()
     frame.mainText:SetText("Main: " .. (main or "?"))
+    if frame.TitleText then
+        frame.TitleText:SetText(viewKey and "Account" or "My Account")
+    end
 
-    local rec = ns.GetLocalAccountRecord()
+    local rec = ViewedRecord()
     if rec then
         local tier = rec.tier or "?"
         local prestige = tonumber(rec.prestige) or 0
@@ -417,10 +441,11 @@ function ns.Account_Refresh()
     frame.list:SetData(data)
 end
 
-function ns.Account_Toggle()
+-- Builds the window on first use. Returns true when it is ready.
+local function EnsureFrame()
     if DHTools.IsModuleEnabled and not DHTools.IsModuleEnabled("bavin") then
         print("|cff33ff99DH-Tools:|r Bavin Points is disabled - enable it in DH-Tools Settings to view your account.")
-        return
+        return false
     end
     if not frame then
         local ok, err = pcall(CreateAccountFrame)
@@ -428,10 +453,31 @@ function ns.Account_Toggle()
             if frame then frame:Hide() end
             frame = nil
             print("|cffff3333DH-Tools: could not build the account window: " .. tostring(err) .. "|r")
-            return
+            return false
         end
     end
+    return true
+end
+
+function ns.Account_Toggle()
+    if not EnsureFrame() then return end
+    if frame:IsShown() and viewKey then
+        -- Showing someone else's account: switch to mine instead of closing.
+        viewKey = nil
+        ns.Account_Refresh()
+        return
+    end
+    viewKey = nil
     if frame:IsShown() then frame:Hide() else frame:Show() end
+end
+
+-- Read-only view of any ledger account (Roster tab right-click "Show
+-- Account"). Officer-gated editing from here is a planned later step.
+function ns.Account_ShowFor(discordName)
+    if not discordName or discordName == "" then return end
+    if not EnsureFrame() then return end
+    viewKey = discordName
+    if frame:IsShown() then ns.Account_Refresh() else frame:Show() end
 end
 
 --------------------------------------------------------------------------

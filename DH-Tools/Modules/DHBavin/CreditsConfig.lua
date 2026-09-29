@@ -447,7 +447,7 @@ local function BuildRosterTab(content)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
-    hint:SetText("Every main's seeded reputation/credit standing. Rank is always by Lifetime Points, regardless of the active sort. Click a column title (Name/Lifetime/Last Donation) to sort by it - click again to flip direction. Click a name marked [+] to show its alts. Seeding is Distribution Officer only; re-running it overwrites the row for any name in the historical data (SeedData.lua) without touching rows for names outside that dataset.")
+    hint:SetText("Every main's seeded reputation/credit standing. Rank is always by Lifetime Points, regardless of the active sort. Click a column title (Name/Lifetime/Last Donation) to sort by it - click again to flip direction. Left-click a name marked [+] to show its alts; right-click any name for a menu (Show Account, and on an alt also Unlink Alt / Promote to Main). Seeding is Distribution Officer only; re-running it overwrites the row for any name in the historical data (SeedData.lua) without touching rows for names outside that dataset.")
 
     -- Seed button - two-click confirm, mirrors Settings tab's Reset Test Data.
     local seedBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
@@ -648,6 +648,124 @@ local function BuildRosterTab(content)
     local rows = {}
     local Refresh   -- forward-declared: row click handlers call it
 
+    ------------------------------------------------------------------
+    -- Right-click context menu (2026-09-29, Loopi). Left-click keeps
+    -- expanding/collapsing; right-click on a name opens a small menu:
+    --   alt row:  Unlink Alt / Promote to Main / Show Account
+    --   main row: Show Account
+    -- One shared menu frame, built on first use, parented to the
+    -- top-level window (not the scrolling content) like the Review
+    -- Queue's suggestion popup, so the ScrollFrame never clips it. A
+    -- full-screen invisible catcher closes it on any outside click.
+    -- Unlink/Promote are Distribution-Officer-only (greyed otherwise);
+    -- Promote needs a second click to confirm because it changes which
+    -- toon is the account's face.
+    ------------------------------------------------------------------
+    local MENU_W, MENU_ITEM_H, MENU_MAX_ITEMS = 150, 18, 3
+    local menu, menuCatcher
+
+    local function HideMenu()
+        if menu then menu:Hide() end
+        if menuCatcher then menuCatcher:Hide() end
+    end
+
+    local function BuildMenu()
+        menuCatcher = CreateFrame("Button", nil, UIParent)
+        menuCatcher:SetAllPoints(UIParent)
+        menuCatcher:SetFrameStrata("FULLSCREEN_DIALOG")
+        menuCatcher:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        menuCatcher:SetScript("OnClick", HideMenu)
+        menuCatcher:Hide()
+
+        menu = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+        menu:SetFrameStrata("TOOLTIP")
+        menu:SetWidth(MENU_W)
+        menu:SetBackdrop({
+            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            edgeSize = 12,
+            insets = { left = 3, right = 3, top = 3, bottom = 3 },
+        })
+        menu:SetBackdropColor(0, 0, 0, 0.95)
+        menu:SetScript("OnHide", function()
+            if menuCatcher then menuCatcher:Hide() end
+        end)
+        menu:Hide()
+
+        menu.items = {}
+        for i = 1, MENU_MAX_ITEMS do
+            local btn = CreateFrame("Button", nil, menu)
+            btn:SetHeight(MENU_ITEM_H)
+            btn:SetPoint("TOPLEFT", 5, -5 - (i - 1) * MENU_ITEM_H)
+            btn:SetPoint("RIGHT", -5, 0)
+            local label = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            label:SetAllPoints()
+            label:SetJustifyH("LEFT")
+            btn.label = label
+            local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+            hl:SetAllPoints()
+            hl:SetColorTexture(1, 1, 1, 0.2)
+            menu.items[i] = btn
+        end
+    end
+
+    -- entries = { { text=, run=function, disabled=bool, confirm=bool }, ... }
+    local function ShowMenu(entries)
+        if not menu then BuildMenu() end
+        for i, btn in ipairs(menu.items) do
+            local e = entries[i]
+            if not e then
+                btn:Hide()
+            else
+                btn:Show()
+                btn.armed = false
+                btn.label:SetText(e.disabled and ("|cff777777" .. e.text .. "|r") or e.text)
+                if e.disabled then btn:Disable() else btn:Enable() end
+                btn:SetScript("OnClick", function(self)
+                    if e.confirm and not self.armed then
+                        self.armed = true
+                        self.label:SetText("|cffffcc00Click again to confirm|r")
+                        return
+                    end
+                    HideMenu()
+                    e.run()
+                end)
+            end
+        end
+        menu:SetHeight(#entries * MENU_ITEM_H + 10)
+        local x, y = GetCursorPosition()
+        local s = menu:GetEffectiveScale()
+        menu:ClearAllPoints()
+        menu:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x / s, y / s)
+        menuCatcher:Show()
+        menu:Show()
+    end
+
+    local function OpenRowMenu(row)
+        local canManage = ns.CanManageCreditsConfigLocal and ns.CanManageCreditsConfigLocal() or false
+        if row.entryKind == "main" and row.currentAccount then
+            local account = row.currentAccount
+            ShowMenu({
+                { text = "Show Account", run = function() if ns.Account_ShowFor then ns.Account_ShowFor(account) end end },
+            })
+        elseif row.entryKind == "alt" and row.altName and row.altAccount then
+            local altName, account = row.altName, row.altAccount
+            ShowMenu({
+                { text = "Unlink Alt", disabled = not canManage, run = function()
+                    if ns.Credits_UnlinkAlt(altName) then ns.CreditsConfig_Refresh() end
+                end },
+                { text = "Promote to Main", disabled = not canManage, confirm = true, run = function()
+                    local ok, newMain = ns.Credits_PromoteToMain(altName)
+                    if ok then
+                        ns.CreditsPrint(newMain .. " is now the main toon of that account.")
+                        ns.CreditsConfig_Refresh()
+                    end
+                end },
+                { text = "Show Account", run = function() if ns.Account_ShowFor then ns.Account_ShowFor(account) end end },
+            })
+        end
+    end
+
     local function EnsureRowCount(n)
         for i = #rows + 1, n do
             local prevAnchor = rows[i - 1] or headerRow
@@ -707,8 +825,12 @@ local function BuildRosterTab(content)
             local nameHl = nameBtn:CreateTexture(nil, "HIGHLIGHT")
             nameHl:SetAllPoints()
             nameHl:SetColorTexture(1, 1, 1, 0.15)
-            nameBtn:SetScript("OnClick", function()
-                if row.isExpandable and row.currentAccount then
+            nameBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+            nameBtn:SetScript("OnClick", function(_, button)
+                if button == "RightButton" then
+                    OpenRowMenu(row)
+                elseif row.isExpandable and row.currentAccount then
+                    HideMenu()
                     expanded[row.currentAccount] = not expanded[row.currentAccount]
                     if Refresh then Refresh() end
                 end
@@ -800,7 +922,7 @@ local function BuildRosterTab(content)
             table.insert(display, { kind = "main", rec = rec, hasAlts = hasAlts })
             if hasAlts and expanded[rec.discordName] then
                 for _, altName in ipairs(alts) do
-                    table.insert(display, { kind = "alt", name = altName })
+                    table.insert(display, { kind = "alt", name = altName, account = rec.discordName })
                 end
             end
         end
@@ -846,11 +968,12 @@ local function BuildRosterTab(content)
                 if entry.kind == "main" then
                     local rec = entry.rec
                     row.isExpandable = entry.hasAlts
+                    row.entryKind, row.altName, row.altAccount = "main", nil, nil
                     row.currentAccount = rec.discordName
                     row.rank:SetText(tostring(ranks[rec.discordName] or "?"))
                     local marker = entry.hasAlts and (expanded[rec.discordName] and "[-] " or "[+] ") or "      "
                     row.nameBtn.label:SetText(marker .. (rec.mainToon or "?"))
-                    row.nameBtn:EnableMouse(entry.hasAlts)
+                    row.nameBtn:EnableMouse(true) -- left = expand (if alts), right = menu
                     local tierText = rec.tier or "?"
                     if (rec.prestige or 0) > 0 then
                         tierText = tierText .. " P" .. tostring(rec.prestige)
@@ -869,9 +992,10 @@ local function BuildRosterTab(content)
                 else
                     row.isExpandable = false
                     row.currentAccount = nil
+                    row.entryKind, row.altName, row.altAccount = "alt", entry.name, entry.account
                     row.rank:SetText("")
                     row.nameBtn.label:SetText("      - " .. (entry.name or "?"))
-                    row.nameBtn:EnableMouse(false)
+                    row.nameBtn:EnableMouse(true) -- right-click menu only
                     row.tier:SetText("")
                     row.points:SetText("")
                     row.lifetime:SetText("")
