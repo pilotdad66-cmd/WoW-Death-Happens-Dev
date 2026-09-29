@@ -572,7 +572,7 @@ local function PruneDepartedRecipientEditors()
                 table.insert(kept, editor)
             else
                 removedAny = true
-                ns.Print("Editor '" .. editor .. "' is no longer in the guild - removed from the editor list.")
+                ns.Print("Distribution Officer '" .. editor .. "' is no longer in the guild - removed from the Distribution Officers list.")
             end
         end
         if removedAny then
@@ -622,18 +622,18 @@ end)
 --------------------------------------------------------------------------
 local function ShowHelp()
     ns.Print("Commands:")
-    ns.Print("  /dhb                  - show the current recipient/editors/item count")
+    ns.Print("  /dhb                  - show the current Donation Recipient, Distribution Officers and item count")
     ns.Print("  /dhb config           - open the Bavin Points settings page")
     ns.Print("  /dhb items            - list the priority list's current items")
-    ns.Print("  /dhb points           - open the Bavin Points editor (recipient/editor only; everyone else sees it read-only)")
+    ns.Print("  /dhb points           - open the Bavin Points editor (Donation Recipient/Distribution Officers only; everyone else sees it read-only)")
     ns.Print("  /dhb credits          - Credit & Reputation System status/config (TEST PHASE - see /dhb credits with no args for the sub-command list)")
-    ns.Print("  /dhb priority         - open the Priority List editor: type an item name, list narrows as you type, click to add/remove (recipient/editor only)")
-    ns.Print("  /dhb additem <link>   - fallback: shift-click an item after typing this to add it by name (recipient/editor only) - for the rare item not in the Bavin Points list, which /dhb priority searches")
-    ns.Print("  /dhb removeitem <name> - remove an item from the priority list by exact name (recipient/editor only)")
+    ns.Print("  /dhb priority         - open the Priority List editor: type an item name, list narrows as you type, click to add/remove (Donation Recipient/Distribution Officers only)")
+    ns.Print("  /dhb additem <link>   - fallback: shift-click an item after typing this to add it by name (Donation Recipient/Distribution Officers only) - for the rare item not in the Bavin Points list, which /dhb priority searches")
+    ns.Print("  /dhb removeitem <name> - remove an item from the priority list by exact name (Donation Recipient/Distribution Officers only)")
     ns.Print("  /dhb on               - enable the Bavin Points module")
     ns.Print("  /dhb off              - disable the Bavin Points module")
     ns.Print("  /dhb help             - show this list")
-    ns.Print("Recipient/editors are set from the config page (guild leader only).")
+    ns.Print("The Donation Recipient and Distribution Officers are set on the Officer Settings page of the DH-Tools config.")
 end
 
 local function ShowStatus()
@@ -641,11 +641,11 @@ local function ShowStatus()
         ns.Print("Not initialized yet.")
         return
     end
-    ns.Print("Recipient: " .. (ns.db.recipient or "|cffff3333not set|r"))
+    ns.Print("Donation Recipient: " .. (ns.db.recipient or "|cffff3333not set|r"))
     if #ns.db.editors == 0 then
-        ns.Print("Editors: none")
+        ns.Print("Distribution Officers: none")
     else
-        ns.Print("Editors: " .. table.concat(ns.db.editors, ", "))
+        ns.Print("Distribution Officers: " .. table.concat(ns.db.editors, ", "))
     end
     local itemCount = 0
     if ns.priorityList then
@@ -737,7 +737,7 @@ SlashCmdList["DHBAVIN"] = function(msg)
         if ns.AddItem(name, tonumber(itemID), rest) then
             ns.Print("Added to the priority list: " .. rest)
         else
-            ns.Print("Refused - you must be the recipient or an editor.")
+            ns.Print("Refused - you must be the Donation Recipient or a Distribution Officer.")
         end
     elseif cmd == "removeitem" then
         if not ns.RemoveItem then
@@ -755,7 +755,7 @@ SlashCmdList["DHBAVIN"] = function(msg)
         if ns.RemoveItem(rest) then
             ns.Print("Removed '" .. rest .. "' from the priority list.")
         else
-            ns.Print("Refused - you must be the recipient or an editor.")
+            ns.Print("Refused - you must be the Donation Recipient or a Distribution Officer.")
         end
     elseif cmd == "on" then
         DHTools.SetModuleEnabled("bavin", true)
