@@ -524,6 +524,22 @@ local function BuildRosterTab(content)
     nextPageBtn:SetSize(60, 20)
     nextPageBtn:SetText("Next >")
 
+    -- Mirror of the pager above, placed under the LAST visible row
+    -- (re-anchored on every Refresh, since the row count changes with
+    -- expand/collapse) so changing pages doesn't mean scrolling back up
+    -- (2026-09-29, Loopi).
+    local botPrevBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    botPrevBtn:SetSize(60, 20)
+    botPrevBtn:SetText("< Prev")
+
+    local botPageLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    botPageLabel:SetPoint("LEFT", botPrevBtn, "RIGHT", 8, 0)
+
+    local botNextBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    botNextBtn:SetPoint("LEFT", botPageLabel, "RIGHT", 8, 0)
+    botNextBtn:SetSize(60, 20)
+    botNextBtn:SetText("Next >")
+
     -- Column header line - fixed x-offsets matching each row's
     -- FontStrings below, sized to fit the window's default ~480px
     -- frame width (no monospace font, so alignment is offset-based,
@@ -816,6 +832,9 @@ local function BuildRosterTab(content)
         pageLabel:SetText(("Page %d/%d (%d total)"):format(pageState.page, totalPages, totalMains))
         if pageState.page <= 1 then prevPageBtn:Disable() else prevPageBtn:Enable() end
         if pageState.page >= totalPages then nextPageBtn:Disable() else nextPageBtn:Enable() end
+        botPageLabel:SetText(pageLabel:GetText())
+        if pageState.page <= 1 then botPrevBtn:Disable() else botPrevBtn:Enable() end
+        if pageState.page >= totalPages then botNextBtn:Disable() else botNextBtn:Enable() end
         local ranks = RankMap()
         EnsureRowCount(#display)
         for i, row in ipairs(rows) do
@@ -863,9 +882,12 @@ local function BuildRosterTab(content)
         end
 
         local bottom = GetBottomAnchor()
+        botPrevBtn:ClearAllPoints()
+        botPrevBtn:SetPoint("TOPLEFT", bottom, "BOTTOMLEFT", -2, -10)
         local top, bot = content:GetTop(), bottom:GetBottom()
         if top and bot then
-            content:SetHeight(math.max(200, top - bot + 20))
+            -- +40: the bottom pager (10 gap + 20 tall) plus the usual margin.
+            content:SetHeight(math.max(200, top - bot + 40))
         end
     end
 
@@ -879,14 +901,18 @@ local function BuildRosterTab(content)
         pageState.page = 1 -- a new order starts from the top
         Refresh()
     end
-    prevPageBtn:SetScript("OnClick", function()
-        pageState.page = pageState.page - 1
+    -- Shared by the top and bottom pagers. Always returns to the top of the
+    -- list so the new page starts at its first row, whichever pager was used.
+    local function ChangePage(delta)
+        pageState.page = pageState.page + delta
         Refresh()
-    end)
-    nextPageBtn:SetScript("OnClick", function()
-        pageState.page = pageState.page + 1
-        Refresh()
-    end)
+        local sf = content:GetParent()
+        if sf and sf.SetVerticalScroll then sf:SetVerticalScroll(0) end
+    end
+    prevPageBtn:SetScript("OnClick", function() ChangePage(-1) end)
+    nextPageBtn:SetScript("OnClick", function() ChangePage(1) end)
+    botPrevBtn:SetScript("OnClick", function() ChangePage(-1) end)
+    botNextBtn:SetScript("OnClick", function() ChangePage(1) end)
     nameHeader:SetScript("OnClick", function() SetSort("mainToon", true) end)
     rankHeader:SetScript("OnClick", function() SetSort("rank", true) end)
     tierHeader:SetScript("OnClick", function() SetSort("rank", true) end)
@@ -938,6 +964,20 @@ local function BuildReviewQueueTab(content)
     filterEdit:SetAutoFocus(false)
     filterEdit:SetMaxLetters(24)
     filterEdit:SetScript("OnEscapePressed", filterEdit.ClearFocus)
+
+    -- Names an officer has already dealt with (linked as an alt, or made
+    -- their own main) are hidden by default so the list shows only real
+    -- work; "Show resolved" brings them back - that's also where an
+    -- officer goes to Unlink a wrong link (2026-09-29, Loopi). Session
+    -- only; it always starts unchecked.
+    local showResolved = false
+    local resolvedCheck = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
+    resolvedCheck:SetSize(24, 24)
+    resolvedCheck:SetPoint("LEFT", filterEdit, "RIGHT", 12, 2)
+    resolvedCheck:SetChecked(false)
+    local resolvedLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    resolvedLabel:SetPoint("LEFT", resolvedCheck, "RIGHT", 2, 0)
+    resolvedLabel:SetText("Show resolved")
 
     local sortState = { key = "name", ascending = true }
 
@@ -1169,10 +1209,17 @@ local function BuildReviewQueueTab(content)
     local function FilteredSortedRows()
         local typed = (filterEdit:GetText() or ""):lower()
         local list = {}
+        local hiddenResolved = 0
+        local toonIndex = ns.creditsDb and ns.creditsDb.toonIndex or {}
         local source = (ns.Credits_ReviewQueueRows and ns.Credits_ReviewQueueRows()) or ns.CreditsReviewQueue or {}
         for _, rec in ipairs(source) do
             if typed == "" or (rec.name or ""):lower():find(typed, 1, true) then
-                table.insert(list, rec)
+                -- resolved = the name now belongs to an account (alt OR main)
+                if not showResolved and toonIndex[(rec.name or ""):lower()] then
+                    hiddenResolved = hiddenResolved + 1
+                else
+                    table.insert(list, rec)
+                end
             end
         end
         table.sort(list, function(a, b)
@@ -1190,7 +1237,7 @@ local function BuildReviewQueueTab(content)
                 return false
             end
         end)
-        return list
+        return list, hiddenResolved
     end
 
     local function Refresh()
@@ -1198,7 +1245,12 @@ local function BuildReviewQueueTab(content)
         sortDateBtn:SetText(sortState.key == "latestDonation" and (sortState.ascending and "Latest Donation v" or "Latest Donation ^") or "Latest Donation")
 
         local canManage = ns.CanManageCreditsConfigLocal and ns.CanManageCreditsConfigLocal() or false
-        local list = FilteredSortedRows()
+        local list, hiddenResolved = FilteredSortedRows()
+        if showResolved then
+            resolvedLabel:SetText("Show resolved")
+        else
+            resolvedLabel:SetText(("Show resolved (%d hidden)"):format(hiddenResolved))
+        end
 
         -- Pagination (2026-09-25 round 4) - see the CONFLICTS_ROWS_PER_PAGE
         -- comment above for why. Page is clamped rather than reset on
@@ -1319,6 +1371,11 @@ local function BuildReviewQueueTab(content)
     end
 
     filterEdit:SetScript("OnTextChanged", function()
+        pageState.page = 1
+        Refresh()
+    end)
+    resolvedCheck:SetScript("OnClick", function(self)
+        showResolved = self:GetChecked() and true or false
         pageState.page = 1
         Refresh()
     end)
