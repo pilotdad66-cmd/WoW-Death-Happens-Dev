@@ -49,8 +49,28 @@ local timers = {} -- { deadline = , fn = }
 _G.C_Timer = {
     After = function(seconds, fn)
         table.insert(timers, { deadline = gameTime + (seconds or 0), fn = fn })
-    end
+    end,
+    -- PLAYER_LOGIN starts a periodic officer-access re-check (2026-09-29);
+    -- the mock never fires it - tests call ns.RefreshOfficerAccess directly.
+    NewTicker = function(seconds, fn) return { Cancel = function() end } end,
 }
+
+-- WoW globals the officer-gate code uses that bare Lua lacks (2026-09-29).
+local wallClock = 1700000000
+_G.time = function() return wallClock end
+_G.date = os.date
+_G.wipe = function(t) for k in pairs(t) do t[k] = nil end return t end
+
+-- Guild roster mock: list of { name=, rank= }.
+local rosterEntries = {}
+local rosterRequests = 0
+_G.GetNumGuildMembers = function() return #rosterEntries end
+_G.GetGuildRosterInfo = function(i)
+    local e = rosterEntries[i]
+    if not e then return nil end
+    return e.name, "Rank", e.rank
+end
+_G.C_GuildInfo = { GuildRoster = function() rosterRequests = rosterRequests + 1 end }
 
 local function advanceTime(dt)
     gameTime = gameTime + (dt or 0)
@@ -487,6 +507,192 @@ check("GET_ITEM_INFO_RECEIVED re-attempts classification and bids once it succee
 advanceTime(1)
 check("the retried classification's reply is posted once BID_WINDOW elapses",
     #chatLog == 1 and chatLog[1].text == "Resolved on retry")
+
+--------------------------------------------------------------------------
+-- Group F: shared Officer Settings gate (2026-09-29, Loopi) - the rank
+-- number is account-wide + guild-synced, officer ROLES grant access
+-- regardless of rank, and the button follows roster/role changes.
+--------------------------------------------------------------------------
+do
+    local RANK_PREFIX = "DHToolsRankV1"
+    local function sendRank(text, sender)
+        ns.frame:Fire("CHAT_MSG_ADDON", RANK_PREFIX, text, "GUILD", sender)
+    end
+    local function lastOut() return outboxLog[#outboxLog] end
+
+    -- Fresh, non-author client: a Lieutenant (guild rank 4) on a new account.
+    DHToolsAccountDB = {}
+    DHBavinDB, DHStoreDB = nil, nil
+    _G.GRM = nil
+    inGuild = true
+    playerName = "Lieutenant"
+    rosterEntries = {
+        { name = "Lieutenant-SkullRock", rank = 4 },
+        { name = "GM-SkullRock", rank = 0 },
+        { name = "Recruit-SkullRock", rank = 6 },
+        { name = "Loopi-SkullRock", rank = 2 },
+        { name = "Sergeant-SkullRock", rank = 5 },
+    }
+    ns.UpdateRosterRankCache()
+    outboxLog = {}
+
+    -- ADDON_LOADED now creates the account DB for everybody (not just the author).
+    local savedAcct = DHToolsAccountDB
+    DHToolsAccountDB = nil
+    ns.frame:Fire("ADDON_LOADED", ADDON_NAME)
+    check("ADDON_LOADED creates DHToolsAccountDB for every player", type(DHToolsAccountDB) == "table")
+    DHToolsAccountDB = savedAcct
+
+    -- Default gate: 0-3, so a rank-4 Lieutenant does NOT see the button.
+    check("default shared gate is 3", ns.GetOfficerMaxRank() == 3 and ns.GetOfficerRankStamp() == 0)
+    check("rank 4 is outside the default gate", ns.IsOfficerLocal() == false)
+    check("rank 4 cannot change the gate", ns.CanSetOfficerRankLocal() == false)
+    local ok, reason = ns.SetOfficerMaxRank(5)
+    check("a non-leader is refused when setting the gate", ok == false and reason == "permission")
+    check("...and nothing was broadcast or stored", #outboxLog == 0 and ns.GetOfficerMaxRank() == 3)
+
+    -- The guild leader sets it: stored account-wide, stamped, broadcast.
+    playerName = "GM"
+    check("the guild leader may change the gate", ns.CanSetOfficerRankLocal() == true)
+    ok, reason = ns.SetOfficerMaxRank(10)
+    check("an out-of-range gate value is refused", ok == false and reason == "range")
+    ok, reason = ns.SetOfficerMaxRank("x")
+    check("a non-numeric gate value is refused", ok == false and reason == "range")
+    ok = ns.SetOfficerMaxRank(5)
+    local gmStamp = ns.GetOfficerRankStamp()
+    check("the leader's set succeeds and is stored account-wide",
+        ok == true and ns.GetOfficerMaxRank() == 5 and DHToolsAccountDB.officerVisibleMaxRank == 5 and gmStamp >= wallClock)
+    check("...and is broadcast to the guild as RANK|n|stamp on the DH-Tools rank prefix",
+        lastOut() and lastOut().prefix == RANK_PREFIX and lastOut().channel == "GUILD"
+        and lastOut().text == "RANK|5|" .. gmStamp)
+
+    -- Lieutenant's own client receives it live from the leader.
+    playerName = "Lieutenant"
+    DHToolsAccountDB = {}
+    check("before the message arrives the Lieutenant still has the default", ns.IsOfficerLocal() == false)
+    sendRank("RANK|5|" .. gmStamp, "GM-SkullRock")
+    check("a live RANK from the guild leader is applied", ns.GetOfficerMaxRank() == 5 and ns.GetOfficerRankStamp() == gmStamp)
+    check("...and rank 4 now passes the gate", ns.IsOfficerLocal() == true)
+
+    -- Authorization + validation on receive.
+    sendRank("RANK|0|" .. (gmStamp + 10), "Recruit-SkullRock")
+    check("a live RANK from a non-leader is ignored", ns.GetOfficerMaxRank() == 5)
+    sendRank("RANK|0|" .. (gmStamp + 10), "Stranger-SkullRock")
+    check("a live RANK from someone not in the guild is ignored", ns.GetOfficerMaxRank() == 5)
+    sendRank("RANK|1|" .. (gmStamp - 1), "GM-SkullRock")
+    check("an older stamp never overwrites a newer value", ns.GetOfficerMaxRank() == 5)
+    sendRank("RANK|12|" .. (gmStamp + 10), "GM-SkullRock")
+    check("an out-of-range value from the leader is refused", ns.GetOfficerMaxRank() == 5)
+    sendRank("RANK|garbage", "GM-SkullRock")
+    check("a malformed message is ignored without error", ns.GetOfficerMaxRank() == 5)
+    sendRank("RANK|2|" .. (gmStamp + 20), "Loopi-SkullRock")
+    check("the author character's live RANK is accepted (name-based, like the Bavin/Store syncs)",
+        ns.GetOfficerMaxRank() == 2 and ns.GetOfficerRankStamp() == gmStamp + 20)
+    check("...so rank 4 loses access again when the leader tightens the gate", ns.IsOfficerLocal() == false)
+
+    -- Relay / catch-up replies (RANKR): any known guild member, newer stamp, sane time.
+    sendRank("RANKR|4|" .. (gmStamp + 30), "Recruit-SkullRock")
+    check("a relayed RANKR with a newer stamp is accepted from any guild member",
+        ns.GetOfficerMaxRank() == 4 and ns.IsOfficerLocal() == true)
+    sendRank("RANKR|0|" .. (wallClock + 5000), "Recruit-SkullRock")
+    check("a relayed RANKR stamped far in the future is refused", ns.GetOfficerMaxRank() == 4)
+    sendRank("RANKR|0|" .. (gmStamp + 31), "Stranger-SkullRock")
+    check("a relayed RANKR from a non-guild-member is refused", ns.GetOfficerMaxRank() == 4)
+
+    -- Catch-up: answering somebody else's RANKREQ.
+    local mine = ns.GetOfficerRankStamp()
+    outboxLog = {}
+    sendRank("RANKREQ|" .. mine, "Recruit-SkullRock")
+    advanceTime(6)
+    check("no reply when the requester already has our stamp", #outboxLog == 0)
+    sendRank("RANKREQ|0", "Recruit-SkullRock")
+    advanceTime(6)
+    check("a client holding a newer value replies with RANKR to the guild",
+        #outboxLog == 1 and outboxLog[1].text == "RANKR|4|" .. mine and outboxLog[1].channel == "GUILD")
+    outboxLog = {}
+    sendRank("RANKREQ|0", "Recruit-SkullRock")
+    sendRank("RANKR|4|" .. mine, "Sergeant-SkullRock")
+    advanceTime(6)
+    check("a pending reply is suppressed once someone else already answered", #outboxLog == 0)
+    DHToolsAccountDB = {}
+    outboxLog = {}
+    sendRank("RANKREQ|0", "Recruit-SkullRock")
+    advanceTime(6)
+    check("a client with nothing stored never replies", #outboxLog == 0)
+
+    -- Login request goes out once, carrying our stamp.
+    outboxLog = {}
+    ns.RankSync_Request()
+    check("RankSync_Request sends RANKREQ with our stamp",
+        #outboxLog == 1 and outboxLog[1].text == "RANKREQ|0" and outboxLog[1].prefix == RANK_PREFIX)
+
+    -- Officer ROLES grant access regardless of guild rank.
+    DHToolsAccountDB = {}
+    DHBavinDB, DHStoreDB = nil, nil
+    playerName = "Recruit" -- rank 6, far outside any gate
+    check("no roles, rank 6: no access", ns.HasOfficerRole("Recruit") == false and ns.IsOfficerLocal() == false)
+    DHBavinDB = { recipient = "Recruit", editors = {} }
+    check("Donation Recipient grants access regardless of rank", ns.HasOfficerRole("Recruit") == true and ns.IsOfficerLocal() == true)
+    DHBavinDB = { editors = { "Someone", "Recruit-SkullRock" } }
+    check("Distribution Officer grants access (realm suffix tolerated)", ns.IsOfficerLocal() == true)
+    DHBavinDB = nil
+    DHStoreDB = { primaryOfficer = "recruit" }
+    check("Primary Store Officer grants access (case-insensitive)", ns.IsOfficerLocal() == true)
+    DHStoreDB = { officers = { "RECRUIT" } }
+    check("Store Officer grants access", ns.IsOfficerLocal() == true)
+    DHStoreDB = { officers = { "Sergeant" }, primaryOfficer = "Sergeant" }
+    check("someone else's role does not grant this player access", ns.IsOfficerLocal() == false)
+    DHStoreDB = "not a table"
+    check("a malformed role table is ignored without error", ns.HasOfficerRole("Recruit") == false)
+    DHStoreDB = nil
+    check("HasOfficerRole(nil) is false", ns.HasOfficerRole(nil) == false)
+
+    -- The button follows changes: callback fires once per real change.
+    local changes, lastState = 0, nil
+    ns.OnOfficerAccessChanged = function(state) changes = changes + 1; lastState = state end
+    ns.RefreshOfficerAccess(true)
+    check("RefreshOfficerAccess(force) always notifies", changes == 1 and lastState == false)
+    ns.RefreshOfficerAccess()
+    check("...and an unchanged state does not notify again", changes == 1)
+    DHBavinDB = { editors = { "Recruit" } }
+    ns.RefreshOfficerAccess()
+    check("being assigned a role notifies with true", changes == 2 and lastState == true)
+    DHBavinDB = nil
+    ns.RefreshOfficerAccess()
+    check("losing the role notifies with false", changes == 3 and lastState == false)
+    ns.OnOfficerAccessChanged = nil
+
+    -- The roster arriving late flips the answer (the "roster not loaded" bug).
+    rosterEntries = {}
+    ns.UpdateRosterRankCache()
+    playerName = "GM"
+    DHToolsAccountDB = {}
+    check("roster not loaded yet: no rank-based access", ns.IsOfficerLocal() == false)
+    rosterEntries = { { name = "GM-SkullRock", rank = 0 } }
+    ns.frame:Fire("GUILD_ROSTER_UPDATE")
+    check("GUILD_ROSTER_UPDATE refreshes the rank cache so the gate passes", ns.IsOfficerLocal() == true)
+
+    -- DH-Tools asks for the roster itself.
+    local before = rosterRequests
+    ns.RequestGuildRoster()
+    check("RequestGuildRoster asks the client for the roster when in a guild", rosterRequests == before + 1)
+    inGuild = false
+    ns.RequestGuildRoster()
+    check("...and does nothing when not in a guild", rosterRequests == before + 1)
+    inGuild = true
+
+    -- /dht rank status readout runs cleanly.
+    local printsBefore = #printLog
+    SlashCmdList["DHTOOLS"]("rank")
+    check("/dht rank prints the gate and the player's access",
+        #printLog == printsBefore + 2 and printLog[printsBefore + 1]:find("Officer Settings gate", 1, true) ~= nil)
+
+    -- Leave the shared fixtures clean for anything after this group.
+    DHToolsAccountDB, DHBavinDB, DHStoreDB = nil, nil, nil
+    rosterEntries = {}
+    ns.UpdateRosterRankCache()
+    outboxLog = {}
+end
 
 --------------------------------------------------------------------------
 -- Summary

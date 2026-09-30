@@ -74,8 +74,19 @@ function ns.InitDB()
     if type(DHToolsDB.minimap) ~= "table" then
         DHToolsDB.minimap = { hide = false }
     end
-    if type(DHToolsDB.officerVisibleMaxRank) ~= "number" then
-        DHToolsDB.officerVisibleMaxRank = 3
+    -- The Officer Settings button's rank gate USED to live here
+    -- (DHToolsDB.officerVisibleMaxRank) - per CHARACTER, so a number set on
+    -- one character never reached anyone else (2026-09-29, Loopi's
+    -- Lieutenant test). It now lives account-wide in DHToolsAccountDB and
+    -- is distributed to the guild - see the Officer permission section.
+    -- The old per-character field is simply ignored.
+    -- DHToolsAccountDB must exist for EVERY player now (it used to be
+    -- created only for the author's characters). NOTE for the public-release
+    -- toggle below: dropping its .toc SavedVariables line also drops the
+    -- persisted rank gate (it would fall back to the default until the next
+    -- guild sync delivers it).
+    if type(DHToolsAccountDB) ~= "table" then
+        DHToolsAccountDB = {}
     end
     ns.db = DHToolsDB
 end
@@ -200,18 +211,79 @@ function ns.UpdateRosterRankCache()
     end
 end
 
--- name: full "Name-Realm" or bare "Name". True if that guild member's
--- rank is within the configured officer threshold, or they're the
--- author account's known character.
+-- === Shared rank gate + role access (2026-09-29, Loopi) ===
+-- Two ways to see the Officer Settings button, either is enough:
+--   1) guild rank 0 .. GetOfficerMaxRank(), and
+--   2) holding ANY officer role (Donation Recipient, Distribution Officer,
+--      Primary Store Officer, Store Officer) regardless of guild rank.
+-- The rank number is SHARED: it is stored account-wide (DHToolsAccountDB,
+-- not the per-character DHToolsDB, which is why a value set on one
+-- character never reached anyone) and distributed to the whole guild by
+-- the small RANK sync below. Only the guild leader (or the author account)
+-- may change it. The roles are read straight from the Bavin/Store saved
+-- data (both already sync those lists guild-wide), so this gate still never
+-- depends on a module being enabled - though a module's list only refreshes
+-- on clients that have that module turned on.
+local DEFAULT_OFFICER_MAX_RANK = 3
+ns.DEFAULT_OFFICER_MAX_RANK = DEFAULT_OFFICER_MAX_RANK
+
+function ns.GetOfficerMaxRank()
+    if type(DHToolsAccountDB) == "table" and type(DHToolsAccountDB.officerVisibleMaxRank) == "number" then
+        return DHToolsAccountDB.officerVisibleMaxRank
+    end
+    return DEFAULT_OFFICER_MAX_RANK
+end
+
+local function GetOfficerRankStamp()
+    return (type(DHToolsAccountDB) == "table" and tonumber(DHToolsAccountDB.officerRankUpdatedAt)) or 0
+end
+ns.GetOfficerRankStamp = GetOfficerRankStamp
+
+local function NameMatches(stored, norm)
+    return type(stored) == "string" and stored ~= "" and NormalizeRosterName(stored):lower() == norm
+end
+
+local function ListHasName(list, norm)
+    if type(list) ~= "table" then return false end
+    for _, n in ipairs(list) do
+        if NameMatches(n, norm) then return true end
+    end
+    return false
+end
+
+-- True if `name` holds any officer role, per this client's synced copies of
+-- the Bavin (Donation Recipient, Distribution Officers) and Store (Primary
+-- Store Officer, Store Officers) lists. Read defensively - either
+-- SavedVariables table can be absent on a client that never ran the module.
+function ns.HasOfficerRole(name)
+    if not name then return false end
+    local norm = NormalizeRosterName(name):lower()
+    local bavin = _G.DHBavinDB
+    if type(bavin) == "table" then
+        if NameMatches(bavin.recipient, norm) or ListHasName(bavin.editors, norm) then return true end
+    end
+    local store = _G.DHStoreDB
+    if type(store) == "table" then
+        if NameMatches(store.primaryOfficer, norm) or ListHasName(store.officers, norm) then return true end
+    end
+    return false
+end
+
+-- name: full "Name-Realm" or bare "Name". True if that member is the
+-- author's known character, holds an officer role, or their guild rank is
+-- within the shared officer threshold.
 function ns.IsOfficerName(name)
+    if not name then return false end
     local normalized = NormalizeRosterName(name)
     if AUTHOR_CHARACTER_NAMES[normalized] then
         return true
     end
+    if ns.HasOfficerRole(normalized) then
+        return true
+    end
     local rankIndex = ns.rosterRankCache[normalized]
     if rankIndex == nil then return false end
-    local maxRank = (ns.db and ns.db.officerVisibleMaxRank) or 3
-    return rankIndex <= maxRank
+    return rankIndex <= ns.GetOfficerMaxRank()
 end
 
 -- LOCAL-only convenience: is the CURRENT character an officer, per the
@@ -219,6 +291,166 @@ end
 function ns.IsOfficerLocal()
     if ns.IsAuthorAccount() then return true end
     return ns.IsOfficerName(UnitName("player"))
+end
+
+function ns.IsGuildLeaderName(name)
+    if not name then return false end
+    return ns.rosterRankCache[NormalizeRosterName(name)] == 0
+end
+
+-- Who may CHANGE the shared rank number (local check): the guild leader, or
+-- the author account for testing.
+function ns.CanSetOfficerRankLocal()
+    if ns.IsAuthorAccount() then return true end
+    return ns.IsGuildLeaderName(UnitName("player"))
+end
+
+-- Fires ns.OnOfficerAccessChanged(isOfficer) (set by Config.lua) whenever
+-- this client's answer to IsOfficerLocal changes - roster arrived, a role
+-- was assigned, the shared rank number changed. Cheap; safe to call often.
+local lastOfficerState
+function ns.RefreshOfficerAccess(force)
+    local now = ns.IsOfficerLocal() and true or false
+    if force or now ~= lastOfficerState then
+        lastOfficerState = now
+        if ns.OnOfficerAccessChanged then
+            pcall(ns.OnOfficerAccessChanged, now)
+        end
+    end
+end
+
+function ns.RequestGuildRoster()
+    if not (IsInGuild and IsInGuild()) then return end
+    if C_GuildInfo and C_GuildInfo.GuildRoster then
+        pcall(C_GuildInfo.GuildRoster)
+    elseif GuildRoster then
+        pcall(GuildRoster)
+    end
+end
+
+-- --- RANK sync (own prefix, guild channel) ---------------------------------
+--   RANK|<n>|<stamp>     live change, sent by whoever just set it.
+--                        ACCEPTED only if the sender is the guild leader
+--                        (rank 0 in the receiver's OWN roster cache) or the
+--                        author character (name-based, same remote-trust
+--                        idiom the Bavin/Store syncs already use), and is a
+--                        known guild member. Newest stamp wins.
+--   RANKREQ|<stamp>      "I hold stamp N" - sent once after login. Anyone
+--                        holding a NEWER value replies, after a random
+--                        delay, with the relay below (and stays quiet if it
+--                        hears someone else's reply first).
+--   RANKR|<n>|<stamp>    relay/catch-up reply. Cannot be tied back to the
+--                        leader, so it is accepted from any known guild
+--                        member with a newer stamp (stamps in the future
+--                        beyond a small skew are refused). That is fine
+--                        because this number only decides whether a BUTTON
+--                        shows: every setting behind it is still checked by
+--                        its own module's permission rules.
+local RANK_PREFIX = "DHToolsRankV1"
+local RANK_MAX_SKEW = 300
+local rankHeardCount = 0 -- acceptable RANK/RANKR messages heard this session (reply suppression)
+
+local function RankSend(text, channel, target)
+    if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+        C_ChatInfo.SendAddonMessage(RANK_PREFIX, text, channel, target)
+    elseif SendAddonMessage then
+        SendAddonMessage(RANK_PREFIX, text, channel, target)
+    end
+end
+
+function ns.RankSync_RegisterPrefix()
+    if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
+        pcall(C_ChatInfo.RegisterAddonMessagePrefix, RANK_PREFIX)
+    elseif RegisterAddonMessagePrefix then
+        pcall(RegisterAddonMessagePrefix, RANK_PREFIX)
+    end
+end
+
+-- Stores a newer value and refreshes the button. Returns true if applied.
+local function ApplyRank(rank, stamp)
+    if type(DHToolsAccountDB) ~= "table" then return false end
+    if rank < 0 or rank > 9 then return false end
+    if stamp <= GetOfficerRankStamp() then return false end
+    DHToolsAccountDB.officerVisibleMaxRank = rank
+    DHToolsAccountDB.officerRankUpdatedAt = stamp
+    ns.RefreshOfficerAccess()
+    return true
+end
+
+-- Local set (Officer Settings page). Returns true, or false + reason
+-- ("range" | "permission").
+function ns.SetOfficerMaxRank(rank)
+    rank = tonumber(rank)
+    if not rank or rank < 0 or rank > 9 or rank ~= math.floor(rank) then
+        return false, "range"
+    end
+    if not ns.CanSetOfficerRankLocal() then return false, "permission" end
+    if type(DHToolsAccountDB) ~= "table" then DHToolsAccountDB = {} end
+    local stamp = math.max(time(), GetOfficerRankStamp() + 1)
+    DHToolsAccountDB.officerVisibleMaxRank = rank
+    DHToolsAccountDB.officerRankUpdatedAt = stamp
+    if IsInGuild and IsInGuild() then
+        RankSend("RANK|" .. rank .. "|" .. stamp, "GUILD")
+    end
+    ns.RefreshOfficerAccess()
+    return true
+end
+
+local function IsAuthorizedRankSender(senderShort)
+    if ns.IsGuildLeaderName(senderShort) then return true end
+    return AUTHOR_OVERRIDE_ENABLED and AUTHOR_CHARACTER_NAMES[senderShort] and true or false
+end
+
+local function ScheduleRankReply(reqStamp)
+    local mine = GetOfficerRankStamp()
+    if mine == 0 or reqStamp >= mine then return end
+    if not (C_Timer and C_Timer.After) then return end
+    local heardAtSchedule = rankHeardCount
+    C_Timer.After(0.5 + math.random() * 3.5, function()
+        local now = GetOfficerRankStamp()
+        -- Someone else answered (or the leader just re-broadcast) since the
+        -- request: everyone listening already has the value, stay quiet.
+        if now == 0 or rankHeardCount ~= heardAtSchedule then return end
+        RankSend("RANKR|" .. ns.GetOfficerMaxRank() .. "|" .. now, "GUILD")
+    end)
+end
+
+-- Registered from the Boot section's CHAT_MSG_ADDON handler below.
+function ns.RankSync_OnMessage(prefix, message, _channel, sender)
+    if prefix ~= RANK_PREFIX or type(message) ~= "string" then return end
+    local senderShort = sender and sender:match("^([^-]+)") or sender
+    if not senderShort or senderShort == UnitName("player") then return end
+    if ns.rosterRankCache[senderShort] == nil then return end -- not a known guild member
+
+    local reqStamp = message:match("^RANKREQ|(%d+)$")
+    if reqStamp then
+        ScheduleRankReply(tonumber(reqStamp))
+        return
+    end
+
+    local kind, r, s = message:match("^(RANKR?)|(%d+)|(%d+)$")
+    if not kind then return end
+    local rank, stamp = tonumber(r), tonumber(s)
+    -- Only a message we would ACCEPT counts toward "someone already
+    -- answered", so junk can't silence the real catch-up replies.
+    local acceptable
+    if kind == "RANK" then
+        acceptable = IsAuthorizedRankSender(senderShort)
+    else
+        acceptable = stamp <= time() + RANK_MAX_SKEW
+    end
+    if not acceptable then return end
+    rankHeardCount = rankHeardCount + 1
+    ApplyRank(rank, stamp)
+end
+
+-- Once per login (PLAYER_LOGIN, after a short random delay): ask the guild
+-- whether anyone holds a newer value than ours.
+function ns.RankSync_Request()
+    ns.RankSync_RegisterPrefix()
+    if IsInGuild and IsInGuild() then
+        RankSend("RANKREQ|" .. GetOfficerRankStamp(), "GUILD")
+    end
 end
 
 -- === Update notification (2026-08-24) ===
@@ -831,6 +1063,16 @@ frame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "PLAYER_LOGIN" then
         CheckAuthorAccount()
         ns.UpdateRosterRankCache()
+        -- DH-Tools asks for the guild roster itself (it used to rely on
+        -- another module doing so), then re-evaluates the Officer Settings
+        -- button when it arrives (GUILD_ROSTER_UPDATE, below).
+        ns.RequestGuildRoster()
+        ns.RankSync_RegisterPrefix()
+        C_Timer.After(math.random(8, 25), ns.RankSync_Request)
+        -- Role lists arrive via the Bavin/Store syncs, which don't fire
+        -- any event this file sees - a cheap periodic re-check keeps the
+        -- button in step with a role being assigned mid-session.
+        C_Timer.NewTicker(15, function() ns.RefreshOfficerAccess() end)
         ActivateEnabledModules()
         if ns.Minimap_Init then
             ns.Minimap_Init()
@@ -841,12 +1083,14 @@ frame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "CHAT_MSG_ADDON" then
         VersionCheck_OnMessage(...)
         LookupOnMessage(...)
+        ns.RankSync_OnMessage(...)
     elseif event == "CHAT_MSG_GUILD" then
         LookupTrigger_OnChatMsgGuild(...)
     elseif event == "GET_ITEM_INFO_RECEIVED" then
         LookupOnItemInfoReceived(...)
     elseif event == "GUILD_ROSTER_UPDATE" then
         ns.UpdateRosterRankCache()
+        ns.RefreshOfficerAccess()
     end
 end)
 
@@ -871,8 +1115,22 @@ SlashCmdList["DHTOOLS"] = function(msg)
         else
             ns.Print("Config UI didn't load correctly.")
         end
+    elseif cmd == "rank" then
+        -- Status readout for the shared Officer Settings gate (2026-09-29).
+        local me = UnitName("player")
+        local myRank = ns.rosterRankCache[me]
+        local stamp = ns.GetOfficerRankStamp()
+        ns.Print(("Officer Settings gate: guild rank 0-%d (%s)."):format(
+            ns.GetOfficerMaxRank(),
+            stamp > 0 and ("set/received " .. date("%Y-%m-%d %H:%M", stamp)) or "default, never set"))
+        ns.Print(("You: guild rank %s, officer role: %s, sees the button: %s, can change the gate: %s."):format(
+            myRank ~= nil and tostring(myRank) or "unknown (roster not loaded yet)",
+            ns.HasOfficerRole(me) and "yes" or "no",
+            ns.IsOfficerLocal() and "yes" or "no",
+            ns.CanSetOfficerRankLocal() and "yes" or "no"))
     elseif cmd == "help" then
         ns.Print(("Commands (v%s):"):format(ns.VERSION))
+        ns.Print("  /dht rank          - show the Officer Settings gate and your access")
         ns.Print("  /dht list          - show modules and their on/off state")
         ns.Print("  /dht on <module>   - enable a module")
         ns.Print("  /dht off <module>  - disable a module")

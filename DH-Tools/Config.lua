@@ -1395,7 +1395,7 @@ local function CreateOfficerSettingsPanel(parent)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
-    hint:SetText("Every officer-gated setting across all modules, in one place: who can see the Officer Settings button, who holds each officer role, and the currency conversion rates.")
+    hint:SetText("Every officer-gated setting across all modules, in one place: who can see the Officer Settings button, who holds each officer role, and the currency conversion rates. The rank number above is shared with the whole guild (only the guild leader can change it), and anyone holding an officer role below sees this page whatever their guild rank.")
 
     --------------------------------------------------------------------
     -- Section 2: access restriction by guild rank (DH-Tools-wide, not
@@ -1431,14 +1431,18 @@ local function CreateOfficerSettingsPanel(parent)
 
     rankBtn:SetScript("OnClick", function()
         local rank = tonumber(rankEdit:GetText())
-        if not rank or rank < 0 or rank > 9 then
-            rankStatus:SetText("|cffff3333Enter 0-9|r")
+        -- Shared, guild-wide gate (Core.lua's SetOfficerMaxRank): stores it
+        -- account-wide and broadcasts it. Guild leader / author only.
+        local ok, reason = DHTools.SetOfficerMaxRank(rank)
+        if not ok then
+            rankStatus:SetText(reason == "permission"
+                and "|cffff3333Guild leader only|r"
+                or "|cffff3333Enter 0-9|r")
             return
         end
-        DHTools.db.officerVisibleMaxRank = rank
         rankEdit:ClearFocus()
-        rankStatus:SetText("|cff33ff99Set!|r")
-        C_Timer.After(2, function() rankStatus:SetText("") end)
+        rankStatus:SetText("|cff33ff99Set and shared with the guild|r")
+        C_Timer.After(3, function() rankStatus:SetText("") end)
     end)
     rankEdit:SetScript("OnEnterPressed", function(self) self:ClearFocus(); rankBtn:Click() end)
 
@@ -2022,7 +2026,15 @@ local function CreateOfficerSettingsPanel(parent)
         -- every other scrollable page here.
         content:SetWidth(math.max(1, scrollFrame:GetWidth() - 24))
 
-        rankEdit:SetText(tostring((DHTools.db and DHTools.db.officerVisibleMaxRank) or 3))
+        rankEdit:SetText(tostring(DHTools.GetOfficerMaxRank()))
+        if DHTools.CanSetOfficerRankLocal() then
+            rankEdit:Enable()
+            rankBtn:Enable()
+        else
+            rankEdit:Disable()
+            rankBtn:Disable()
+            rankStatus:SetText("|cff999999Set by the guild leader|r")
+        end
 
         --------------------------------------------------------------
         -- Bavin-owned pieces: Donation Recipient, Distribution
@@ -2366,11 +2378,12 @@ function DHTools:Config_Open(pageKey)
         SafeCreatePage("Danger", CreateDangerPanel)
         SafeCreatePage("Macros", CreateMacrosPanel)
         SafeCreatePage("Store", CreateStorePanel)
-        local isOfficer = DHTools.IsOfficerLocal and DHTools.IsOfficerLocal()
-        if isOfficer then
-            SafeCreatePage("OfficerSettings", CreateOfficerSettingsPanel)
-        end
         SafeCreatePage("About", CreateAboutPanel)
+        -- The Officer Settings page is NOT built here any more (2026-09-29,
+        -- Loopi): whether this client may see it can change while the
+        -- window exists (guild roster arrives late, an officer role is
+        -- assigned, the shared rank number changes), so LayoutNav below
+        -- creates/removes the page and its nav button on demand.
 
         -- Danger/Macros/Store sit before About deliberately: About is
         -- the trailing "everything else" entry, and a new module
@@ -2383,32 +2396,71 @@ function DHTools:Config_Open(pageKey)
         -- button only exists at all for accounts DHTools.IsOfficerLocal()
         -- approves - hidden entirely, not merely disabled, for everyone
         -- else, matching the rest of DH-Tools' permission model.
-        local pageNames = { "Tools", "MobMarker", "Quests", "Bavin", "Store", "Danger", "Macros" }
-        if isOfficer then
-            table.insert(pageNames, "OfficerSettings")
-        end
-        table.insert(pageNames, "About")
         local pageLabels = { Tools = "Tools", MobMarker = "Mob Marker", Quests = "Quests", Bavin = "Bavin Points", Danger = "Danger", Macros = "Macros", Store = "Store", OfficerSettings = "Officer Settings", About = "About" }
-        local prevBtn
-        for _, name in ipairs(pageNames) do
-            local btn = CreateFrame("Button", nil, nav, "UIPanelButtonTemplate")
-            btn:SetSize(112, 24)
-            if prevBtn then
-                btn:SetPoint("TOPLEFT", prevBtn, "BOTTOMLEFT", 0, -4)
-            else
-                btn:SetPoint("TOPLEFT", 8, -8)
+
+        -- (Re)builds the nav column from what this client may currently
+        -- see. Called on first open, on every later open, and whenever
+        -- Core.lua reports that this client's officer access changed.
+        local function LayoutNav()
+            local isOfficer = DHTools.IsOfficerLocal and DHTools.IsOfficerLocal() and true or false
+            if isOfficer and not frame.pages.OfficerSettings then
+                SafeCreatePage("OfficerSettings", CreateOfficerSettingsPanel)
+                if frame.pages.OfficerSettings then frame.pages.OfficerSettings:Hide() end
             end
-            btn:SetText(pageLabels[name])
-            btn:SetScript("OnClick", function() SelectPage(name) end)
-            navButtons[name] = btn
-            prevBtn = btn
+            local pageNames = { "Tools", "MobMarker", "Quests", "Bavin", "Store", "Danger", "Macros" }
+            if isOfficer and frame.pages.OfficerSettings then
+                table.insert(pageNames, "OfficerSettings")
+            end
+            table.insert(pageNames, "About")
+
+            local wanted = {}
+            local prevBtn
+            for _, name in ipairs(pageNames) do
+                wanted[name] = true
+                local btn = navButtons[name]
+                if not btn then
+                    btn = CreateFrame("Button", nil, nav, "UIPanelButtonTemplate")
+                    btn:SetSize(112, 24)
+                    btn:SetText(pageLabels[name])
+                    btn:SetScript("OnClick", function() SelectPage(name) end)
+                    navButtons[name] = btn
+                end
+                btn:ClearAllPoints()
+                if prevBtn then
+                    btn:SetPoint("TOPLEFT", prevBtn, "BOTTOMLEFT", 0, -4)
+                else
+                    btn:SetPoint("TOPLEFT", 8, -8)
+                end
+                btn:Show()
+                prevBtn = btn
+            end
+            -- Access was lost (or never held): hide the button, and if that
+            -- page is the one on screen, fall back to Tools.
+            for name, btn in pairs(navButtons) do
+                if not wanted[name] then
+                    btn:Hide()
+                    btn:UnlockHighlight()
+                    local p = frame.pages[name]
+                    if p and p:IsShown() then
+                        p:Hide()
+                        SelectPage("Tools")
+                    end
+                end
+            end
         end
+        frame.LayoutNav = LayoutNav
+        LayoutNav()
+        DHTools.RequestGuildRoster()
 
         SelectPage(pageKey or "Tools")
         frame:Show()
         return
     end
 
+    -- Re-evaluate on every open: the roster/roles/gate may have changed
+    -- since the window was built.
+    DHTools.RequestGuildRoster()
+    if frame.LayoutNav then frame.LayoutNav() end
     frame:Show()
     if pageKey then
         SelectPage(pageKey)
@@ -2419,4 +2471,9 @@ function DHTools:Config_Open(pageKey)
             end
         end
     end
+end
+
+-- Core.lua fires this when this client's Officer Settings access changes (roster arrived, role assigned, shared rank gate changed): add or remove the nav button live (2026-09-29).
+DHTools.OnOfficerAccessChanged = function()
+    if frame and frame.LayoutNav then frame.LayoutNav() end
 end
