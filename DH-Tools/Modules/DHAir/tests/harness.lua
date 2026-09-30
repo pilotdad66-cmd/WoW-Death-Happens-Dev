@@ -2099,6 +2099,52 @@ _G.SlashCmdList["DHAIR"]("config")
 check("/dhair config calls Config_Open", printLog[#printLog] == "[stub] Config opened")
 
 --------------------------------------------------------------------------
+-- Static guard: secure click-catchers must stay ABOVE the windows they
+-- overlay (2026-09-29 regression: DH windows were put on strata HIGH, the
+-- raised Board covered the invisible Confirm Summon / Abort catchers and the
+-- buttons went dead). Board.lua is UI-only so it can't be run here; this
+-- reads the source instead. Rules enforced:
+--   1. confirmSummonSecure and abortSecure both set a strata of HIGH or
+--      higher (the default window strata is MEDIUM);
+--   2. no DH window helper sets a frame strata of HIGH or higher on the
+--      windows themselves (open-on-top is Raise(), never a higher strata).
+--------------------------------------------------------------------------
+print("== Static guard: secure click-catcher strata ==")
+do
+    local function readAll(path)
+        local f = io.open(path, "rb")
+        if not f then return nil end
+        local s = f:read("*a")
+        f:close()
+        return s
+    end
+    local ABOVE_MEDIUM = { HIGH = true, DIALOG = true, FULLSCREEN = true, FULLSCREEN_DIALOG = true, TOOLTIP = true }
+    local board = readAll(ADDON_ROOT .. "Board.lua")
+    check("static guard: Board.lua readable", board ~= nil)
+    if board then
+        for _, name in ipairs({ "confirmSummonSecure", "abortSecure" }) do
+            local strata = board:match("frame%." .. name .. ":SetFrameStrata%(\"(%u[%u_]*)\"%)")
+            check("static guard: " .. name .. " sets a strata above the default window strata",
+                strata ~= nil and ABOVE_MEDIUM[strata] == true)
+        end
+    end
+    local function windowHelperStrata(path, marker)
+        local src = readAll(path)
+        if not src then return "unreadable" end
+        local s = src:find(marker, 1, true)
+        if not s then return "marker-missing" end
+        -- the helper body: from its "function" line to the next top-level "end"
+        local body = src:sub(s, s + 1800)
+        body = body:match("^(.-)\nend\n") or body
+        return body:find("SetFrameStrata", 1, true) and "sets-strata" or "ok"
+    end
+    check("static guard: DHAir:InitStandaloneWindow does not set a window strata",
+        windowHelperStrata(ADDON_ROOT .. "Core.lua", "function DHAir:InitStandaloneWindow") == "ok")
+    check("static guard: DH-Tools ns.InitStandaloneWindow does not set a window strata",
+        windowHelperStrata(ADDON_ROOT .. "..\\..\\Core.lua", "function ns.InitStandaloneWindow") == "ok")
+end
+
+--------------------------------------------------------------------------
 -- Summary
 --------------------------------------------------------------------------
 print("")
