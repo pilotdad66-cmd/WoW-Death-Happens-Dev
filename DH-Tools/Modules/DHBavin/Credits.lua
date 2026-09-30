@@ -427,12 +427,32 @@ end
 function ns.Credits_AddToReviewQueue(altName)
     if not ns.creditsDb then return end
     ns.creditsDb.dynamicReviewQueue = ns.creditsDb.dynamicReviewQueue or {}
+    -- Keep whatever donation info we already know for this name (2026-09-29,
+    -- Loopi: an unlinked alt came back "no date"). Prefer an existing runtime
+    -- entry, else the shipped Step 0 row for the same name; a name with
+    -- neither (e.g. a seeded alt) has no per-character date to show.
+    local key = altName:lower()
+    local latest, rawGold
+    for _, rec in ipairs(ns.creditsDb.dynamicReviewQueue) do
+        if (rec.name or ""):lower() == key then
+            latest, rawGold = rec.latestDonation, rec.rawGoldAmount
+            break
+        end
+    end
+    if latest == nil then
+        for _, rec in ipairs(ns.CreditsReviewQueue or {}) do
+            if (rec.name or ""):lower() == key then
+                latest, rawGold = rec.latestDonation, rec.rawGoldAmount
+                break
+            end
+        end
+    end
     ns.Credits_RemoveFromReviewQueue(altName) -- no duplicate entries
     table.insert(ns.creditsDb.dynamicReviewQueue, {
         name = altName,
         issue = "removed_alt",
-        latestDonation = "",
-        rawGoldAmount = 0,
+        latestDonation = latest or "",
+        rawGoldAmount = tonumber(rawGold) or 0,
         details = "removed from an account by an officer - no historical gold figure available at runtime",
     })
 end

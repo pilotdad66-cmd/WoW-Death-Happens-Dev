@@ -1313,6 +1313,47 @@ check("Reset with permission wipes ledger, toonIndex, dynamic Review Queue, tran
 check("A name resolves back to self-fallback after reset", ns.Credits_ResolveMain("MainA") == "MainA")
 
 --------------------------------------------------------------------------
+-- Credits: unlinked alt keeps its known donation info in the Review Queue
+--------------------------------------------------------------------------
+print("== Credits: Unlink keeps donation date ==")
+do
+    resetState()
+    inGuild = true
+    guildRosterEntries = { { name = "Officer1", rankIndex = 3 } }
+    ns.UpdateGuildRosterCache()
+    currentPlayerName = "Officer1"
+    ns.db.editors = { "Officer1" }
+    ns.CreditsSeedData = { MainA = { lifetimePoints = 100 } }
+    ns.CreditsAltRoster = { MainA = { "StaticAlt", "PlainAlt" } }
+    ns.CreditsReviewQueue = {
+        { name = "StaticAlt", issue = "no_identity_mapping", latestDonation = "2026-09-19", rawGoldAmount = 380.18 },
+    }
+    ns.CreditsSeed_Import()
+
+    local function dynamicRow(name)
+        for _, r in ipairs(ns.creditsDb.dynamicReviewQueue) do
+            if r.name == name then return r end
+        end
+    end
+
+    ns.Credits_UnlinkAlt("StaticAlt")
+    local row = dynamicRow("StaticAlt")
+    check("Unlinking a name Step 0 knew keeps its last donation date", row and row.latestDonation == "2026-09-19")
+    check("...and its raw gold figure", row and row.rawGoldAmount == 380.18)
+    check("...and is tagged removed_alt", row and row.issue == "removed_alt")
+
+    ns.Credits_UnlinkAlt("PlainAlt")
+    row = dynamicRow("PlainAlt")
+    check("A name with no shipped data still unlinks with an empty date", row and row.latestDonation == "" and row.rawGoldAmount == 0)
+
+    ns.Credits_LinkAlt("StaticAlt", "MainA")
+    ns.Credits_UnlinkAlt("StaticAlt")
+    row = dynamicRow("StaticAlt")
+    check("Link then Unlink again still shows the date", row and row.latestDonation == "2026-09-19")
+    ns.CreditsReviewQueue = nil
+end
+
+--------------------------------------------------------------------------
 -- Credits: Credits_PromoteToMain (Roster right-click menu)
 --------------------------------------------------------------------------
 print("== Credits: Credits_PromoteToMain ==")

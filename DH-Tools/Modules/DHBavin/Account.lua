@@ -478,6 +478,7 @@ function ns.Account_ShowFor(discordName)
     if not EnsureFrame() then return end
     viewKey = discordName
     if frame:IsShown() then ns.Account_Refresh() else frame:Show() end
+    frame:Raise() -- always on top of the window it was opened from
 end
 
 --------------------------------------------------------------------------

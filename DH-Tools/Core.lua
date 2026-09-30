@@ -689,6 +689,12 @@ end
 -- Every DH-Tools window should call this once, right after creating its frame.
 function ns.InitStandaloneWindow(targetFrame, rightInset)
     targetFrame:SetToplevel(true)
+    -- Standard for every DH window (2026-09-29, Loopi: "they open on top"):
+    -- one shared strata so windows stack by click order (SetToplevel), and
+    -- a Raise() on every show so a window opened FROM another one (Credits
+    -- Config -> Account, Config -> Credits Config...) always lands on top.
+    targetFrame:SetFrameStrata("HIGH")
+    targetFrame:HookScript("OnShow", function(self) self:Raise() end)
 
     local bg = targetFrame:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
