@@ -922,10 +922,13 @@ end
 function ns.InitStandaloneWindow(targetFrame, rightInset)
     targetFrame:SetToplevel(true)
     -- Standard for every DH window (2026-09-29, Loopi: "they open on top"):
-    -- one shared strata so windows stack by click order (SetToplevel), and
     -- a Raise() on every show so a window opened FROM another one (Credits
-    -- Config -> Account, Config -> Credits Config...) always lands on top.
-    targetFrame:SetFrameStrata("HIGH")
+    -- Config -> Account, Config -> Credits Config...) lands on top of it.
+    -- DO NOT set a higher frame strata here (v2.1.3 did, as "HIGH"): that
+    -- made every DH window permanently float above Blizzard's own panels and
+    -- other addons. Loopi wants open-on-top, NOT stay-on-top (2026-09-29).
+    -- Windows keep the default strata; SetToplevel above + this Raise give
+    -- normal click-to-front stacking.
     targetFrame:HookScript("OnShow", function(self) self:Raise() end)
 
     local bg = targetFrame:CreateTexture(nil, "BACKGROUND")

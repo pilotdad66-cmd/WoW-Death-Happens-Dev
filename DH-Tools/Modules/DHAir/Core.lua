@@ -366,10 +366,10 @@ end
 function DHAir:InitStandaloneWindow(targetFrame, rightInset)
     targetFrame:SetToplevel(true)
     -- Standard for every DH window (2026-09-29, Loopi: "they open on top"):
-    -- one shared strata so windows stack by click order (SetToplevel), and
-    -- a Raise() on every show so a window opened FROM another one (Credits
-    -- Config -> Account, Config -> Credits Config...) always lands on top.
-    targetFrame:SetFrameStrata("HIGH")
+    -- a Raise() on every show so a window opened FROM another one lands on
+    -- top of it. No higher frame strata (v2.1.3's "HIGH" made windows stay
+    -- above everything permanently - Loopi wants open-on-top, not
+    -- stay-on-top). Same as DH-Tools' own InitStandaloneWindow.
     targetFrame:HookScript("OnShow", function(self) self:Raise() end)
 
     local bg = targetFrame:CreateTexture(nil, "BACKGROUND")
