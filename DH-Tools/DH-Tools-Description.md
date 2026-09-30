@@ -1,6 +1,6 @@
 # DH-Tools
 
-**Version 2.1.2** | Author: **Loopi** | For: *Death Happens* Hardcore guild
+**Version 2.1.3** | Author: **Loopi** | For: *Death Happens* Hardcore guild
 
 ---
 
@@ -57,6 +57,16 @@ you actually want running, all managed from one place.
 ---
 
 ## Changelog
+
+### 2.1.3
+- **Changed: DH windows now open on top.** A DH-Tools window opened from
+  another one (or clicked) now lands in front instead of hiding behind it.
+- **Changed: DH-Air's Enable INV / Enable Code Phrase checkboxes** now say
+  "(locked on by World Buff Mode)" when World Buff Mode has them greyed out
+  and checked, so it's clear why they can't be changed.
+- About page now credits Sortasafe as a Major DH-Air Contributor alongside
+  Deves.
+- Added more test code for Bavin Points and DH-Store.
 
 ### 2.1.2
 - **Fixed: the Air Service Board's summon-count/Reset button could run
