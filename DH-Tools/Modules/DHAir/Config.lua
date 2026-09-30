@@ -325,6 +325,12 @@ local function CreateOptionsPanel(parent)
         -- D2a extended (2026-08-18): greyed out while WBM forces it on,
         -- same as invCheck above.
         phraseCheck:SetEnabled(not DHAir.db.worldBuffMode)
+        -- Say WHY they're greyed (2026-09-29, Loopidot: "checked but greyed
+        -- out and not selectable" - that is World Buff Mode's force-lock,
+        -- working as designed, but nothing on screen explained it).
+        local wbmNote = DHAir.db.worldBuffMode and "  |cffffcc00(locked on by World Buff Mode)|r" or ""
+        _G[invCheck:GetName() .. "Text"]:SetText("Enable INV Auto-Invite" .. wbmNote)
+        _G[phraseCheck:GetName() .. "Text"]:SetText("Enable Code Phrase Auto-Invite" .. wbmNote)
         phraseListText:SetText("Phrase(s): " .. (DHAir.db.codePhrase or ""))
         minimapCheck:SetChecked(not DHAir.db.minimap.hide)
         guildOnlyCheck:SetChecked(DHAir.db.guildOnly)

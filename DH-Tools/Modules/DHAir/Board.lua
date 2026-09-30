@@ -1306,7 +1306,7 @@ local function CreateBoardFrame()
     -- own hearthstone, etc.), it just prints "Nothing to abort".
     frame.abortSecure = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
     frame.abortSecure:SetSize(110, 22)
-    frame.abortSecure:SetFrameStrata("HIGH")
+    frame.abortSecure:SetFrameStrata("DIALOG") -- above the "HIGH" DH windows, same reason as confirmSummonSecure
     frame.abortSecure:Hide() -- shown by the window's OnShow hook
     if GetCVarBool and GetCVarBool("ActionButtonUseKeyDown") then
         frame.abortSecure:RegisterForClicks("AnyDown")
@@ -1388,7 +1388,11 @@ local function CreateBoardFrame()
     -- call.
     frame.confirmSummonSecure = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
     frame.confirmSummonSecure:SetSize(220, 22)
-    frame.confirmSummonSecure:SetFrameStrata("HIGH")
+    -- DIALOG, one strata ABOVE every DH window (they are all "HIGH" since
+    -- 2026-09-29's windows-open-on-top change). At the same "HIGH" strata the
+    -- Board itself - raised on show/click - covered this invisible click-
+    -- catcher and Confirm Summon became a dead button (Loopi, 2026-09-29).
+    frame.confirmSummonSecure:SetFrameStrata("DIALOG")
     frame.confirmSummonSecure:Hide() -- shown by the window's OnShow hook
     -- 2026-08-05: the 1.15 client inherited Wrath 3.4.1's secure-button
     -- change - the secure dispatch only executes for the click PHASE
