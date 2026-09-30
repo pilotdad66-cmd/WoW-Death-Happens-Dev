@@ -167,7 +167,7 @@ _G.DHTools = {
 --------------------------------------------------------------------------
 
 local ADDON_ROOT = "C:\\AIProjects-NOSYNC\\WoW\\src\\DH-Tools\\Modules\\DHBavin\\"
-local FILES = { "Core.lua", "Sync.lua", "ItemPoints.lua", "Credits.lua", "CreditsSeed.lua", "CreditsSync.lua" }
+local FILES = { "Core.lua", "Sync.lua", "ItemPoints.lua", "ToonDonations.lua", "Credits.lua", "CreditsSeed.lua", "CreditsSync.lua" }
 
 for _, filename in ipairs(FILES) do
     local chunk, err = loadfile(ADDON_ROOT .. filename)
@@ -1350,6 +1350,22 @@ do
     ns.Credits_UnlinkAlt("StaticAlt")
     row = dynamicRow("StaticAlt")
     check("Link then Unlink again still shows the date", row and row.latestDonation == "2026-09-19")
+
+    -- ToonDonations.lua fallback: a resolved alt with no Review Queue row.
+    ns.CreditsToonDonations = { toonalt = { "2026-05-05", 42.5 } }
+    ns.Credits_LinkAlt("ToonAlt", "MainA")
+    ns.Credits_UnlinkAlt("ToonAlt")
+    row = dynamicRow("ToonAlt")
+    check("Unlinking a resolved alt takes its date from ToonDonations", row and row.latestDonation == "2026-05-05")
+    check("...and its raw gold from ToonDonations", row and row.rawGoldAmount == 42.5)
+    ns.CreditsToonDonations = nil
+    loadfile(ADDON_ROOT .. "ToonDonations.lua")() -- reload the real shipped table
+    check("The shipped ToonDonations table loads (real data present)", (function()
+        local n = 0
+        for _ in pairs(ns.CreditsToonDonations or {}) do n = n + 1 end
+        return n > 500
+    end)())
+    ns.CreditsToonDonations = nil
     ns.CreditsReviewQueue = nil
 end
 

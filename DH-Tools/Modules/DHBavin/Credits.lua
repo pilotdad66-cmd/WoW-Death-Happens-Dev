@@ -429,8 +429,8 @@ function ns.Credits_AddToReviewQueue(altName)
     ns.creditsDb.dynamicReviewQueue = ns.creditsDb.dynamicReviewQueue or {}
     -- Keep whatever donation info we already know for this name (2026-09-29,
     -- Loopi: an unlinked alt came back "no date"). Prefer an existing runtime
-    -- entry, else the shipped Step 0 row for the same name; a name with
-    -- neither (e.g. a seeded alt) has no per-character date to show.
+    -- entry, else the shipped Step 0 row for the same name, else the
+    -- per-character ToonDonations.lua table (alts that already resolved).
     local key = altName:lower()
     local latest, rawGold
     for _, rec in ipairs(ns.creditsDb.dynamicReviewQueue) do
@@ -446,6 +446,12 @@ function ns.Credits_AddToReviewQueue(altName)
                 break
             end
         end
+    end
+    if latest == nil then
+        -- Last resort: the shipped per-character table (ToonDonations.lua)
+        -- covers every alt that already resolved to a main.
+        local td = ns.CreditsToonDonations and ns.CreditsToonDonations[key]
+        if td then latest, rawGold = td[1], td[2] end
     end
     ns.Credits_RemoveFromReviewQueue(altName) -- no duplicate entries
     table.insert(ns.creditsDb.dynamicReviewQueue, {

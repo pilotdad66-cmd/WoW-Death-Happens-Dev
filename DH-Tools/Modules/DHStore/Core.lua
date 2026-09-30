@@ -908,6 +908,27 @@ local function CreateStoreFrame()
     DHTools.InitStandaloneWindow(f)
     frame = f
 
+    -- Resizable like every other DH-Tools window (2026-09-29): bottom-right
+    -- grip, same SetResizeBounds / SetMinResize+SetMaxResize fallback as
+    -- Account.lua and Config.lua. Minimum is the designed size (the fixed-
+    -- width row columns need it); everything else is corner-anchored, so
+    -- the listing area and its row pool follow the new size on their own.
+    f:SetResizable(true)
+    if f.SetResizeBounds then
+        pcall(f.SetResizeBounds, f, FRAME_W, 400, 1300, 900)
+    else
+        pcall(f.SetMinResize, f, FRAME_W, 400)
+        pcall(f.SetMaxResize, f, 1300, 900)
+    end
+    local grip = CreateFrame("Button", nil, f)
+    grip:SetSize(16, 16)
+    grip:SetPoint("BOTTOMRIGHT", -4, 4)
+    grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    grip:SetScript("OnMouseDown", function() f:StartSizing("BOTTOMRIGHT") end)
+    grip:SetScript("OnMouseUp", function() f:StopMovingOrSizing() end)
+
     -- Left column: AH-style category browser (question #3).
     f.categoryPanel = BuildCategoryPanel(f)
     f.categoryPanel:SetPoint("TOPLEFT", 12, -32)

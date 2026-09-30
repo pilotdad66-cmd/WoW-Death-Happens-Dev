@@ -43,6 +43,7 @@ Modules\DHBavin\SeedData.lua
 # source claude\DH-Bavin\intake\review-queue.csv). Same read-at-call-time
 # note as SeedData.lua above - load order here is cosmetic grouping only.
 Modules\DHBavin\ReviewQueue.lua
+Modules\DHBavin\ToonDonations.lua
 # Roster tab per-main alt list (GENERATED - claude\DH-Bavin\import-alt-roster.ps1,
 # source claude\DH-Bavin\intake\alt-roster.csv). Same read-at-call-time
 # note as SeedData.lua above - load order here is cosmetic grouping only.
