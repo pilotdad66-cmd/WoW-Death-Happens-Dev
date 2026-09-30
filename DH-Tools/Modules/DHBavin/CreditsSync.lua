@@ -164,13 +164,16 @@ local function EncodeRecord(rec)
         Num(rec.points), Num(rec.credits), Esc(rec.tier), Num(rec.prestige),
         Num(rec.lifetimePoints), Esc(rec.lastDonationDate), Num(rec.lastUpdated),
         Num(rec.syncedAt), Num(rec.lifetimeCredits),
+        -- Field 13 (2026-09-29): the account's Discord name. "d"-prefixed so
+        -- an empty name ("no Discord on file") still survives Split.
+        "d" .. Esc(ns.Credits_GetDiscord and ns.Credits_GetDiscord(rec) or rec.discordName),
     }, "|")
 end
 
 -- Returns a record table, or nil if the text isn't a sane record.
 local function DecodeRecord(text)
     local f = Split(text, "|")
-    if #f < 11 or #f > 12 then return nil end
+    if #f < 11 or #f > 13 then return nil end
     local discordName = Unesc(f[1])
     if discordName == "" or #discordName > 64 then return nil end
     local tier = Unesc(f[6])
@@ -189,8 +192,16 @@ local function DecodeRecord(text)
     if points < 0 or credits < 0 or prestige < 0 or lifetimePoints < 0 then return nil end
     local lifetimeCredits = tonumber(f[12])
     if not lifetimeCredits or lifetimeCredits < credits then lifetimeCredits = credits end
+    -- Field 13 = Discord name ("d" + escaped name). Senders on the older
+    -- 12-field format have no such field: the tag defaults to the ledger key.
+    local discord = discordName
+    if f[13] and f[13]:sub(1, 1) == "d" then
+        discord = Unesc(f[13]:sub(2))
+        if #discord > 64 then return nil end
+    end
     return {
         discordName = discordName,
+        discord = discord,
         mainToon = Unesc(f[2]),
         alts = alts,
         points = points,

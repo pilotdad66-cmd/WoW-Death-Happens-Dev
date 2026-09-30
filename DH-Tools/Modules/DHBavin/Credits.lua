@@ -93,6 +93,10 @@ function ns.InitCreditsDB()
             local bal = tonumber(rec.credits) or 0
             local life = tonumber(rec.lifetimeCredits)
             if not life or life < bal then rec.lifetimeCredits = bal end
+            -- Discord-name migration (2026-09-29): records saved before the
+            -- `discord` field existed had the Discord name == the ledger key
+            -- (seeded as the main's name), so that is the starting tag.
+            if rec.discord == nil then rec.discord = rec.discordName or "" end
         end
     end
     -- toonIndex: bare-toon-name(lower) -> discordName, rebuilt whenever
@@ -397,6 +401,92 @@ function ns.Credits_PromoteToMain(altName)
         ns.CreditsSync_Changed({ discordName }, nil)
     end
     return true, newMain
+end
+
+--------------------------------------------------------------------------
+-- Discord name / Main / Alt (2026-09-29, Loopi). An account has ONE Discord
+-- name (rec.discord - editable; the ledger key rec.discordName stays an
+-- internal, never-renamed account id), exactly one main toon (always a real
+-- character, never empty) and any number of alts. A name in the roster is
+-- therefore one of: Discord only (rec.discord names no character on the
+-- account), Main, Alt, Discord & Main, or Discord & Alt - derived by
+-- comparing rec.discord with the toon list, nothing extra is stored.
+-- rec.discord == "" means "no Discord name on file".
+--------------------------------------------------------------------------
+function ns.Credits_GetDiscord(rec)
+    if type(rec) ~= "table" then return "" end
+    if rec.discord == nil then return rec.discordName or "" end
+    return rec.discord
+end
+
+-- Does `name` carry the account's Discord tag?
+function ns.Credits_IsDiscordName(rec, name)
+    local d = ns.Credits_GetDiscord(rec)
+    return d ~= "" and type(name) == "string" and d:lower() == name:lower()
+end
+
+-- Canonical spelling + role ("main"/"alt") + alt index of `name` on `rec`.
+local function ToonInRecord(rec, name)
+    local key = name:lower()
+    if rec.mainToon and rec.mainToon:lower() == key then return rec.mainToon, "main" end
+    for i, a in ipairs(rec.alts or {}) do
+        if a:lower() == key then return a, "alt", i end
+    end
+    return nil
+end
+
+-- "Add as Discord": tags one of the account's characters as the Discord
+-- name. There is only ever one, so any previous tag (on another character,
+-- or a Discord-only name) is replaced.
+function ns.Credits_SetDiscord(name)
+    if not ns.CanManageCreditsConfigLocal() then return false end
+    if not name or name == "" or not ns.creditsDb then return false end
+    if not ns.creditsDb.toonIndex then ns.Credits_RebuildToonIndex() end
+    local bare = ns.NormalizeName(name)
+    local key = ns.creditsDb.toonIndex[bare:lower()]
+    local rec = key and ns.creditsDb.ledger[key]
+    if not rec then return false end
+    local canon = ToonInRecord(rec, bare)
+    if not canon then return false end
+    if ns.Credits_IsDiscordName(rec, canon) then return false end
+    rec.discord = canon
+    if ns.CreditsSync_Changed then ns.CreditsSync_Changed({ key }, nil) end
+    return true
+end
+
+-- "Remove as Discord": clears the account's Discord name. Takes the ledger
+-- key (not a character name) so it also works on a Discord-only entry,
+-- which is not a character and so is not in toonIndex. A Discord-only name
+-- is gone for good once cleared - the UI asks for a second click first.
+function ns.Credits_ClearDiscord(accountKey)
+    if not ns.CanManageCreditsConfigLocal() then return false end
+    local rec = ns.creditsDb and accountKey and ns.creditsDb.ledger[accountKey]
+    if not rec then return false end
+    if ns.Credits_GetDiscord(rec) == "" then return false end
+    rec.discord = ""
+    if ns.CreditsSync_Changed then ns.CreditsSync_Changed({ accountKey }, nil) end
+    return true
+end
+
+-- "Discord Only": the name is a Discord name, not a character. Removes it
+-- from the account's alts (WITHOUT sending it to the Review Queue - it was
+-- never a real donor character) and tags it as the account's Discord name.
+-- Refused for the main: an account must always have a real main toon.
+function ns.Credits_MakeDiscordOnly(name)
+    if not ns.CanManageCreditsConfigLocal() then return false end
+    if not name or name == "" or not ns.creditsDb then return false end
+    if not ns.creditsDb.toonIndex then ns.Credits_RebuildToonIndex() end
+    local bare = ns.NormalizeName(name)
+    local key = ns.creditsDb.toonIndex[bare:lower()]
+    local rec = key and ns.creditsDb.ledger[key]
+    if not rec then return false end
+    local canon, role, idx = ToonInRecord(rec, bare)
+    if role ~= "alt" then return false end
+    table.remove(rec.alts, idx)
+    rec.discord = canon
+    ns.creditsDb.toonIndex[canon:lower()] = nil
+    if ns.CreditsSync_Changed then ns.CreditsSync_Changed({ key }, nil) end
+    return true
 end
 
 -- Read-only lookup for UI (Review Queue tab) - which account's mainToon

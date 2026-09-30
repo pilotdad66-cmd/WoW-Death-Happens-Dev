@@ -1485,7 +1485,7 @@ do
     local enc = ns.CreditsSync_EncodeRecord(nasty)
     check("Encoded record contains no raw ';' (item delimiter)", not enc:find(";", 1, true))
     local _, pipes = enc:gsub("|", "")
-    check("Encoded record has exactly 11 field separators despite hostile characters", pipes == 11)
+    check("Encoded record has exactly 12 field separators despite hostile characters", pipes == 12)
     local dec = ns.CreditsSync_DecodeRecord(enc)
     check("Record round-trips discordName/mainToon", dec and dec.discordName == nasty.discordName and dec.mainToon == nasty.mainToon)
     check("Record round-trips alts with delimiters in the names",
@@ -1497,7 +1497,7 @@ do
     check("Decode rejects an unknown tier", ns.CreditsSync_DecodeRecord(enc:gsub("Friendly", "Godlike")) == nil)
     check("Decode rejects too few fields", ns.CreditsSync_DecodeRecord("a|b|c") == nil)
     check("Decode rejects a negative balance", ns.CreditsSync_DecodeRecord((enc:gsub("|5|Friendly", "|-5|Friendly"))) == nil)
-    local legacy = enc:gsub("|9$", "")
+    local legacy = enc:gsub("|9|d[^|]*$", "")   -- neither lifetimeCredits nor the Discord field
     local legacyDec = ns.CreditsSync_DecodeRecord(legacy)
     check("A record without the trailing lifetimeCredits decodes with lifetimeCredits = credits",
         legacyDec and legacyDec.lifetimeCredits == 5)
@@ -1746,6 +1746,90 @@ do
     local s1 = ns.creditsDb.ledger["MainA"].syncedAt
     ns.Credits_LinkAlt("S2", "MainA")
     check("Two edits in the same clock second still get increasing stamps", ns.creditsDb.ledger["MainA"].syncedAt > s1)
+end
+
+--------------------------------------------------------------------------
+print("== Credits: Discord name / Main / Alt ==")
+resetState()
+inGuild = true
+guildRosterEntries = { { name = "Officer1", rankIndex = 3 } }
+ns.UpdateGuildRosterCache()
+currentPlayerName = "Officer1"
+ns.db.editors = { "Officer1" }
+ns.CreditsSeedData = { Cranky = { lifetimePoints = 100 }, Other = { lifetimePoints = 50 } }
+ns.CreditsAltRoster = { Cranky = { "Oldncranky", "Sidecar" } }
+ns.CreditsSeed_Import()
+do
+    local rec = ns.creditsDb.ledger["Cranky"]
+    check("Seeded account starts with the Discord tag on the main (Discord & Main)",
+        rec.discord == "Cranky" and ns.Credits_IsDiscordName(rec, "Cranky"))
+    check("Credits_GetDiscord falls back to the ledger key for a pre-migration record",
+        ns.Credits_GetDiscord({ discordName = "Old" }) == "Old")
+    check("A record with discord = \"\" reports no Discord name", ns.Credits_GetDiscord({ discordName = "X", discord = "" }) == "")
+
+    -- Discord Only is refused on the main (an account must have a real main).
+    check("Discord Only is refused on the main toon", ns.Credits_MakeDiscordOnly("Cranky") == false)
+    check("...and the account is unchanged", rec.mainToon == "Cranky" and #rec.alts == 2)
+    check("Discord Only is refused on a name that is on no account", ns.Credits_MakeDiscordOnly("Nobody") == false)
+
+    -- The Cranky scenario: real main is the alt Oldncranky.
+    check("Promote Oldncranky to main", ns.Credits_PromoteToMain("Oldncranky") == true)
+    check("Cranky (old main) is now an alt and still carries the Discord tag",
+        rec.mainToon == "Oldncranky" and ns.Credits_IsDiscordName(rec, "Cranky"))
+    check("Discord Only turns the Cranky alt into a Discord-only name", ns.Credits_MakeDiscordOnly("Cranky") == true)
+    check("...it left the alts list", (function()
+        for _, a in ipairs(rec.alts) do if a == "Cranky" then return false end end
+        return true
+    end)())
+    check("...it kept the Discord tag and the main is unchanged",
+        rec.discord == "Cranky" and rec.mainToon == "Oldncranky")
+    check("...it is no longer a resolvable character", ns.creditsDb.toonIndex["cranky"] == nil)
+    local queued = false
+    for _, r in ipairs(ns.Credits_ReviewQueueRows()) do if r.name == "Cranky" then queued = true end end
+    check("...and it did NOT go to the Review Queue", not queued)
+    check("Oldncranky still resolves to itself as the main", ns.Credits_ResolveMain("Sidecar") == "Oldncranky")
+
+    -- Only one Discord name: Add as Discord moves the tag and drops the old one.
+    check("Add as Discord on Sidecar succeeds", ns.Credits_SetDiscord("Sidecar") == true)
+    check("There is only one Discord name - the Discord-only name was replaced", rec.discord == "Sidecar")
+    check("Add as Discord on the name that already has it is a no-op", ns.Credits_SetDiscord("Sidecar") == false)
+    check("Add as Discord refuses a name that is not on any account", ns.Credits_SetDiscord("Nobody") == false)
+    check("Add as Discord moves it to the main", ns.Credits_SetDiscord("Oldncranky") == true and rec.discord == "Oldncranky")
+
+    -- Remove as Discord leaves it not set; the main is untouched.
+    check("Remove as Discord clears the tag", ns.Credits_ClearDiscord("Cranky") == true and rec.discord == "")
+    check("...the main and alts are untouched", rec.mainToon == "Oldncranky" and #rec.alts == 1)
+    check("Removing again is a no-op", ns.Credits_ClearDiscord("Cranky") == false)
+    check("Remove refuses an unknown account", ns.Credits_ClearDiscord("NoSuchAccount") == false)
+
+    -- Permission gate.
+    local prior = ns.db.editors
+    ns.db.editors = {}
+    check("Set/Clear/DiscordOnly all require officer permission",
+        ns.Credits_SetDiscord("Sidecar") == false and ns.Credits_ClearDiscord("Cranky") == false
+        and ns.Credits_MakeDiscordOnly("Sidecar") == false)
+    ns.db.editors = prior
+
+    -- Sync wire format: round trip incl. empty and Discord-only names.
+    rec.discord = "Cranky"
+    local back = ns.CreditsSync_DecodeRecord(ns.CreditsSync_EncodeRecord(rec))
+    check("Wire round trip keeps a Discord-only name", back and back.discord == "Cranky")
+    rec.discord = ""
+    back = ns.CreditsSync_DecodeRecord(ns.CreditsSync_EncodeRecord(rec))
+    check("Wire round trip keeps an empty (not set) Discord name", back and back.discord == "")
+    local enc = ns.CreditsSync_EncodeRecord(rec)
+    local legacy = enc:gsub("|d[^|]*$", "")   -- a 12-field record from an older build
+    back = ns.CreditsSync_DecodeRecord(legacy)
+    check("A 12-field record from an older build decodes, defaulting Discord to the ledger key",
+        back and back.discord == back.discordName)
+end
+
+-- Migration: a record saved before the field existed.
+do
+    resetState()
+    DHBavinCreditsDB = { ledger = { Legacy = { discordName = "Legacy", mainToon = "Legacy", alts = {}, credits = 0 } } }
+    ns.InitCreditsDB()
+    check("InitCreditsDB gives pre-existing records discord = ledger key", ns.creditsDb.ledger["Legacy"].discord == "Legacy")
 end
 
 --------------------------------------------------------------------------

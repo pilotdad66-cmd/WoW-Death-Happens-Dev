@@ -23,7 +23,7 @@ local ns = DHTools.Bavin
 local TARGET_GUILD = "Death Happens"
 local FRAME_W, FRAME_H = 520, 480
 local ROW_H = 20
-local COL_NAME_W, COL_LVL_W, COL_CLASS_W = 130, 34, 90
+local COL_NAME_W, COL_LVL_W, COL_CLASS_W = 200, 34, 90 -- name column fits "(Main) (Discord)" tags
 
 local frame
 
@@ -106,6 +106,10 @@ local function ResolveAccountToons()
     local main, alts, source
 
     local rec = ViewedRecord()
+    -- The account's Discord name (may be a character's name, or a Discord-
+    -- only name that isn't a character at all). "" / nil = none on file.
+    local discord = rec and ns.Credits_GetDiscord and ns.Credits_GetDiscord(rec) or nil
+    if discord == "" then discord = nil end
     if rec and rec.mainToon and rec.mainToon ~= "" then
         main, alts, source = rec.mainToon, rec.alts or {}, "ledger"
     elseif not viewKey then
@@ -128,7 +132,10 @@ local function ResolveAccountToons()
         local k = name:lower()
         if seen[k] then return end
         seen[k] = true
-        out[#out + 1] = { name = name, isMain = isMain or false }
+        out[#out + 1] = {
+            name = name, isMain = isMain or false,
+            isDiscord = discord ~= nil and discord:lower() == k,
+        }
     end
     add(main, true)
     local sortedAlts = {}
@@ -149,7 +156,7 @@ local function ResolveAccountToons()
         add(me, false)
     end
 
-    return out, source, main
+    return out, source, main, discord
 end
 
 -- lower(name) -> {name, rankName, rankIndex, level, className, classFile, online}
@@ -184,7 +191,7 @@ end
 
 -- Builds the scroll-list dataset plus summary info.
 local function BuildAccountData()
-    local toons, source, main = ResolveAccountToons()
+    local toons, source, main, discord = ResolveAccountToons()
     local roster, haveRoster = ReadGuildRoster()
 
     local guildRows, otherRows = {}, {}
@@ -193,7 +200,7 @@ local function BuildAccountData()
         local rec = FindRecorded(t.name)
         if g then
             guildRows[#guildRows + 1] = {
-                kind = "char", name = g.name, isMain = t.isMain, level = g.level,
+                kind = "char", name = g.name, isMain = t.isMain, isDiscord = t.isDiscord, level = g.level,
                 className = g.className, classFile = g.classFile,
                 status = g.rankName or "", online = g.online,
             }
@@ -202,14 +209,14 @@ local function BuildAccountData()
             -- the roster hasn't loaded yet): fall back to what we
             -- recorded the last time it was logged in.
             guildRows[#guildRows + 1] = {
-                kind = "char", name = rec.name, isMain = t.isMain, level = rec.level,
+                kind = "char", name = rec.name, isMain = t.isMain, isDiscord = t.isDiscord, level = rec.level,
                 className = rec.className, classFile = rec.classFile,
                 status = (rec.rankName or "") ~= "" and rec.rankName or "(last seen)",
                 stale = true,
             }
         else
             otherRows[#otherRows + 1] = {
-                kind = "char", name = t.name, isMain = t.isMain,
+                kind = "char", name = t.name, isMain = t.isMain, isDiscord = t.isDiscord,
                 level = rec and rec.level or nil,
                 className = rec and rec.className or nil,
                 classFile = rec and rec.classFile or nil,
@@ -228,7 +235,7 @@ local function BuildAccountData()
         data[#data + 1] = { kind = "header", text = "On this server, not in " .. TARGET_GUILD .. " (" .. #otherRows .. ")" }
         for _, r in ipairs(otherRows) do data[#data + 1] = r end
     end
-    return data, main, source
+    return data, main, source, discord
 end
 
 --------------------------------------------------------------------------
@@ -287,6 +294,7 @@ local function UpdateRow(row, d)
     end
     local nm = ClassColored(d.name, d.classFile)
     if d.isMain then nm = nm .. " |cffffd100(Main)|r" end
+    if d.isDiscord then nm = nm .. " |cff7289da(Discord)|r" end
     row.nameText:SetText(nm)
     row.lvlText:SetText(d.level and tostring(d.level) or "|cff888888?|r")
     row.classText:SetText(d.className and ClassColored(d.className, d.classFile) or "|cff888888?|r")
@@ -409,8 +417,14 @@ end
 
 function ns.Account_Refresh()
     if not frame or not frame:IsShown() then return end
-    local data, main = BuildAccountData()
-    frame.mainText:SetText("Main: " .. (main or "?"))
+    local data, main, source, discord = BuildAccountData()
+    -- Main is always a real character; the Discord name is shown separately
+    -- (it may be a character's name, or just a Discord name). Only shown when
+    -- the ledger has this account - without a record we don't know it.
+    frame.mainText:SetText("Main: " .. (main or "?")
+        .. (source == "ledger"
+            and ("   |cff7289daDiscord:|r " .. (discord or "|cff888888not set|r"))
+            or ""))
     if frame.TitleText then
         frame.TitleText:SetText(viewKey and "Account" or "My Account")
     end

@@ -447,7 +447,7 @@ local function BuildRosterTab(content)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
-    hint:SetText("Every main's seeded reputation/credit standing. Rank is always by Lifetime Points, regardless of the active sort. Click a column title (Name/Lifetime/Last Donation) to sort by it - click again to flip direction. Left-click a name marked [+] to show its alts; right-click any name for a menu (Show Account, and on an alt also Unlink Alt / Promote to Main). Seeding is Distribution Officer only; re-running it overwrites the row for any name in the historical data (SeedData.lua) without touching rows for names outside that dataset.")
+    hint:SetText("Every main's seeded reputation/credit standing. Rank is always by Lifetime Points, regardless of the active sort. Click a column title (Name/Lifetime/Last Donation) to sort by it - click again to flip direction. Left-click a name marked [+] to show its alts; right-click any name for a menu (Show Account, a Discord submenu - Add as Discord / Remove as Discord / Discord Only - and on an alt also Unlink Alt / Promote to Main). Each name is tagged [Main], [Alt], [Discord], [Discord/Main] or [Discord/Alt]; an account has one Discord name and always a real main. Seeding is Distribution Officer only; re-running it overwrites the row for any name in the historical data (SeedData.lua) without touching rows for names outside that dataset.")
 
     -- Seed button - two-click confirm, mirrors Settings tab's Reset Test Data.
     local seedBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
@@ -678,6 +678,54 @@ local function BuildRosterTab(content)
         LibDropDown:EasyMenu(entries, menuFrame, "cursor", 0, 0, "MENU", 2)
     end
 
+    -- "Discord" submenu (2026-09-29, Loopi): Add as Discord / Remove as
+    -- Discord / Discord Only. An account has exactly one Discord name and
+    -- always a real main, so: Add is greyed on the name that already has the
+    -- tag, Remove is greyed on names that don't, and Discord Only (turn an
+    -- ALT into a pure Discord name that is not a character) is greyed on the
+    -- main and on entries that are already Discord-only. Removing a
+    -- Discord-only name deletes it outright, so that one asks twice.
+    local pendingClear   -- { account=, t= } after the first "Remove as Discord" on a Discord-only name
+    local function DiscordSubmenu(name, account, kind, canManage)
+        local rec = ns.creditsDb and ns.creditsDb.ledger and ns.creditsDb.ledger[account]
+        local tagged = rec and ns.Credits_IsDiscordName(rec, name) or false
+        local armed = kind == "discord" and pendingClear and pendingClear.account == account
+            and (GetTime() - pendingClear.t) < PROMOTE_CONFIRM_SECS
+        if not armed then pendingClear = nil end
+        return {
+            { text = "Add as Discord", notCheckable = true, disabled = not canManage or tagged or not rec,
+              func = function()
+                pendingClear = nil
+                if ns.Credits_SetDiscord(name) then
+                    ns.CreditsPrint(name .. " is now the Discord name for that account.")
+                    ns.CreditsConfig_Refresh()
+                end
+              end },
+            { text = armed and "|cffffcc00Click again to confirm|r" or "Remove as Discord",
+              notCheckable = true, disabled = not canManage or not tagged,
+              func = function()
+                if kind == "discord" and not armed then
+                    pendingClear = { account = account, t = GetTime() }
+                    ns.CreditsPrint(("%s is only a Discord name - removing it deletes the entry. Right-click it and choose Discord > Remove as Discord again within %d seconds to confirm."):format(name, PROMOTE_CONFIRM_SECS))
+                    return
+                end
+                pendingClear = nil
+                if ns.Credits_ClearDiscord(account) then
+                    ns.CreditsPrint("Discord name removed from that account.")
+                    ns.CreditsConfig_Refresh()
+                end
+              end },
+            { text = "Discord Only", notCheckable = true, disabled = not canManage or kind ~= "alt",
+              func = function()
+                pendingClear = nil
+                if ns.Credits_MakeDiscordOnly(name) then
+                    ns.CreditsPrint(name .. " is now a Discord name only (not a character).")
+                    ns.CreditsConfig_Refresh()
+                end
+              end },
+        }
+    end
+
     local OpenRowMenu
     OpenRowMenu = function(row)
         local canManage = ns.CanManageCreditsConfigLocal and ns.CanManageCreditsConfigLocal() or false
@@ -686,7 +734,21 @@ local function BuildRosterTab(content)
             pendingPromote = nil
             ShowMenu({
                 { text = row.mainName or "Account", isTitle = true, notCheckable = true },
+                { text = "Discord", notCheckable = true, hasArrow = true,
+                  menuList = DiscordSubmenu(row.mainName, account, "main", canManage) },
                 { text = "Show Account", notCheckable = true, func = function()
+                    if ns.Account_ShowFor then ns.Account_ShowFor(account) end
+                end },
+            })
+        elseif row.entryKind == "discord" and row.discordName and row.altAccount then
+            local dname, account = row.discordName, row.altAccount
+            pendingPromote = nil
+            ShowMenu({
+                { text = dname .. " (Discord only)", isTitle = true, notCheckable = true },
+                { text = "Discord", notCheckable = true, hasArrow = true,
+                  menuList = DiscordSubmenu(dname, account, "discord", canManage) },
+                { text = "Show Account", notCheckable = true, func = function()
+                    pendingClear = nil
                     if ns.Account_ShowFor then ns.Account_ShowFor(account) end
                 end },
             })
@@ -716,6 +778,8 @@ local function BuildRosterTab(content)
                         ns.CreditsConfig_Refresh()
                     end
                 end },
+                { text = "Discord", notCheckable = true, hasArrow = true,
+                  menuList = DiscordSubmenu(altName, account, "alt", canManage) },
                 { text = "Show Account", notCheckable = true, func = function()
                     pendingPromote = nil
                     if ns.Account_ShowFor then ns.Account_ShowFor(account) end
@@ -860,6 +924,33 @@ local function BuildRosterTab(content)
         return ranks
     end
 
+    -- The account's Discord name when it is NOT one of its characters
+    -- (a "Discord only" entry), else nil.
+    local function DiscordOnlyName(rec)
+        local d = ns.Credits_GetDiscord(rec)
+        if d == "" then return nil end
+        local dl = d:lower()
+        if rec.mainToon and rec.mainToon:lower() == dl then return nil end
+        for _, a in ipairs(rec.alts or {}) do
+            if a:lower() == dl then return nil end
+        end
+        return d
+    end
+
+    -- Role tag shown after a name: [Main] [Alt] [Discord] or the combined
+    -- [Discord/Main] [Discord/Alt] when the character's name is also the
+    -- account's Discord name.
+    local function RoleTag(rec, name, role)
+        local label
+        if role == "discord" then
+            label = "Discord"
+        else
+            local roleText = (role == "main") and "Main" or "Alt"
+            label = ns.Credits_IsDiscordName(rec, name) and ("Discord/" .. roleText) or roleText
+        end
+        return " |cff8ea0c8[" .. label .. "]|r"
+    end
+
     -- Interleaves each main with its alt sub-rows (only when expanded)
     -- into a single flat list the row pool renders in order.
     local function BuildDisplayList()
@@ -875,11 +966,16 @@ local function BuildRosterTab(content)
         local display = {}
         for _, rec in ipairs(mains) do
             local alts = rec.alts
-            local hasAlts = alts ~= nil and #alts > 0
-            table.insert(display, { kind = "main", rec = rec, hasAlts = hasAlts })
+            local dOnly = DiscordOnlyName(rec)
+            local hasAlts = (alts ~= nil and #alts > 0) or dOnly ~= nil
+            table.insert(display, { kind = "main", rec = rec, hasAlts = hasAlts, discordOnly = dOnly })
             if hasAlts and expanded[rec.discordName] then
-                for _, altName in ipairs(alts) do
-                    table.insert(display, { kind = "alt", name = altName, account = rec.discordName })
+                -- A Discord-only name (not a character) leads the sub-rows.
+                if dOnly then
+                    table.insert(display, { kind = "discord", name = dOnly, account = rec.discordName, rec = rec })
+                end
+                for _, altName in ipairs(alts or {}) do
+                    table.insert(display, { kind = "alt", name = altName, account = rec.discordName, rec = rec })
                 end
             end
         end
@@ -926,11 +1022,14 @@ local function BuildRosterTab(content)
                     local rec = entry.rec
                     row.isExpandable = entry.hasAlts
                     row.entryKind, row.altName, row.altAccount = "main", nil, nil
+                    row.discordName = nil
                     row.mainName = rec.mainToon
                     row.currentAccount = rec.discordName
                     row.rank:SetText(tostring(ranks[rec.discordName] or "?"))
                     local marker = entry.hasAlts and (expanded[rec.discordName] and "[-] " or "[+] ") or "      "
-                    row.nameBtn.label:SetText(marker .. (rec.mainToon or "?"))
+                    row.nameBtn.label:SetText(marker .. (rec.mainToon or "?")
+                        .. RoleTag(rec, rec.mainToon, "main")
+                        .. (entry.discordOnly and (" |cff7289da(Discord: " .. entry.discordOnly .. ")|r") or ""))
                     row.nameBtn:EnableMouse(true) -- left = expand (if alts), right = menu
                     local tierText = rec.tier or "?"
                     if (rec.prestige or 0) > 0 then
@@ -950,10 +1049,18 @@ local function BuildRosterTab(content)
                 else
                     row.isExpandable = false
                     row.currentAccount = nil
-                    row.entryKind, row.altName, row.altAccount = "alt", entry.name, entry.account
+                    local isDiscordRow = entry.kind == "discord"
+                    if isDiscordRow then
+                        row.entryKind, row.altName, row.altAccount = "discord", nil, entry.account
+                        row.discordName = entry.name
+                    else
+                        row.entryKind, row.altName, row.altAccount = "alt", entry.name, entry.account
+                        row.discordName = nil
+                    end
                     row.mainName = nil
                     row.rank:SetText("")
-                    row.nameBtn.label:SetText("      - " .. (entry.name or "?"))
+                    row.nameBtn.label:SetText("      - " .. (entry.name or "?")
+                        .. RoleTag(entry.rec, entry.name, isDiscordRow and "discord" or "alt"))
                     row.nameBtn:EnableMouse(true) -- right-click menu only
                     row.tier:SetText("")
                     row.points:SetText("")

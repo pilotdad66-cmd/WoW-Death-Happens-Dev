@@ -122,6 +122,7 @@ function ns.CreditsSeed_Import()
         end
         ns.creditsDb.ledger[mainName] = {
             discordName = mainName,
+            discord = mainName, -- Discord tag starts on the main (editable in the Roster menu)
             mainToon = mainName,
             alts = alts,
             points = points,
@@ -176,6 +177,7 @@ function ns.Credits_SetAsNewMain(altName, rawGoldAmount, latestDonation)
     local tier, prestige, points = ns.Credits_TierStateForLifetime(lifetimePoints)
     ns.creditsDb.ledger[bareName] = {
         discordName = bareName,
+        discord = bareName,
         mainToon = bareName,
         alts = {},
         points = points,
