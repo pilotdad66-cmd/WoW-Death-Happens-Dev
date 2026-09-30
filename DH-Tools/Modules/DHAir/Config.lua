@@ -893,7 +893,7 @@ local function CreateAboutPanel(parent)
         local text = "Addon Version: " .. DHAir.VERSION .. "\n"
             .. "Game Version: " .. tostring(gameVersion) .. "\n\n"
             .. "Author: Loopi\n"
-            .. "Major Contributor: Deves\n\n"
+            .. "Major Contributors: Deves, Sortasafe\n\n"
             .. "Built for the Death Happens Hardcore guild Air Service, "
             .. "to help Warlocks auto-invite and summon players in an orderly queue.\n\n"
             .. "Copyright (c) 2026 Loopi. All rights reserved."

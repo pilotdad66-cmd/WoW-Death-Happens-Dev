@@ -2203,7 +2203,7 @@ local function CreateAboutPanel(parent)
     credits:SetJustifyH("LEFT")
     credits:SetJustifyV("TOP")
     credits:SetWordWrap(true)
-    credits:SetText("Major DH-Air Contributor: Deves\nBug Testers: Yuri, Cyndrith")
+    credits:SetText("Major DH-Air Contributors: Deves, Sortasafe\nBug Testers: Yuri, Cyndrith")
 
     local bodyBottom = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     bodyBottom:SetPoint("TOPLEFT", credits, "BOTTOMLEFT", 0, -16)
