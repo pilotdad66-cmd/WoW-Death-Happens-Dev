@@ -653,119 +653,76 @@ local function BuildRosterTab(content)
     -- expanding/collapsing; right-click on a name opens a small menu:
     --   alt row:  Unlink Alt / Promote to Main / Show Account
     --   main row: Show Account
-    -- One shared menu frame, built on first use, parented to the
-    -- top-level window (not the scrolling content) like the Review
-    -- Queue's suggestion popup, so the ScrollFrame never clips it. A
-    -- full-screen invisible catcher closes it on any outside click.
-    -- Unlink/Promote are Distribution-Officer-only (greyed otherwise);
-    -- Promote needs a second click to confirm because it changes which
-    -- toon is the account's face.
+    -- Built on the same vendored dropdown library as the minimap button's
+    -- menus (LibUIDropDownMenuDHTools-4.0 via Create_UIDropDownMenu +
+    -- EasyMenu, opened at the cursor - see Minimap.lua and
+    -- claude\knowledge\k-0003): a hand-rolled frame menu drew fine but its
+    -- items were not clickable in-game (2026-09-29). Unlink/Promote are
+    -- Distribution-Officer-only (greyed otherwise); Promote needs a second
+    -- click to confirm because it changes which toon is the account's face.
     ------------------------------------------------------------------
-    local MENU_W, MENU_ITEM_H, MENU_MAX_ITEMS = 150, 18, 3
-    local menu, menuCatcher
+    local LibDropDown = LibStub and LibStub("LibUIDropDownMenuDHTools-4.0", true)
+    local menuFrame
+    local pendingPromote   -- { name=, t= } after the first Promote click
+    local PROMOTE_CONFIRM_SECS = 8
 
     local function HideMenu()
-        if menu then menu:Hide() end
-        if menuCatcher then menuCatcher:Hide() end
+        if LibDropDown then LibDropDown:CloseDropDownMenus() end
     end
 
-    local function BuildMenu()
-        menuCatcher = CreateFrame("Button", nil, UIParent)
-        menuCatcher:SetAllPoints(UIParent)
-        menuCatcher:SetFrameStrata("FULLSCREEN_DIALOG")
-        menuCatcher:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-        menuCatcher:SetScript("OnClick", HideMenu)
-        menuCatcher:Hide()
-
-        menu = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-        menu:SetFrameStrata("TOOLTIP")
-        menu:SetWidth(MENU_W)
-        menu:SetBackdrop({
-            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-            edgeSize = 12,
-            insets = { left = 3, right = 3, top = 3, bottom = 3 },
-        })
-        menu:SetBackdropColor(0, 0, 0, 0.95)
-        menu:SetScript("OnHide", function()
-            if menuCatcher then menuCatcher:Hide() end
-        end)
-        menu:Hide()
-
-        menu.items = {}
-        for i = 1, MENU_MAX_ITEMS do
-            local btn = CreateFrame("Button", nil, menu)
-            btn:SetHeight(MENU_ITEM_H)
-            btn:SetPoint("TOPLEFT", 5, -5 - (i - 1) * MENU_ITEM_H)
-            btn:SetPoint("RIGHT", -5, 0)
-            local label = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            label:SetAllPoints()
-            label:SetJustifyH("LEFT")
-            btn.label = label
-            local hl = btn:CreateTexture(nil, "HIGHLIGHT")
-            hl:SetAllPoints()
-            hl:SetColorTexture(1, 1, 1, 0.2)
-            menu.items[i] = btn
-        end
-    end
-
-    -- entries = { { text=, run=function, disabled=bool, confirm=bool }, ... }
     local function ShowMenu(entries)
-        if not menu then BuildMenu() end
-        for i, btn in ipairs(menu.items) do
-            local e = entries[i]
-            if not e then
-                btn:Hide()
-            else
-                btn:Show()
-                btn.armed = false
-                btn.label:SetText(e.disabled and ("|cff777777" .. e.text .. "|r") or e.text)
-                if e.disabled then btn:Disable() else btn:Enable() end
-                btn:SetScript("OnClick", function(self)
-                    if e.confirm and not self.armed then
-                        self.armed = true
-                        self.label:SetText("|cffffcc00Click again to confirm|r")
-                        return
-                    end
-                    HideMenu()
-                    e.run()
-                end)
-            end
+        if not LibDropDown then return end
+        if not menuFrame then
+            menuFrame = LibDropDown:Create_UIDropDownMenu("DHBavinRosterMenuFrame", UIParent)
         end
-        menu:SetHeight(#entries * MENU_ITEM_H + 10)
-        local x, y = GetCursorPosition()
-        local s = menu:GetEffectiveScale()
-        menu:ClearAllPoints()
-        menu:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x / s, y / s)
-        menuCatcher:Show()
-        menu:Show()
+        LibDropDown:EasyMenu(entries, menuFrame, "cursor", 0, 0, "MENU", 2)
     end
 
-    local function OpenRowMenu(row)
+    local OpenRowMenu
+    OpenRowMenu = function(row)
         local canManage = ns.CanManageCreditsConfigLocal and ns.CanManageCreditsConfigLocal() or false
         if row.entryKind == "main" and row.currentAccount then
             local account = row.currentAccount
+            pendingPromote = nil
             ShowMenu({
-                { text = "Show Account", run = function() if ns.Account_ShowFor then ns.Account_ShowFor(account) end end },
+                { text = row.mainName or "Account", isTitle = true, notCheckable = true },
+                { text = "Show Account", notCheckable = true, func = function()
+                    if ns.Account_ShowFor then ns.Account_ShowFor(account) end
+                end },
             })
         elseif row.entryKind == "alt" and row.altName and row.altAccount then
             local altName, account = row.altName, row.altAccount
+            local armed = pendingPromote and pendingPromote.name == altName
+                and (GetTime() - pendingPromote.t) < PROMOTE_CONFIRM_SECS
+            if not armed then pendingPromote = nil end
             ShowMenu({
-                { text = "Unlink Alt", disabled = not canManage, run = function()
+                { text = altName, isTitle = true, notCheckable = true },
+                { text = "Unlink Alt", notCheckable = true, disabled = not canManage, func = function()
+                    pendingPromote = nil
                     if ns.Credits_UnlinkAlt(altName) then ns.CreditsConfig_Refresh() end
                 end },
-                { text = "Promote to Main", disabled = not canManage, confirm = true, run = function()
+                { text = armed and "|cffffcc00Click again to confirm promote|r" or "Promote to Main",
+                  notCheckable = true, disabled = not canManage, func = function()
+                    if not armed then
+                        -- First click: reopen the menu showing the confirm prompt.
+                        pendingPromote = { name = altName, t = GetTime() }
+                        C_Timer.After(0.05, function() OpenRowMenu(row) end)
+                        return
+                    end
+                    pendingPromote = nil
                     local ok, newMain = ns.Credits_PromoteToMain(altName)
                     if ok then
                         ns.CreditsPrint(newMain .. " is now the main toon of that account.")
                         ns.CreditsConfig_Refresh()
                     end
                 end },
-                { text = "Show Account", run = function() if ns.Account_ShowFor then ns.Account_ShowFor(account) end end },
+                { text = "Show Account", notCheckable = true, func = function()
+                    pendingPromote = nil
+                    if ns.Account_ShowFor then ns.Account_ShowFor(account) end
+                end },
             })
         end
     end
-
     local function EnsureRowCount(n)
         for i = #rows + 1, n do
             local prevAnchor = rows[i - 1] or headerRow
@@ -969,6 +926,7 @@ local function BuildRosterTab(content)
                     local rec = entry.rec
                     row.isExpandable = entry.hasAlts
                     row.entryKind, row.altName, row.altAccount = "main", nil, nil
+                    row.mainName = rec.mainToon
                     row.currentAccount = rec.discordName
                     row.rank:SetText(tostring(ranks[rec.discordName] or "?"))
                     local marker = entry.hasAlts and (expanded[rec.discordName] and "[-] " or "[+] ") or "      "
@@ -993,6 +951,7 @@ local function BuildRosterTab(content)
                     row.isExpandable = false
                     row.currentAccount = nil
                     row.entryKind, row.altName, row.altAccount = "alt", entry.name, entry.account
+                    row.mainName = nil
                     row.rank:SetText("")
                     row.nameBtn.label:SetText("      - " .. (entry.name or "?"))
                     row.nameBtn:EnableMouse(true) -- right-click menu only
