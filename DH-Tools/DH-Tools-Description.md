@@ -1,6 +1,6 @@
 # DH-Tools
 
-**Version 2.1.3** | Author: **Loopi** | For: *Death Happens* Hardcore guild
+**Version 2.1.4** | Author: **Loopi** | For: *Death Happens* Hardcore guild
 
 ---
 
@@ -57,6 +57,13 @@ you actually want running, all managed from one place.
 ---
 
 ## Changelog
+
+### 2.1.4
+- **Fixed: DH windows stayed on top of everything.** 2.1.3 made DH-Tools
+  windows open in front, but they also stayed in front of other windows
+  (including Blizzard's own panels). They now only come to the front when
+  they open or when you click them, then stack normally like any other
+  window.
 
 ### 2.1.3
 - **Changed: DH windows now open on top.** A DH-Tools window opened from
