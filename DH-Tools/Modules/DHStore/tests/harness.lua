@@ -211,6 +211,29 @@ b = button("All Categories")
 if b then b._scripts.OnClick(); check("All Categories restores everything", #(lastData or {}) == 9, #(lastData or {})) end
 
 --------------------------------------------------------------------------
+print("== category list scroll bar appears only when needed ==")
+local sf
+for _, s in ipairs(allStubs) do if s.scrollBarHideable then sf = s end end
+check("category scroll frame is scrollBarHideable", sf ~= nil)
+if sf then
+    local bar = newStub(); _G["DHStoreCategoryScrollScrollBar"] = bar
+    local hook = sf._scripts.OnScrollRangeChanged
+    check("range-changed hook installed", type(hook) == "function")
+    if hook then
+        hook(sf, 0, 0)
+        check("fits: bar hidden", bar._shown == false)
+        local last = sf._points[#sf._points]
+        check("fits: list reclaims the bar's 22px (right inset 0)", last[1] == "BOTTOMRIGHT" and last[2] == 0, last and last[2])
+        hook(sf, 0, 120)
+        last = sf._points[#sf._points]
+        check("overflows: bar shown and 22px inset restored", bar._shown == true and last[2] == -22, last and last[2])
+        local n = #sf._points
+        hook(sf, 0, 140)
+        check("still overflowing: no re-anchor (no feedback loop)", #sf._points == n)
+    end
+end
+
+--------------------------------------------------------------------------
 print("== listing row price cells ==")
 local opts = __listOpts
 check("scroll list opts captured", opts and opts.createRow and opts.updateRow)

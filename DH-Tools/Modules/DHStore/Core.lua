@@ -746,6 +746,31 @@ local function BuildCategoryPanel(parent)
     scrollFrame:SetScrollChild(content)
     categoryPanelContent = content
 
+    -- Scroll bar only when the list actually overflows (2026-09-29,
+    -- Loopi): scrollBarHideable makes Blizzard's OnScrollRangeChanged
+    -- hide the bar and its arrow buttons whenever the vertical range is
+    -- zero and show them again when it isn't, so expanding a class with
+    -- many sub-categories brings the bar back on the fly. The hook below
+    -- gives the 22px the bar occupied back to the list while it's hidden.
+    -- Only re-anchors when the state flips, so it can't feed back into
+    -- another range-changed event.
+    scrollFrame.scrollBarHideable = 1
+    local barShown = true
+    scrollFrame:HookScript("OnScrollRangeChanged", function(self, _, yrange)
+        local need = math.floor(yrange or 0) > 0
+        -- Explicit show/hide as well, so it doesn't rely on the client's
+        -- scrollBarHideable support alone (the arrow buttons are children
+        -- of the bar and follow it).
+        local bar = _G["DHStoreCategoryScrollScrollBar"]
+        if bar then bar:SetShown(need) end
+        if need == barShown then return end
+        barShown = need
+        self:ClearAllPoints()
+        self:SetPoint("TOPLEFT", 0, 0)
+        self:SetPoint("BOTTOMRIGHT", need and -22 or 0, 0)
+        content:SetWidth(CATEGORY_PANEL_WIDTH - (need and 22 or 0))
+    end)
+
     categoryButtons = {}
 
     local allBtn = CreateCategoryButton(content, 4)
