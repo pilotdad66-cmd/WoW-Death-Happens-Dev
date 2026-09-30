@@ -273,6 +273,87 @@ function ns.FormatMoney(copper)
     end
 end
 
+-- Credits are shown as a plain "xx.xx credits" figure (2026-09-29, Loopi),
+-- never as the gold equivalent. ComputePrices keeps credit prices in the
+-- same 10000-per-unit integer scale as gold copper (goldCopper x ratio),
+-- so 1 credit = 10000 of those units.
+function ns.FormatCredits(units)
+    return string.format("%.2f credits", math.max(0, units or 0) / 10000)
+end
+
+-- Bare "xx.xx" for a real credits BALANCE (rec.credits is already in
+-- credits, not in the 10000-scale).
+function ns.FormatCreditBalance(credits)
+    return string.format("%.2f", tonumber(credits) or 0)
+end
+
+-- (classID, subClassID) for a listing, from GetItemInfoInstant so it
+-- works for items the client has never cached. nil,nil if unresolvable.
+function ns.GetListingClass(listing)
+    if not GetItemInfoInstant or not listing then return nil, nil end
+    local ref = listing.itemLink or listing.itemId
+    if not ref then return nil, nil end
+    local ok, _, _, _, _, _, classID, subClassID = pcall(GetItemInfoInstant, ref)
+    if not ok then return nil, nil end
+    return classID, subClassID
+end
+
+--------------------------------------------------------------------------
+-- Category tree (2026-09-29, Loopi): a fixed, Auction-House-ordered list
+-- of the ten top-level categories the guild wants - Weapon, Armor,
+-- Container, Consumable, Trade Goods, Projectile, Quiver, Recipe, Reagent,
+-- Miscellaneous - instead of dumping whatever GetAuctionItemClasses
+-- happens to contain (which also carried obsolete classes). Names and
+-- sub-category names still come from the client so they match the real
+-- AH's wording. Selection uses numeric IDs (see GetFilteredSortedListings).
+--   noSubs      - top-level only, no sub-category rows
+--   dropSubs    - lowercase substrings; a sub-category whose client name
+--                 contains one is left out. Matched by NAME (not by
+--                 subClassID) so a wrong ID can never hide a real category.
+-- A class left with fewer than two sub-categories shows none (a lone
+-- "Reagent" row under "Reagent" is just noise).
+--------------------------------------------------------------------------
+ns.CATEGORY_TREE = {
+    { classID = 2,  fallback = "Weapon",        dropSubs = { "obsolete", "exotic", "miscellaneous" } },
+    { classID = 4,  fallback = "Armor",         dropSubs = { "cosmetic" } },
+    { classID = 1,  fallback = "Container",     dropSubs = { "engineering" } },
+    { classID = 0,  fallback = "Consumable",    noSubs = true },
+    { classID = 7,  fallback = "Trade Goods",   noSubs = true },
+    { classID = 6,  fallback = "Projectile" },
+    { classID = 11, fallback = "Quiver" },
+    { classID = 9,  fallback = "Recipe" },
+    { classID = 5,  fallback = "Reagent" },
+    { classID = 15, fallback = "Miscellaneous" },
+}
+
+-- Returns { {classID=, name=, subs={ {id=, name=}, ... }}, ... } in tree
+-- order. Never throws; missing client APIs just yield fallback names and
+-- no sub-categories.
+function ns.BuildCategoryList()
+    local out = {}
+    for _, def in ipairs(ns.CATEGORY_TREE) do
+        local name = GetItemClassInfo and GetItemClassInfo(def.classID)
+        if not name or name == "" then name = def.fallback end
+        local subs = {}
+        if not def.noSubs and GetItemSubClassInfo then
+            for subId = 0, 20 do
+                local sname = GetItemSubClassInfo(def.classID, subId)
+                if sname and sname ~= "" then
+                    local drop = false
+                    local lower = sname:lower()
+                    for _, frag in ipairs(def.dropSubs or {}) do
+                        if lower:find(frag, 1, true) then drop = true; break end
+                    end
+                    if not drop then subs[#subs + 1] = { id = subId, name = sname } end
+                end
+            end
+            if #subs < 2 then subs = {} end
+        end
+        out[#out + 1] = { classID = def.classID, name = name, subs = subs }
+    end
+    return out
+end
+
 --------------------------------------------------------------------------
 -- Purchase-request mail (question #3's FIFO resolution mechanism).
 -- Plain SendMail(recipient, subject, body) - no attachment, no CoD, so
@@ -300,7 +381,7 @@ function ns.SendPurchaseRequestMail(listing)
         "%s wants to buy: %s x%d\nGold: %s   Credits: %s\nRequested: %s (t=%d)\nListing ID: %s",
         UnitName("player") or "?", itemName, listing.quantity or 1,
         ns.FormatMoney(prices.goldFinal),
-        prices.creditFinal and tostring(prices.creditFinal) or "n/a",
+        prices.creditFinal and ns.FormatCredits(prices.creditFinal) or "n/a",
         date("%Y-%m-%d %H:%M:%S"), time(), listing.listingId)
     if SendMail then
         SendMail(primary, subject, body)
@@ -321,24 +402,24 @@ local qualityFilter = nil -- nil = All
 -- in-game Auction House's left-frame class/subclass browser - NOT
 -- DH-Bavin's own donation-ranking categories, a completely different
 -- taxonomy. nil className = All Categories.
-local categoryClassName = nil
-local categorySubclassName = nil
+-- 2026-09-29 (Loopi): selection is by numeric item classID/subClassID
+-- (GetItemInfoInstant), not by the localized class/subclass NAME strings
+-- the old code compared. The names GetAuctionItemSubClasses returns do not
+-- always equal GetItemInfo's itemSubType (Classic reports cooked food as
+-- Consumable/"Consumable", raw meat as Trade Goods/"Meat"), which hid
+-- those listings from every sub-category while "All" still showed them.
+local categoryClassID = nil
+local categorySubID = nil
 local expandedClassIndex = nil -- which class row is showing its subclasses (accordion - one at a time, v1)
 
 local QUALITY_NAMES = { [0] = "Poor", [1] = "Common", [2] = "Uncommon", [3] = "Rare", [4] = "Epic", [5] = "Legendary" }
 
 -- Sorted array snapshot of ns.catalog, filtered by searchText/
--- qualityFilter/categoryClassName/categorySubclassName. Quality/class/
--- subclass all come from GetItemInfo (client item cache) since none of
--- them are on the wire (question #2 keeps the wire payload to itemId/
--- itemLink/quantity/gold only) - falls back to showing the row
--- unfiltered if the cache hasn't resolved it yet, same "best-effort"
--- posture DH-Bavin's ShowItems took on itemLink (see that file's own
--- 2026-08-05 comment). itemType/itemSubType strings are compared
--- directly against GetAuctionItemClasses/GetAuctionItemSubClasses'
--- own strings (BuildCategoryPanel) rather than numeric classID/
--- subclassID - both come from the same client-side item class table,
--- so this needs no index-mapping guesswork.
+-- qualityFilter/categoryClassID/categorySubID. Quality comes from GetItemInfo
+-- (client item cache; none of it is on the wire - question #2 keeps the
+-- payload to itemId/itemLink/quantity/gold), so an uncached item just shows
+-- unfiltered by quality. Class/subclass come from GetItemInfoInstant (see
+-- ns.GetListingClass), which needs no cache.
 local function GetFilteredSortedListings()
     local list = {}
     local needle = searchText:lower()
@@ -348,12 +429,18 @@ local function GetFilteredSortedListings()
     for _, l in pairs(ns.catalog) do all[#all + 1] = l end
     for _, l in pairs(ns.testListings or {}) do all[#all + 1] = l end
     for _, l in ipairs(all) do
-        local name, _, itemQuality, _, _, itemType, itemSubType = l.itemLink and GetItemInfo(l.itemLink)
+        local name, _, itemQuality = l.itemLink and GetItemInfo(l.itemLink)
         name = name or l.itemLink or ("item " .. tostring(l.itemId or "?"))
         local matchesSearch = needle == "" or name:lower():find(needle, 1, true) ~= nil
         local matchesQuality = qualityFilter == nil or itemQuality == qualityFilter
-        local matchesClass = categoryClassName == nil or itemType == categoryClassName
-        local matchesSubclass = categorySubclassName == nil or itemSubType == categorySubclassName
+        local matchesClass, matchesSubclass = true, true
+        if categoryClassID ~= nil then
+            -- GetItemInfoInstant needs no item-cache round trip, so the
+            -- class filter works even for items never seen this session.
+            local classID, subClassID = ns.GetListingClass(l)
+            matchesClass = classID == categoryClassID
+            matchesSubclass = categorySubID == nil or subClassID == categorySubID
+        end
         if matchesSearch and matchesQuality and matchesClass and matchesSubclass then
             table.insert(list, l)
         end
@@ -362,6 +449,14 @@ local function GetFilteredSortedListings()
     return list
 end
 
+-- Listing-row column geometry, shared with the column headers in
+-- CreateStoreFrame - keep in sync. x positions are measured from the
+-- row's left edge: icon 4..28, name from COL_X_NAME, then gold, credits.
+local COL_NAME_W, COL_GOLD_W, COL_CREDIT_W = 160, 110, 100
+local COL_X_NAME = 34
+local COL_X_GOLD = COL_X_NAME + COL_NAME_W + 4
+local COL_X_CREDIT = COL_X_GOLD + COL_GOLD_W + 4
+
 local function CreateListingRow(row)
     row.icon = row:CreateTexture(nil, "ARTWORK")
     row.icon:SetSize(24, 24)
@@ -369,19 +464,32 @@ local function CreateListingRow(row)
 
     row.nameText = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     row.nameText:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
-    row.nameText:SetWidth(170)
+    row.nameText:SetWidth(COL_NAME_W)
     row.nameText:SetJustifyH("LEFT")
     row.nameText:SetWordWrap(false)
 
-    row.goldText = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    row.goldText:SetPoint("LEFT", row.nameText, "RIGHT", 4, 0)
-    row.goldText:SetWidth(110)
-    row.goldText:SetJustifyH("LEFT")
-
-    row.creditText = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    row.creditText:SetPoint("LEFT", row.goldText, "RIGHT", 4, 0)
-    row.creditText:SetWidth(80)
-    row.creditText:SetJustifyH("LEFT")
+    -- Price cells. Each column has a "final" line (goldText/creditText)
+    -- and, only when the viewer's tier discount changes the number, a
+    -- grey "was" line above it with a drawn strike line (see
+    -- PlaceStruckCell). All are placed by absolute x from the row's left
+    -- edge (same x the column headers use) so a cell can shift up/down
+    -- without dragging the next column with it.
+    local function PriceCell(width)
+        local final = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        final:SetWidth(width)
+        final:SetJustifyH("LEFT")
+        final:SetWordWrap(false)
+        local was = row:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+        was:SetJustifyH("LEFT")
+        was:Hide()
+        local strike = row:CreateTexture(nil, "OVERLAY")
+        strike:SetColorTexture(0.65, 0.65, 0.65, 0.95)
+        strike:SetHeight(1)
+        strike:Hide()
+        return final, was, strike
+    end
+    row.goldText, row.goldWas, row.goldStrike = PriceCell(COL_GOLD_W)
+    row.creditText, row.creditWas, row.creditStrike = PriceCell(COL_CREDIT_W)
 
     row.buyBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
     row.buyBtn:SetSize(64, 20)
@@ -415,30 +523,34 @@ local function CreateListingRow(row)
     row:SetScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
--- WoW's FontString has no native strikethrough style - this is the
--- standard plain-text trick (a combining "long stroke overlay" mark
--- after every byte). Only ever applied to ASCII price strings here
--- (digits/g/s/c/spaces), so a per-byte loop is safe without full UTF-8
--- awareness. NOT YET VERIFIED IN-GAME (font rendering of combining
--- marks can vary by client font).
-local function StrikeText(s)
-    local out = {}
-    for i = 1, #s do
-        out[#out + 1] = s:sub(i, i)
-        out[#out + 1] = "\204\182" -- U+0336 COMBINING LONG STROKE OVERLAY, UTF-8
+-- question #11: base price struck through above the tier-discounted
+-- price - only when a discount actually changes the number; otherwise
+-- just the plain price (no point striking a price through itself).
+--
+-- 2026-09-29 (Loopi, in-game): the old strikethrough appended U+0336
+-- (combining long stroke) after every character, and WoW's font has no
+-- glyph for it - every character was followed by a small box. The strike
+-- is now a 1px texture laid across a separate grey "was" line instead;
+-- no special characters at all.
+local ROW_H_HALF = 7 -- px the two lines sit above/below the row centre
+local function PlaceStruckCell(final, was, strike, x, baseText, finalText, struck)
+    final:ClearAllPoints()
+    if struck then
+        final:SetPoint("LEFT", final:GetParent(), "LEFT", x, -ROW_H_HALF)
+        was:ClearAllPoints()
+        was:SetPoint("LEFT", was:GetParent(), "LEFT", x, ROW_H_HALF)
+        was:SetText(baseText)
+        was:Show()
+        strike:ClearAllPoints()
+        strike:SetPoint("LEFT", was, "LEFT", 0, 0)
+        strike:SetWidth(math.max(1, was:GetStringWidth()))
+        strike:Show()
+    else
+        final:SetPoint("LEFT", final:GetParent(), "LEFT", x, 0)
+        was:Hide()
+        strike:Hide()
     end
-    return table.concat(out)
-end
-
--- question #11: base price struck through beside the tier-discounted
--- price, e.g. "~~50g~~ 30g" - only when a discount actually changes the
--- number; otherwise just the plain price (no point striking a price
--- through itself).
-local function FormatPriceCell(base, final, applied)
-    if not applied or base == final then
-        return DHTools.Store.FormatMoney(final or base or 0)
-    end
-    return "|cff888888" .. StrikeText(DHTools.Store.FormatMoney(base)) .. "|r " .. DHTools.Store.FormatMoney(final)
+    final:SetText(finalText)
 end
 
 local function UpdateListingRow(row, listing, dataIndex)
@@ -459,11 +571,15 @@ local function UpdateListingRow(row, listing, dataIndex)
         .. (listing.pendingBy and "  |cffffcc00(pending)|r" or ""))
 
     local prices = ns.ComputePrices(listing)
-    row.goldText:SetText(FormatPriceCell(prices.goldBase, prices.goldFinal, ns.db.discountAppliesToGold and prices.discountPercent > 0))
+    PlaceStruckCell(row.goldText, row.goldWas, row.goldStrike, COL_X_GOLD,
+        ns.FormatMoney(prices.goldBase), ns.FormatMoney(prices.goldFinal),
+        ns.db.discountAppliesToGold and prices.discountPercent > 0 and prices.goldBase ~= prices.goldFinal)
     if prices.creditFinal then
-        row.creditText:SetText(FormatPriceCell(prices.creditBase, prices.creditFinal, ns.db.discountAppliesToCredits and prices.discountPercent > 0))
+        PlaceStruckCell(row.creditText, row.creditWas, row.creditStrike, COL_X_CREDIT,
+            ns.FormatCredits(prices.creditBase), ns.FormatCredits(prices.creditFinal),
+            ns.db.discountAppliesToCredits and prices.discountPercent > 0 and prices.creditBase ~= prices.creditFinal)
     else
-        row.creditText:SetText("|cff888888-|r")
+        PlaceStruckCell(row.creditText, row.creditWas, row.creditStrike, COL_X_CREDIT, "", "|cff888888-|r", false)
     end
 
     local isOfficer = ns.CanManageListingsLocal()
@@ -583,20 +699,20 @@ local function RelayoutCategoryPanel()
 
         local selected
         if entry.kind == "all" then
-            selected = categoryClassName == nil
+            selected = categoryClassID == nil
         elseif entry.kind == "class" then
-            selected = categoryClassName == entry.className and categorySubclassName == nil
+            selected = categoryClassID == entry.classID and categorySubID == nil
         else
-            selected = categoryClassName == entry.className and categorySubclassName == entry.subclassName
+            selected = categoryClassID == entry.classID and categorySubID == entry.subID
         end
         btn.text:SetTextColor(selected and 1 or 0.9, selected and 0.82 or 0.9, selected and 0 or 0.9)
     end
     categoryPanelContent:SetHeight(math.max(1, -y))
 end
 
-local function SelectCategory(className, subclassName)
-    categoryClassName = className
-    categorySubclassName = subclassName
+local function SelectCategory(classID, subID)
+    categoryClassID = classID
+    categorySubID = subID
     RelayoutCategoryPanel()
     ns.Store_Refresh()
 end
@@ -615,46 +731,6 @@ local function CreateCategoryButton(parent, indent)
     fs:SetWordWrap(false)
     btn.text = fs
     return btn
-end
-
--- Returns { {name=, subs={names}}, ... }. Prefers the AH-style
--- GetAuctionItemClasses/SubClasses; if this client lacks them (or they
--- error), falls back to GetItemClassInfo/GetItemSubClassInfo over the
--- known class IDs. Never throws - an empty list just means a bare
--- "All Categories" panel.
-local FALLBACK_CLASS_IDS = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 15, 16, 17, 18 }
-local function GetItemClassList()
-    local out = {}
-    if GetAuctionItemClasses then
-        local ok, classes = pcall(function() return { GetAuctionItemClasses() } end)
-        if ok and classes and #classes > 0 then
-            for classIndex, className in ipairs(classes) do
-                local subs = {}
-                if GetAuctionItemSubClasses then
-                    local ok2, s = pcall(function() return { GetAuctionItemSubClasses(classIndex) } end)
-                    if ok2 and s then subs = s end
-                end
-                out[#out + 1] = { name = className, subs = subs }
-            end
-            return out
-        end
-    end
-    if GetItemClassInfo then
-        for _, classId in ipairs(FALLBACK_CLASS_IDS) do
-            local cname = GetItemClassInfo(classId)
-            if cname and cname ~= "" then
-                local subs = {}
-                if GetItemSubClassInfo then
-                    for subId = 0, 20 do
-                        local sname = GetItemSubClassInfo(classId, subId)
-                        if sname and sname ~= "" then subs[#subs + 1] = sname end
-                    end
-                end
-                out[#out + 1] = { name = cname, subs = subs }
-            end
-        end
-    end
-    return out
 end
 
 local function BuildCategoryPanel(parent)
@@ -680,29 +756,30 @@ local function BuildCategoryPanel(parent)
     end)
     tinsert(categoryButtons, { btn = allBtn, kind = "all" })
 
-    local classes = GetItemClassList()
-    for classIndex, classEntry in ipairs(classes) do
-        local className = classEntry.name
+    -- Fixed AH-order tree (ns.BuildCategoryList) - see the CATEGORY_TREE
+    -- comment for which top-level classes and sub-categories are shown.
+    for classIndex, classEntry in ipairs(ns.BuildCategoryList()) do
+        local classID = classEntry.classID
         local classBtn = CreateCategoryButton(content, 4)
-        classBtn.text:SetText(className)
+        classBtn.text:SetText(classEntry.name)
         classBtn:SetScript("OnClick", function()
             if expandedClassIndex == classIndex then
                 expandedClassIndex = nil
                 SelectCategory(nil, nil)
             else
                 expandedClassIndex = classIndex
-                SelectCategory(className, nil)
+                SelectCategory(classID, nil)
             end
         end)
-        tinsert(categoryButtons, { btn = classBtn, kind = "class", className = className, classIndex = classIndex })
+        tinsert(categoryButtons, { btn = classBtn, kind = "class", classID = classID, classIndex = classIndex })
 
-        for _, subclassName in ipairs(classEntry.subs) do
+        for _, sub in ipairs(classEntry.subs) do
             local subBtn = CreateCategoryButton(content, 16)
-            subBtn.text:SetText(subclassName)
+            subBtn.text:SetText(sub.name)
             subBtn:SetScript("OnClick", function()
-                SelectCategory(className, subclassName)
+                SelectCategory(classID, sub.id)
             end)
-            tinsert(categoryButtons, { btn = subBtn, kind = "subclass", className = className, subclassName = subclassName, classIndex = classIndex })
+            tinsert(categoryButtons, { btn = subBtn, kind = "subclass", classID = classID, subID = sub.id, classIndex = classIndex })
         end
     end
 
@@ -720,8 +797,6 @@ end
 
 local FRAME_W, FRAME_H = 860, 520
 local RIGHT_X = 190 -- everything right of the category panel starts here
--- Column widths shared with CreateListingRow above - keep in sync.
-local COL_NAME_W, COL_GOLD_W = 170, 110
 
 local function FormatGoldInput(x)
     local s = string.format("%.2f", x)
@@ -737,7 +812,7 @@ local function UpdateBalances()
     frame.goldText:SetText("Gold: |cffffffff" .. ns.FormatMoney(GetMoney and GetMoney() or 0) .. "|r")
     local rec = DHTools.Bavin and DHTools.Bavin.GetLocalAccountRecord and DHTools.Bavin.GetLocalAccountRecord()
     if rec and rec.credits ~= nil then
-        frame.creditsText:SetText("Store Credits: |cffffffff" .. tostring(rec.credits) .. "|r")
+        frame.creditsText:SetText("Store Credits: |cffffffff" .. ns.FormatCreditBalance(rec.credits) .. "|r")
     else
         frame.creditsText:SetText("Store Credits: |cff888888not synced yet|r")
     end
@@ -991,9 +1066,9 @@ local function CreateStoreFrame()
         fs:SetText(text)
         return fs
     end
-    HeaderText("Item", 34)
-    HeaderText("Gold", 34 + COL_NAME_W + 4)
-    HeaderText("Store Credits", 34 + COL_NAME_W + 4 + COL_GOLD_W + 4)
+    HeaderText("Item", COL_X_NAME)
+    HeaderText("Gold", COL_X_GOLD)
+    HeaderText("Store Credits", COL_X_CREDIT)
     local headerLine = f.header:CreateTexture(nil, "ARTWORK")
     headerLine:SetColorTexture(1, 1, 1, 0.15)
     headerLine:SetHeight(1)
