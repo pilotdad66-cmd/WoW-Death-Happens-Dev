@@ -1047,6 +1047,10 @@ local function CreateStoreFrame()
     end)
 
     f:SetScript("OnShow", function() ns.Store_Refresh() end)
+    -- CreateFrame returns a SHOWN frame; start hidden so the first
+    -- Store_Toggle opens it instead of hiding it (same first-click bug
+    -- fixed in Account.lua 2026-09-29).
+    f:Hide()
 end
 
 -- Officers see the Add Listing strip; everyone else gets the header/list

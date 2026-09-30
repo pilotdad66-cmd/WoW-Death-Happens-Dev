@@ -399,6 +399,11 @@ local function CreateAccountFrame()
         ns.Account_Refresh()
     end)
     f:SetScript("OnHide", function() viewKey = nil end)
+    -- CreateFrame returns a SHOWN frame. Without this, the very first
+    -- Account_Toggle saw IsShown()==true and hid it (window never appeared,
+    -- OnShow never ran) - "must click View my Account twice" (Loopi
+    -- 2026-09-29). Start hidden so the first toggle/show opens it.
+    f:Hide()
     return f
 end
 
