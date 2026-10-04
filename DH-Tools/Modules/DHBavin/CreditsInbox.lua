@@ -40,7 +40,10 @@ local QUIET = 2.5          -- seconds without a new confirmed take before a mail
                           -- (when it is emptied / gone / not the open mail)
 local LONG = 120           -- fallback for a mail left open and partly taken
 local CHECK_ANCHOR = "BOTTOMLEFT"   -- in-mail checkbox position on OpenMailFrame
-local CHECK_X, CHECK_Y = 24, 10      -- (unverified layout: tune after the in-game look)
+-- Moved up about 2.5 attachment icons (~37 px each) into the mail body
+-- (Loopi, 2026-10-04: there is no free space down by the buttons). Layout is
+-- still unverified, and Postal changes the open-mail frame.
+local CHECK_X, CHECK_Y = 24, 105
 local MAX_ATTACH = ATTACHMENTS_MAX_RECEIVE or 16
 
 local installed = false
