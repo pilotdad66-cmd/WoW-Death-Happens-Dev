@@ -233,6 +233,13 @@ local function BuildAccountData()
     for _, r in ipairs(guildRows) do data[#data + 1] = r end
     if #otherRows > 0 then
         data[#data + 1] = { kind = "header", text = "On this server, not in " .. TARGET_GUILD .. " (" .. #otherRows .. ")" }
+        -- Privacy note (2026-10-04, Loopi): self-view only. Scoped to what
+        -- is true - these characters are listed in YOUR OWN Account window.
+        -- Deliberately says nothing about the ledger/AltRoster or officer
+        -- "Show Account" views (Loopi: leave the alt roster out of it).
+        if not viewKey then
+            data[#data + 1] = { kind = "note", text = "These characters are only displayed in your own Account window." }
+        end
         for _, r in ipairs(otherRows) do data[#data + 1] = r end
     end
     return data, main, source, discord
