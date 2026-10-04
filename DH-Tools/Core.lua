@@ -949,6 +949,46 @@ function ns.InitStandaloneWindow(targetFrame, rightInset)
     return dragRegion
 end
 
+-- Gives a ScrollFrame's scrollbar the Blizzard-default "own frame" look
+-- (2026-10-04, Loopi: the arrows and thumb should read as sitting in their
+-- own bordered track so they're obvious). The stock template's scrollbar is
+-- just three loose pieces - arrow, thumb, arrow - floating on our flat dark
+-- window background. This draws a dark, bordered track behind all of them,
+-- spanning arrow-to-arrow. Pure decoration: the bar's behavior, anchors and
+-- size are untouched, so every window's layout/inset math stays valid.
+-- Safe to call on any ScrollFrame (UIPanelScrollFrameTemplate or
+-- HybridScrollFrameTemplate); does nothing if no scrollbar is found, and is
+-- idempotent. Call once right after CreateFrame("ScrollFrame", ...).
+function ns.SkinScrollBar(scrollFrame)
+    if not scrollFrame or scrollFrame.dhScrollTrack then return end
+    local bar = scrollFrame.ScrollBar
+    local frameName = scrollFrame.GetName and scrollFrame:GetName()
+    if not bar and frameName then bar = _G[frameName .. "ScrollBar"] end
+    if not bar then return end
+    local up = bar.ScrollUpButton or (frameName and _G[frameName .. "ScrollBarScrollUpButton"])
+    local down = bar.ScrollDownButton or (frameName and _G[frameName .. "ScrollBarScrollDownButton"])
+
+    local track = CreateFrame("Frame", nil, scrollFrame, "BackdropTemplate")
+    -- Behind the bar and its arrow buttons (same parent, one level lower).
+    track:SetFrameLevel(math.max(0, bar:GetFrameLevel() - 1))
+    if up and down then
+        track:SetPoint("TOPLEFT", up, "TOPLEFT", -4, 4)
+        track:SetPoint("BOTTOMRIGHT", down, "BOTTOMRIGHT", 4, -4)
+    else
+        track:SetPoint("TOPLEFT", bar, "TOPLEFT", -4, 20)
+        track:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 4, -20)
+    end
+    track:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        edgeSize = 12,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    track:SetBackdropColor(0, 0, 0, 0.6)
+    track:SetBackdropBorderColor(0.7, 0.7, 0.7, 1)
+    scrollFrame.dhScrollTrack = track
+end
+
 -- Returns true/false for whether `key` is currently enabled: saved state
 -- if one exists, else the module's own default.
 function ns.IsModuleEnabled(key)

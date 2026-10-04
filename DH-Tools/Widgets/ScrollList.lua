@@ -68,6 +68,8 @@ function ns.Widgets.CreateScrollList(parent, opts)
     scrollBar:SetMinMaxValues(0, 0)
     scrollBar:SetValue(0)
     scrollFrame.scrollBar = scrollBar
+    -- Blizzard-style bordered track behind the arrows + thumb (2026-10-04).
+    if ns.SkinScrollBar then ns.SkinScrollBar(scrollFrame) end
 
     local emptyText
     if opts.emptyText then

@@ -507,6 +507,7 @@ local function CreateEditorFrame()
     frame.addDetailEdit:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
 
     frame.scrollFrame = CreateFrame("ScrollFrame", "DHBavinPointsEditorScrollFrame", frame, "UIPanelScrollFrameTemplate")
+    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(frame.scrollFrame) end
     frame.scrollFrame:SetPoint("TOPLEFT", frame.resultsHint, "BOTTOMLEFT", 0, -24)
     frame.scrollFrame:SetPoint("BOTTOMRIGHT", frame.addSection, "TOPRIGHT", -30, 10)
 

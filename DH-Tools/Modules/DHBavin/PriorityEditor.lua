@@ -216,6 +216,7 @@ local function CreateEditorFrame()
     frame.colHeaders:SetText("itemID")
 
     frame.scrollFrame = CreateFrame("ScrollFrame", "DHBavinPriorityEditorScrollFrame", frame, "UIPanelScrollFrameTemplate")
+    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(frame.scrollFrame) end
     frame.scrollFrame:SetPoint("TOPLEFT", frame.colHeaders, "BOTTOMLEFT", 0, -6)
     frame.scrollFrame:SetPoint("BOTTOMRIGHT", -30, 12)
 

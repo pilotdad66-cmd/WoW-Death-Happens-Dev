@@ -31,6 +31,7 @@ local function CreateOptionsPanel(parent)
     -- when resized down. Wrapped in the same UIPanelScrollFrameTemplate
     -- idiom the Messages page and Guild Instructions box already use.
     local scrollFrame = CreateFrame("ScrollFrame", "DHAirOptionsScroll", panel, "UIPanelScrollFrameTemplate")
+    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(scrollFrame) end
     scrollFrame:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
     scrollFrame:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -28, 4) -- -28: room for the template's scrollbar
     scrollFrame:EnableMouseWheel(true)
@@ -440,6 +441,7 @@ local function CreateWrapMessageBox(parent, name, anchorTo, xOfs, yOfs, rows, ge
     local visibleHeight = rows * ROW_H
 
     local scroll = CreateFrame("ScrollFrame", name .. "Scroll", parent, "UIPanelScrollFrameTemplate")
+    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(scroll) end
     scroll:SetPoint("TOPLEFT", anchorTo, "BOTTOMLEFT", xOfs, yOfs)
     scroll:SetSize(292, visibleHeight)
 
@@ -513,6 +515,7 @@ local function CreateMessagesPanel(parent)
     -- never spill outside the window regardless of how small the window
     -- gets resized.
     local scrollFrame = CreateFrame("ScrollFrame", "DHAirMessagesScroll", panel, "UIPanelScrollFrameTemplate")
+    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(scrollFrame) end
     scrollFrame:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -10)
     -- 44 (not 4): leaves room for the fixed Save Changes footer pinned to
     -- panel's own bottom edge (see saveBtn below, 2026-09-28) - the footer
@@ -598,6 +601,7 @@ local function CreateMessagesPanel(parent)
     -- that (compounding to +12 total). 0 here now matches giTitle's own
     -- left edge exactly, same as the channel rows' edit boxes.
     local giScroll = CreateFrame("ScrollFrame", "DHAirGuildInstructionsScroll", scrollChild, "UIPanelScrollFrameTemplate")
+    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(giScroll) end
     giScroll:SetPoint("TOPLEFT", giTitle, "BOTTOMLEFT", 0, -8)
     giScroll:SetSize(310, 54) -- ~3 wrapped lines visible; scrolls for more (unconfirmed in-game)
 

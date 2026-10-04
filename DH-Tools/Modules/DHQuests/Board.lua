@@ -396,6 +396,7 @@ local function CreateBoardFrame()
     -- Board.lua does this) so they stay lined up with the actual columns
     -- as the window resizes.
     frame.scrollFrame = CreateFrame("ScrollFrame", "DHQuestsBoardScrollFrame", frame, "UIPanelScrollFrameTemplate")
+    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(frame.scrollFrame) end
     frame.scrollFrame:SetPoint("TOPLEFT", frame.statText, "BOTTOMLEFT", 0, -28)
     frame.scrollFrame:SetPoint("BOTTOMRIGHT", -30, 12)
 

@@ -976,6 +976,7 @@ local function CreateBoardFrame()
     -- using independent fixed offsets - that's what keeps them lined up
     -- with the actual row columns as the window is resized.
     frame.scrollFrame = CreateFrame("ScrollFrame", "DHAirBoardScrollFrame", frame, "UIPanelScrollFrameTemplate")
+    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(frame.scrollFrame) end
     frame.scrollFrame:SetPoint("TOPLEFT", frame.summoningText, "BOTTOMLEFT", 0, -32)
     -- Bottom inset 40 -> 70 (2026-08-17): the footer grew a second row
     -- (Set Destination moved to its own line, below Config/Clear
