@@ -573,7 +573,7 @@ local function BuildRosterTab(content)
     local COL_GAP = 8
     local RANK_WIDTH = 42 -- room for the sort arrow beside "Rank"
     local NAME_LEFT_GAP = 4
-    local TIER_WIDTH, POINTS_WIDTH, LIFETIME_WIDTH, LASTDON_WIDTH, CREDITS_WIDTH = 76, 76, 60, 86, 70
+    local TIER_WIDTH, POINTS_WIDTH, LIFETIME_WIDTH, LASTDON_WIDTH, CREDITS_WIDTH = 76, 104, 80, 86, 84
 
     local headerRow = CreateFrame("Frame", nil, content)
     headerRow:SetPoint("TOPLEFT", prevPageBtn, "BOTTOMLEFT", 0, -10)
@@ -1096,15 +1096,17 @@ local function BuildRosterTab(content)
                     end
                     row.tier:SetText(tierText)
                     local cap = ns.CreditsTierCaps and ns.CreditsTierCaps[rec.tier]
-                    local curPts = math.floor((rec.points or 0) + 0.5)
+                    -- Two decimals everywhere (2026-10-04, Loopi); the stored
+                    -- values keep four.
+                    local curPts = tonumber(rec.points) or 0
                     if cap then
-                        row.points:SetText(("%d/%d"):format(curPts, cap))
+                        row.points:SetText(("%.2f/%d"):format(curPts, cap))
                     else
-                        row.points:SetText(tostring(curPts))
+                        row.points:SetText(("%.2f"):format(curPts))
                     end
-                    row.lifetime:SetText(tostring(math.floor((rec.lifetimePoints or 0) + 0.5)))
+                    row.lifetime:SetText(("%.2f"):format(tonumber(rec.lifetimePoints) or 0))
                     row.lastDonation:SetText((rec.lastDonationDate and rec.lastDonationDate ~= "") and rec.lastDonationDate or "-")
-                    row.credits:SetText(tostring(rec.credits or 0))
+                    row.credits:SetText(("%.2f"):format(tonumber(rec.credits) or 0))
                 else
                     row.isExpandable = false
                     row.currentAccount = nil

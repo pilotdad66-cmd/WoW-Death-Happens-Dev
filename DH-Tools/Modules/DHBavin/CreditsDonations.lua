@@ -35,19 +35,33 @@ local function NewId()
     return ("%x-%x-%x"):format(Now(), idCounter, math.random(0, 65535))
 end
 
--- 1234.5 -> "1,234.5"; whole numbers lose the decimals; never more than 2.
+-- 1234.5 -> "1,234.50": rep and credits are DISPLAYED with exactly two
+-- decimals everywhere (2026-10-04, Loopi) while stored values keep four
+-- (Round4 below).
 local function Fmt(n)
     n = tonumber(n) or 0
     local s = ("%.2f"):format(n)
-    local int, frac = s:match("^(%d+)%.(%d+)$")
+    local sign, int, frac = s:match("^(%-?)(%d+)%.(%d+)$")
     if not int then return s end
-    frac = frac:gsub("0+$", "")
     local out = int:reverse():gsub("(%d%d%d)", "%1,"):reverse()
     out = out:gsub("^,", "")
-    if frac ~= "" then out = out .. "." .. frac end
-    return out
+    return sign .. out .. "." .. frac
 end
 ns.CreditsDon_Fmt = Fmt
+
+-- Whole number with thousands separators (tier caps).
+local function Fmt0(n)
+    local s = tostring(math.floor((tonumber(n) or 0) + 0.5))
+    local out = s:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+    return (out:gsub("^,", ""))
+end
+
+-- Stored values are rounded to four decimal places (kills float noise such
+-- as 0.2 x 6 = 1.2000000000000002 and keeps every officer's copy identical).
+local function Round4(n)
+    return math.floor((tonumber(n) or 0) * 10000 + 0.5) / 10000
+end
+ns.CreditsDon_Round4 = Round4
 
 local function DateString(ts)
     if date then return date("%Y-%m-%d", ts) end
@@ -57,7 +71,7 @@ end
 local function ProgressText(tier, prestige, points)
     local cap = ns.CreditsTierCaps and ns.CreditsTierCaps[tier] or 0
     local label = tier .. ((prestige or 0) > 0 and (" P" .. prestige) or "")
-    return ("%s %s/%s"):format(label, Fmt(points), Fmt(cap))
+    return ("%s %s/%s"):format(label, Fmt(points), Fmt0(cap))
 end
 
 -- Chat output for the donation flow (kept in one place so tests can read it).
@@ -107,7 +121,7 @@ function ns.CreditsDon_Value(donation)
     for _, line in ipairs(order) do
         local info = ns.GetItemPoints and ns.GetItemPoints(line.name)
         if info and info.points ~= nil then
-            line.rep = (tonumber(info.points) or 0) * line.count
+            line.rep = Round4((tonumber(info.points) or 0) * line.count)
             local base = ns.ITEM_POINTS and ns.ITEM_POINTS[line.name]
             line.category = (base and base.category) or "Uncategorized"
         else
@@ -121,8 +135,8 @@ function ns.CreditsDon_Value(donation)
     if entry.gold > 0 then
         rep = rep + entry.gold * rpg.x / rpg.y
     end
-    entry.rep = rep
-    entry.credits = rep * cpr.x / cpr.y
+    entry.rep = Round4(rep)
+    entry.credits = Round4(entry.rep * cpr.x / cpr.y)
     return entry
 end
 
@@ -231,8 +245,9 @@ end
 -- account and before/after tier). Does not sync or print.
 local function ApplyToAccount(rec, entry)
     local tierBefore, prestigeBefore = rec.tier, rec.prestige or 0
-    rec.lifetimePoints = (tonumber(rec.lifetimePoints) or 0) + entry.rep
+    rec.lifetimePoints = Round4((tonumber(rec.lifetimePoints) or 0) + entry.rep)
     rec.tier, rec.prestige, rec.points = ns.Credits_TierStateForLifetime(rec.lifetimePoints)
+    rec.points = Round4(rec.points)
     ns.Credits_AdjustCredits(rec, entry.credits)
     local day = DateString(entry.ts)
     if day ~= "" and day > (rec.lastDonationDate or "") then rec.lastDonationDate = day end
@@ -438,10 +453,11 @@ function ns.Credits_MergeAccounts(sourceKey, targetKey)
     local credits = tonumber(source.credits) or 0
     local lifeCredits = tonumber(source.lifetimeCredits) or credits
     local tierBefore, prestigeBefore = target.tier, target.prestige or 0
-    target.lifetimePoints = (tonumber(target.lifetimePoints) or 0) + rep
+    target.lifetimePoints = Round4((tonumber(target.lifetimePoints) or 0) + rep)
     target.tier, target.prestige, target.points = ns.Credits_TierStateForLifetime(target.lifetimePoints)
-    target.credits = (tonumber(target.credits) or 0) + credits
-    target.lifetimeCredits = (tonumber(target.lifetimeCredits) or 0) + lifeCredits
+    target.points = Round4(target.points)
+    target.credits = Round4((tonumber(target.credits) or 0) + credits)
+    target.lifetimeCredits = Round4((tonumber(target.lifetimeCredits) or 0) + lifeCredits)
     if target.lifetimeCredits < target.credits then target.lifetimeCredits = target.credits end
     if (source.lastDonationDate or "") > (target.lastDonationDate or "") then
         target.lastDonationDate = source.lastDonationDate

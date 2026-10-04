@@ -246,7 +246,9 @@ function ns.Credits_AdjustCredits(rec, delta)
     if delta > 0 then
         life = life + delta
     end
-    bal = math.max(0, bal + delta)
+    -- Stored to four decimals (display is two) - see CreditsDonations Round4.
+    bal = math.floor(math.max(0, bal + delta) * 10000 + 0.5) / 10000
+    life = math.floor(life * 10000 + 0.5) / 10000
     rec.credits = bal
     rec.lifetimeCredits = math.max(life, bal)
     return bal

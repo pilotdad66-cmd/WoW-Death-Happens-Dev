@@ -317,6 +317,17 @@ local function Num(n)
     return BreakUpLargeNumbers and BreakUpLargeNumbers(n) or tostring(n)
 end
 
+-- Two decimals with thousands separators (2026-10-04, Loopi): points and
+-- credits show 2 dp everywhere; the stored values keep 4.
+local function Num2(n)
+    n = tonumber(n) or 0
+    local s = ("%.2f"):format(n)
+    local int, frac = s:match("^(%-?%d+)%.(%d+)$")
+    if not int then return s end
+    if BreakUpLargeNumbers then int = BreakUpLargeNumbers(tonumber(int)) end
+    return int .. "." .. frac
+end
+
 local function Fs(parent, template)
     local fs = parent:CreateFontString(nil, "OVERLAY", template or "GameFontHighlight")
     fs:SetJustifyH("LEFT")
@@ -444,18 +455,18 @@ function ns.Account_Refresh()
         -- prestige); rec.lifetimePoints never resets. Label them so the two
         -- different numbers don't read as a discrepancy.
         local cap = ns.CreditsTierCaps and ns.CreditsTierCaps[rec.tier]
-        local curPts = math.floor((tonumber(rec.points) or 0) + 0.5)
+        local curPts = tonumber(rec.points) or 0
         -- "Tier Points: xxx/yyy" already shows how far to the next tier (yyy is
         -- the tier's cap; at Exalted it is the prestige lap size), so there is
         -- no separate "to next tier" number.
-        local tierPts = Num(curPts) .. (cap and ("/" .. Num(cap)) or "")
+        local tierPts = Num2(curPts) .. (cap and ("/" .. Num(cap)) or "")
         frame.repDetail:SetText("Tier Points: |cffffd100" .. tierPts .. "|r"
-            .. "   Total Points: |cffffd100" .. Num(rec.lifetimePoints) .. "|r")
+            .. "   Total Points: |cffffd100" .. Num2(rec.lifetimePoints) .. "|r")
         -- lifetimeCredits only ever goes up (credits can be spent, this can't);
         -- records saved before the field existed fall back to the balance.
         local lifeCredits = tonumber(rec.lifetimeCredits) or tonumber(rec.credits) or 0
-        frame.creditsText:SetText("Credits Balance: |cffffd100" .. Num(rec.credits) .. "|r"
-            .. "   Lifetime Credits: |cffffd100" .. Num(lifeCredits) .. "|r")
+        frame.creditsText:SetText("Credits Balance: |cffffd100" .. Num2(rec.credits) .. "|r"
+            .. "   Lifetime Credits: |cffffd100" .. Num2(lifeCredits) .. "|r")
         frame.noteText:SetText("")
     else
         frame.repText:SetText("Reputation: |cff888888not synced yet|r")

@@ -2008,7 +2008,13 @@ do
         and log.items[1].rep == 150 and log.items[1].category == "Weapon")
     check("Credit: the log entry records the rates used", log.creditsPerRep.x == 1 and log.creditsPerRep.y == 100)
     check("Credit: one chat line per mail with rep, credits and progress",
-        cm4.said("AltA1 (MainA): +150 rep, +1.5 credits (Friendly 50/6,000)"))
+        cm4.said("AltA1 (MainA): +150.00 rep, +1.50 credits (Friendly 50.00/6,000)"))
+    check("Storage: valuation rounds to four decimals (0.2 x 6 = 1.2, no float noise)",
+        (function()
+            local v = ns.CreditsDon_Value({ sender = "X", items = {} })
+            return ns.CreditsDon_Round4(0.2 * 6) == 1.2 and ns.CreditsDon_Round4(1/3) == 0.3333
+                and ns.CreditsDon_Fmt(1234.5) == "1,234.50" and ns.CreditsDon_Fmt(0.09) == "0.09" and v.rep == 0
+        end)())
     check("Credit: a tier-up line is printed", cm4.said("TIER UP") and cm4.said("Friendly"))
     check("Credit: lastDonationDate is stamped", rec.lastDonationDate ~= "" and rec.syncedAt ~= nil)
 
@@ -2118,7 +2124,7 @@ do
     check("Resolve: the sender enters the Review Queue as unresolved_donor",
         q and q.name == "Rando" and q.issue == "unresolved_donor")
     check("Resolve: the Review Queue row says what is held", q and q.details:find("100", 1, true) ~= nil)
-    check("Resolve: a 'Held' chat line is printed", cm4.said("Held 100 rep / 1 credits for Rando"))
+    check("Resolve: a 'Held' chat line is printed", cm4.said("Held 100.00 rep / 1.00 credits for Rando"))
     local hr, hc, hn = ns.CreditsDon_HeldTotals("Rando")
     check("HeldTotals reports rep/credits/count (case-insensitive)", hr == 100 and hc == 1 and hn == 1
         and select(1, ns.CreditsDon_HeldTotals("rANDO")) == 100)
@@ -2563,7 +2569,7 @@ do
         #le.items == 2 and le.gold == 2 and le.rep == 360)
     local lines = 0
     for i = printedBefore + 1, #printLog do
-        if tostring(printLog[i]):find("MainA: +360 rep", 1, true) then lines = lines + 1 end
+        if tostring(printLog[i]):find("MainA: +360.00 rep", 1, true) then lines = lines + 1 end
     end
     check("Auto-loot: ONE credited chat line for the mail", lines == 1)
 
