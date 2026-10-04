@@ -50,9 +50,17 @@ local function CreateToolsPanel(parent)
     -- added (7 real modules already), so it's both the most likely
     -- source of Chris's "rows appear outside the bottom of the window"
     -- report and the one most likely to overflow again later.
+    -- 2026-10-04 (Loopi): every page in this window anchors its scroll frame
+    -- at BOTTOMRIGHT -18 (was -8) with content width = frame width - 14 (was
+    -- - 24). The Blizzard Template2 scrollbar sits OUTSIDE its scroll frame
+    -- (~+22px), so at -8 it hung ~2px past the window's right edge; -18
+    -- lines it up with the other windows' bars (CreditsConfig/PointsEditor:
+    -- -30 from a frame edge = -18 from this panel's 12px margin). Content's
+    -- right edge is unchanged (-18 - 14 = the old -8 - 24), so no page
+    -- layout moves. Comments elsewhere that say "-24" refer to the old value.
     local scrollFrame = CreateFrame("ScrollFrame", "DHToolsToolsScroll", panel, "UIPanelScrollFrameTemplate2")
     scrollFrame:SetPoint("TOPLEFT", 0, -8)
-    scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -18, 8)
 
     local content = CreateFrame("Frame", nil, scrollFrame)
     content:SetSize(1, 640) -- width set in Refresh; generous fixed estimate
@@ -237,7 +245,7 @@ local function CreateToolsPanel(parent)
     panel.Refresh = function()
         -- -24 (not -4) to leave room for the scrollbar, same reasoning as
         -- every other scrollable page here.
-        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 24))
+        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 14))
 
         for key, check in pairs(checks) do
             check:SetChecked(DHTools.IsModuleEnabled(key))
@@ -335,7 +343,7 @@ local function CreateMobMarkerPanel(parent)
 
     local scrollFrame = CreateFrame("ScrollFrame", "DHToolsMobMarkerScroll", panel, "UIPanelScrollFrameTemplate2")
     scrollFrame:SetPoint("TOPLEFT", 0, -8)
-    scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -18, 8)
 
     local content = CreateFrame("Frame", nil, scrollFrame)
     content:SetSize(1, 640) -- width set in Refresh; height is a generous fixed
@@ -575,7 +583,7 @@ local function CreateMobMarkerPanel(parent)
         -- Board.lua already uses for the same reason - otherwise the
         -- Settings section's right-anchored text (divider/desc/note) can
         -- run under the scrollbar.
-        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 24))
+        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 14))
 
         MM.InitDB()
         for i = 1, MM_ROW_COUNT do
@@ -709,7 +717,7 @@ local function CreateBavinPanel(parent)
     -- they reserved before the Editors section.
     local scrollFrame = CreateFrame("ScrollFrame", "DHToolsBavinScroll", panel, "UIPanelScrollFrameTemplate2")
     scrollFrame:SetPoint("TOPLEFT", 0, -8)
-    scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -18, 8)
 
     local content = CreateFrame("Frame", nil, scrollFrame)
     content:SetSize(1, 120) -- width set in Refresh; only one user setting
@@ -750,7 +758,7 @@ local function CreateBavinPanel(parent)
     panel.Refresh = function()
         -- -24 (not -4) to leave room for the scrollbar - same reasoning
         -- as Mob Marker's page (see its Refresh comment above).
-        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 24))
+        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 14))
 
         Bavin.InitDB()
         mouseoverCheck:SetChecked(Bavin.db and Bavin.db.mouseoverChatTooltips)
@@ -792,7 +800,7 @@ local function CreateDangerPanel(parent)
     -- Mob Marker pages - pad rather than trim if the estimate is off.
     local scrollFrame = CreateFrame("ScrollFrame", "DHToolsDangerScroll", panel, "UIPanelScrollFrameTemplate2")
     scrollFrame:SetPoint("TOPLEFT", 0, -8)
-    scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -18, 8)
 
     local content = CreateFrame("Frame", nil, scrollFrame)
     -- 780 -> 860 (2026-09-10): the new Repeat Alert Delay slider/caveat
@@ -1184,7 +1192,7 @@ local function CreateDangerPanel(parent)
     panel.Refresh = function()
         -- -24 (not -4) to leave room for the scrollbar, same reasoning as
         -- the Bavin/Mob Marker pages.
-        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 24))
+        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 14))
 
         if Danger.InitDB then Danger.InitDB() end
 
@@ -1312,7 +1320,7 @@ local function CreateStorePanel(parent)
 
     local scrollFrame = CreateFrame("ScrollFrame", "DHToolsStoreScroll", panel, "UIPanelScrollFrameTemplate2")
     scrollFrame:SetPoint("TOPLEFT", 0, -8)
-    scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -18, 8)
 
     local content = CreateFrame("Frame", nil, scrollFrame)
     content:SetSize(1, 120) -- width set in Refresh; officer setup moved to
@@ -1334,7 +1342,7 @@ local function CreateStorePanel(parent)
     panel.Refresh = function()
         -- -24 (not -4) to leave room for the scrollbar, same reasoning as
         -- every other scrollable page here.
-        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 24))
+        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 14))
     end
 
     return panel
@@ -1362,7 +1370,7 @@ local function CreateOfficerSettingsPanel(parent)
 
     local scrollFrame = CreateFrame("ScrollFrame", "DHToolsOfficerScroll", panel, "UIPanelScrollFrameTemplate2")
     scrollFrame:SetPoint("TOPLEFT", 0, -8)
-    scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -18, 8)
 
     local content = CreateFrame("Frame", nil, scrollFrame)
     content:SetSize(1, 1500) -- width set in Refresh; generous fixed estimate,
@@ -2024,7 +2032,7 @@ local function CreateOfficerSettingsPanel(parent)
     panel.Refresh = function()
         -- -24 (not -4) to leave room for the scrollbar, same reasoning as
         -- every other scrollable page here.
-        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 24))
+        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 14))
 
         rankEdit:SetText(tostring(DHTools.GetOfficerMaxRank()))
         if DHTools.CanSetOfficerRankLocal() then
@@ -2174,7 +2182,7 @@ local function CreateAboutPanel(parent)
     -- overflow-past-the-bottom bug Chris reported.
     local scrollFrame = CreateFrame("ScrollFrame", "DHToolsAboutScroll", panel, "UIPanelScrollFrameTemplate2")
     scrollFrame:SetPoint("TOPLEFT", 0, -8)
-    scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -18, 8)
 
     local content = CreateFrame("Frame", nil, scrollFrame)
     content:SetSize(1, 480) -- width set in Refresh; generous fixed estimate
@@ -2230,7 +2238,7 @@ local function CreateAboutPanel(parent)
     panel.Refresh = function()
         -- -24 (not -4) to leave room for the scrollbar, same reasoning as
         -- every other scrollable page here.
-        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 24))
+        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 14))
 
         local gameVersion = GetBuildInfo()
         body:SetText("Addon Version: " .. DHTools.VERSION .. "\n"
