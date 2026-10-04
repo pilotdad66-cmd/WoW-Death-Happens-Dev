@@ -71,7 +71,7 @@ end
 local function ProgressText(tier, prestige, points)
     local cap = ns.CreditsTierCaps and ns.CreditsTierCaps[tier] or 0
     local label = tier .. ((prestige or 0) > 0 and (" P" .. prestige) or "")
-    return ("%s %s/%s"):format(label, Fmt(points), Fmt0(cap))
+    return ("%s %s/%s"):format(label, Fmt0(points), Fmt0(cap)) -- tier points are whole numbers
 end
 
 -- Chat output for the donation flow (kept in one place so tests can read it).

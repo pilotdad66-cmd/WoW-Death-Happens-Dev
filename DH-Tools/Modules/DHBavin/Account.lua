@@ -459,7 +459,7 @@ function ns.Account_Refresh()
         -- "Tier Points: xxx/yyy" already shows how far to the next tier (yyy is
         -- the tier's cap; at Exalted it is the prestige lap size), so there is
         -- no separate "to next tier" number.
-        local tierPts = Num2(curPts) .. (cap and ("/" .. Num(cap)) or "")
+        local tierPts = Num(curPts) .. (cap and ("/" .. Num(cap)) or "")
         frame.repDetail:SetText("Tier Points: |cffffd100" .. tierPts .. "|r"
             .. "   Total Points: |cffffd100" .. Num2(rec.lifetimePoints) .. "|r")
         -- lifetimeCredits only ever goes up (credits can be spent, this can't);

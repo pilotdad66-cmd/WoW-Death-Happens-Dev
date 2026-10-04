@@ -2008,7 +2008,7 @@ do
         and log.items[1].rep == 150 and log.items[1].category == "Weapon")
     check("Credit: the log entry records the rates used", log.creditsPerRep.x == 1 and log.creditsPerRep.y == 100)
     check("Credit: one chat line per mail with rep, credits and progress",
-        cm4.said("AltA1 (MainA): +150.00 rep, +1.50 credits (Friendly 50.00/6,000)"))
+        cm4.said("AltA1 (MainA): +150.00 rep, +1.50 credits (Friendly 50/6,000)"))
     check("Storage: valuation rounds to four decimals (0.2 x 6 = 1.2, no float noise)",
         (function()
             local v = ns.CreditsDon_Value({ sender = "X", items = {} })
