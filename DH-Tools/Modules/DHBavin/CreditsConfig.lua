@@ -686,13 +686,10 @@ local function BuildRosterTab(content)
     -- main and on entries that are already Discord-only. Removing or
     -- replacing a Discord-only name no longer deletes it (2026-10-04,
     -- Loopi): it goes to the Review Queue, so there is no confirm click.
-    -- The "sent to the Review Queue" notice is shown center-screen as well
-    -- as in chat, because a chat line alone was easy to miss.
+    -- The "sent to the Review Queue" notice is a chat line only (the
+    -- center-screen copy was removed 2026-10-04, Loopi).
     local function NotifyQueued(msg)
         ns.CreditsPrint(msg)
-        if UIErrorsFrame and UIErrorsFrame.AddMessage then
-            UIErrorsFrame:AddMessage(msg, 1.0, 0.82, 0.0)
-        end
     end
     local function DiscordSubmenu(name, account, kind, canManage)
         local rec = ns.creditsDb and ns.creditsDb.ledger and ns.creditsDb.ledger[account]
@@ -1635,10 +1632,10 @@ local TAB_DEFS = {
 local function CreateWindow()
     frame = CreateFrame("Frame", "DHBavinCreditsConfigFrame", UIParent, "BasicFrameTemplateWithInset")
     -- Widened 480 -> 580 (2026-09-25) to match the Roster tab's Name
-    -- column widening above - still well inside SetResizeBounds' 720
-    -- max below, and the window was already user-resizable before this,
-    -- so this only changes what it opens at by default.
-    frame:SetSize(580, 620)
+    -- column widening above, then 580 -> 800 (2026-10-04, Loopi: had to
+    -- resize on every open to read the character names). The resize max
+    -- below was raised to match (720 -> 1100) so 800 is still resizable.
+    frame:SetSize(800, 620)
     frame:SetPoint("CENTER")
     if frame.TitleText then
         frame.TitleText:SetText("Bavin Rep & Credit Config")
@@ -1659,10 +1656,10 @@ local function CreateWindow()
     -- PriorityEditor.lua and DH-Tools\Config.lua's own window.
     frame:SetResizable(true)
     if frame.SetResizeBounds then
-        pcall(frame.SetResizeBounds, frame, 420, 400, 720, 900)
+        pcall(frame.SetResizeBounds, frame, 420, 400, 1100, 900)
     else
         pcall(frame.SetMinResize, frame, 420, 400)
-        pcall(frame.SetMaxResize, frame, 720, 900)
+        pcall(frame.SetMaxResize, frame, 1100, 900)
     end
 
     local resizeGrip = CreateFrame("Button", nil, frame)
@@ -1820,6 +1817,12 @@ function ns.CreditsConfig_Open()
         CreateWindow()
     end
     frame:Show()
+    -- Explicit raise (2026-10-04, Loopi: "did not open on top"): CreateFrame
+    -- returns a SHOWN frame, so on the very first open Show() is a no-op and
+    -- InitStandaloneWindow's OnShow->Raise() never fires. Raise here every
+    -- time instead of relying on that hook (same root cause as the Account
+    -- window's first-click bug).
+    frame:Raise()
     ns.CreditsConfig_SelectTab(activeTabKey)
 end
 
