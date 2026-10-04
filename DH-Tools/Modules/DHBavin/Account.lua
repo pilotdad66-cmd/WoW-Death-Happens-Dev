@@ -231,15 +231,14 @@ local function BuildAccountData()
         data[#data + 1] = { kind = "note", text = "No characters found in the guild roster yet." }
     end
     for _, r in ipairs(guildRows) do data[#data + 1] = r end
-    if #otherRows > 0 then
+    -- Non-guild section (2026-10-04, Loopi): shown ONLY in the player's own
+    -- window. An officer's Show Account view (viewKey set) lists just the
+    -- in-guild characters, so non-guild characters are never displayed on
+    -- anyone else's screen through this window. The note is scoped to what
+    -- is true here and says nothing about the ledger/AltRoster data.
+    if #otherRows > 0 and not viewKey then
         data[#data + 1] = { kind = "header", text = "On this server, not in " .. TARGET_GUILD .. " (" .. #otherRows .. ")" }
-        -- Privacy note (2026-10-04, Loopi): self-view only. Scoped to what
-        -- is true - these characters are listed in YOUR OWN Account window.
-        -- Deliberately says nothing about the ledger/AltRoster or officer
-        -- "Show Account" views (Loopi: leave the alt roster out of it).
-        if not viewKey then
-            data[#data + 1] = { kind = "note", text = "These characters are only displayed in your own Account window." }
-        end
+        data[#data + 1] = { kind = "note", text = "These characters are only displayed in your own Account window." }
         for _, r in ipairs(otherRows) do data[#data + 1] = r end
     end
     return data, main, source, discord
