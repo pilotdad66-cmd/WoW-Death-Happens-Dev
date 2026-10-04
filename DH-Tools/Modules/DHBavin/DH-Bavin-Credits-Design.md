@@ -1052,6 +1052,17 @@ COD mail; a mail from the Auction House. Write the findings into this
 section, then delete the probe (and its .toc line) before any build
 that leaves this PC.
 
+**Step 0 findings - PARTIAL (probe run 2026-10-04 on LoopiBav, item mails only; gold, COD, Auction House and bags-full NOT yet run).** Source: Classic Era 1.15.9 (Interface 11509), `ATTACHMENTS_MAX_RECEIVE = 16`.
+- `GetInboxHeaderInfo(i)` returns 15 values: packageIcon, stationeryIcon, sender, subject, money, CODAmount, daysLeft, **hasItem = a COUNT of attachments still in the mail (not a boolean)**, wasRead, wasReturned, textCreated, canReply, isGM, then #14/#15 = count and link of the first remaining item, populated ONLY when one item is left. packageIcon tracks the first remaining item's icon.
+- `GetInboxItem(i, j)` returns name, **itemID**, texture, count, quality, canUse, <bool>. itemID is available directly (no link parsing needed). `GetInboxItemLink(i, j)` works.
+- **Attachment slot indexes are STABLE.** Taking slot 1 leaves slots 2..n at their original indexes (slot 1 just becomes empty). A pending action can therefore be (mail, slot j) rather than item identity alone.
+- `TakeInboxItem(mail, slot)` / `AutoLootMailItem(mail)` hooks run AFTER the original call, but the inbox has NOT changed yet at that moment - `GetInboxItem` still returns the item being taken. So the hook can read the exact item/count/money it is about to take; crediting waits for the confirming update.
+- Confirmation sequence per take: ~0.15-0.25s later `MAIL_INBOX_UPDATE` (slot now gone), then `MAIL_SUCCESS` (no args, same frame). `BAG_UPDATE` (bag 0 and -2) follows ~0.4s later - not needed. `MAIL_SHOW`, `MAIL_FAILED` etc. were not seen in this run (no failure scenario yet).
+- **Auto-delete confirmed for a mail with no body text** (`textCreated` false): taking its LAST attachment first yields a hollow update (count unchanged, that mail's header icon/hasItem = nil), then ~0.2s later the count drops by one and later mails' indexes SHIFT down. A mail with items left does not move. So identify mails by (sender, subject, daysLeft), never by index.
+- `daysLeft` did not drift over ~95s with the mailbox open; each mail had a distinct value (differences in the 4th decimal), so it is usable as a stable tiebreak.
+- `AutoLootMailItem(mail)` takes all remaining attachments in one call (one hook call, one or more updates).
+- Still to run before step 1 is final: take gold (`TakeInboxMoney`), COD mail (look, do not pay), Auction House mail, bags-full failure (`UI_ERROR_MESSAGE` text, whether anything changes), and a mail WITH body text (does taking the last item auto-delete it?).
+
 **1. Gating - unchanged Wall 4.** New file `CreditsInbox.lua` (.toc).
 Its hooks and frames are created ONLY from Credits.lua's
 `InstallInboxHook()`, i.e. only on a character on `creditTestReceivers`
