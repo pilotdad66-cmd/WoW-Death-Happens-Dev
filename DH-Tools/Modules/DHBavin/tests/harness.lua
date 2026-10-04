@@ -1076,6 +1076,30 @@ check("Author-account override grants config access even with an empty shared of
 inGuild = false
 check("Author override does not bypass the guild-membership gate", ns.CanManageCreditsConfigLocal() == false)
 
+-- 2026-10-04 (Loopi): master toggle + both Wall 2 test lists are
+-- AUTHOR-ONLY during CM4 testing (ns.CanManageCreditsTestConfigLocal).
+inGuild = true
+authorAccountFlag = false
+ns.db.editors = { "PlainMember" }
+currentPlayerName = "PlainMember"
+check("Shared-list officer can manage rates but NOT the test gate",
+    ns.CanManageCreditsConfigLocal() == true and ns.CanManageCreditsTestConfigLocal() == false)
+check("Officer cannot flip the master toggle", ns.SetCreditsMasterToggle(true) == false)
+check("Officer cannot add a test receiver", ns.AddCreditTestReceiver("Bavin") == false)
+check("Officer cannot add a test sender", ns.AddCreditTestSender("Bavin") == false)
+check("Officer cannot remove a test receiver", ns.RemoveCreditTestReceiver("Bavin") == false)
+check("Officer cannot remove a test sender", ns.RemoveCreditTestSender("Bavin") == false)
+authorAccountFlag = true
+check("Author account passes the test gate", ns.CanManageCreditsTestConfigLocal() == true)
+check("Author can flip the master toggle", ns.SetCreditsMasterToggle(true) == true)
+check("Author can add a test receiver", ns.AddCreditTestReceiver("LoopiBav") == true)
+ns.SetCreditsMasterToggle(false)
+ns.RemoveCreditTestReceiver("LoopiBav")
+inGuild = false
+check("Author override does not bypass the guild gate on the test gate", ns.CanManageCreditsTestConfigLocal() == false)
+authorAccountFlag = false
+ns.db.editors = {}
+
 --------------------------------------------------------------------------
 print("== Credits: CreditsSeed_Import ==")
 resetState()

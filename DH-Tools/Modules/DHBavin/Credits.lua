@@ -174,6 +174,21 @@ function ns.CanManageCreditsConfigLocal()
     return ns.IsOfficerName(UnitName("player"))
 end
 
+-- 2026-10-04 (Loopi): during CM4 testing the master toggle and both Wall 2
+-- test lists are the AUTHOR ACCOUNT ONLY - not any shared-list officer.
+-- Bavin's live script/Excel process must not be reachable by an officer
+-- adding him to a list mid-test. Rates and everything else stay on
+-- CanManageCreditsConfigLocal. LOCAL-only, like that function. Known gap:
+-- a non-author officer changing a RATE still broadcasts the whole CFGSET
+-- including their own copy of the toggle/lists (last-writer-wins on
+-- configUpdatedAt); receivers can't identify the author remotely, so this
+-- gates only who can EDIT them from the UI/slash command. Relax this (back
+-- to CanManageCreditsConfigLocal) at the CM9 cutover.
+function ns.CanManageCreditsTestConfigLocal()
+    if not ns.IsInTargetGuild() then return false end
+    return (DHTools.IsAuthorAccount and DHTools.IsAuthorAccount()) and true or false
+end
+
 -- RECEIVE-SIDE check for an incoming CFGSET/CREDITSYNCDATA: the sender
 -- must be either the guild leader or a currently-known shared-list
 -- officer. Never trusts a self-asserted claim in the message itself -
@@ -660,7 +675,7 @@ end
 -- DH-Bavin's shared one now (Core.lua's ns.SetEditors), not this file's.
 
 function ns.SetCreditsMasterToggle(enabled)
-    if not ns.CanManageCreditsConfigLocal() then return false end
+    if not ns.CanManageCreditsTestConfigLocal() then return false end
     ns.creditsDb.masterToggle = enabled and true or false
     ns.creditsDb.configUpdatedAt = time()
     ns.Credits_BroadcastConfig()
@@ -668,7 +683,7 @@ function ns.SetCreditsMasterToggle(enabled)
 end
 
 function ns.AddCreditTestReceiver(name)
-    if not ns.CanManageCreditsConfigLocal() then return false end
+    if not ns.CanManageCreditsTestConfigLocal() then return false end
     if not AddToList(ns.creditsDb.creditTestReceivers, name) then return false end
     ns.creditsDb.configUpdatedAt = time()
     ns.Credits_BroadcastConfig()
@@ -676,7 +691,7 @@ function ns.AddCreditTestReceiver(name)
 end
 
 function ns.RemoveCreditTestReceiver(name)
-    if not ns.CanManageCreditsConfigLocal() then return false end
+    if not ns.CanManageCreditsTestConfigLocal() then return false end
     if not RemoveFromList(ns.creditsDb.creditTestReceivers, name) then return false end
     ns.creditsDb.configUpdatedAt = time()
     ns.Credits_BroadcastConfig()
@@ -684,7 +699,7 @@ function ns.RemoveCreditTestReceiver(name)
 end
 
 function ns.AddCreditTestSender(name)
-    if not ns.CanManageCreditsConfigLocal() then return false end
+    if not ns.CanManageCreditsTestConfigLocal() then return false end
     if not AddToList(ns.creditsDb.creditTestSenders, name) then return false end
     ns.creditsDb.configUpdatedAt = time()
     ns.Credits_BroadcastConfig()
@@ -692,7 +707,7 @@ function ns.AddCreditTestSender(name)
 end
 
 function ns.RemoveCreditTestSender(name)
-    if not ns.CanManageCreditsConfigLocal() then return false end
+    if not ns.CanManageCreditsTestConfigLocal() then return false end
     if not RemoveFromList(ns.creditsDb.creditTestSenders, name) then return false end
     ns.creditsDb.configUpdatedAt = time()
     ns.Credits_BroadcastConfig()

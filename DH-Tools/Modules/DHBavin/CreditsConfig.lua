@@ -310,7 +310,7 @@ local function BuildSettingsTab(content)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
-    hint:SetText("Master toggle and both Wall 2 test lists are any shared-list officer. Officer roles and the currency ratios now live on the Officer Settings page (DH-Tools Config), not here.")
+    hint:SetText("Master toggle and both Wall 2 test lists are editable by the author account only during testing. Officer roles and the currency ratios now live on the Officer Settings page (DH-Tools Config), not here.")
 
     local statusText = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     statusText:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", 0, -10)
@@ -335,9 +335,9 @@ local function BuildSettingsTab(content)
         getList = function() return (ns.creditsDb and ns.creditsDb.creditTestReceivers) or {} end,
         addFn = ns.AddCreditTestReceiver,
         removeFn = ns.RemoveCreditTestReceiver,
-        canManageFn = ns.CanManageCreditsConfigLocal,
+        canManageFn = ns.CanManageCreditsTestConfigLocal,
         rowCount = 8,
-        lockedText = "|cffff3333Distribution Officer only.|r",
+        lockedText = "|cffff3333Author account only during testing.|r",
     })
 
     local senders = CreateNameListSection(content, receivers.GetBottomAnchor, {
@@ -346,9 +346,9 @@ local function BuildSettingsTab(content)
         getList = function() return (ns.creditsDb and ns.creditsDb.creditTestSenders) or {} end,
         addFn = ns.AddCreditTestSender,
         removeFn = ns.RemoveCreditTestSender,
-        canManageFn = ns.CanManageCreditsConfigLocal,
+        canManageFn = ns.CanManageCreditsTestConfigLocal,
         rowCount = 8,
-        lockedText = "|cffff3333Distribution Officer only.|r",
+        lockedText = "|cffff3333Author account only during testing.|r",
     })
 
     -- Two-click confirm (mirrors the slash command's "reset confirm"
@@ -404,7 +404,7 @@ local function BuildSettingsTab(content)
 
         toggleCheck:SetChecked(ns.creditsDb.masterToggle)
 
-        local canConfig = ns.CanManageCreditsConfigLocal()
+        local canConfig = ns.CanManageCreditsTestConfigLocal()
         if canConfig then
             toggleCheck:Enable()
         else
