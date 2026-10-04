@@ -167,6 +167,13 @@ function ns.InitCreditsDB()
     if type(ns.creditsDb.configUpdatedAt) ~= "number" then
         ns.creditsDb.configUpdatedAt = 0
     end
+    -- 2026-10-04 (Loopi): the two ratios have their OWN version stamp and
+    -- message (RATESET) now, gated tighter than the rest of the config.
+    -- First run after this change seeds it from configUpdatedAt so an
+    -- existing install's rates keep their age.
+    if type(ns.creditsDb.ratesUpdatedAt) ~= "number" then
+        ns.creditsDb.ratesUpdatedAt = ns.creditsDb.configUpdatedAt or 0
+    end
 end
 
 --------------------------------------------------------------------------
@@ -193,13 +200,14 @@ end
 -- 2026-10-04 (Loopi): during CM4 testing the master toggle and both Wall 2
 -- test lists are the AUTHOR ACCOUNT ONLY - not any shared-list officer.
 -- Bavin's live script/Excel process must not be reachable by an officer
--- adding him to a list mid-test. Rates and everything else stay on
--- CanManageCreditsConfigLocal. LOCAL-only, like that function. Known gap:
--- a non-author officer changing a RATE still broadcasts the whole CFGSET
--- including their own copy of the toggle/lists (last-writer-wins on
--- configUpdatedAt); receivers can't identify the author remotely, so this
--- gates only who can EDIT them from the UI/slash command. Relax this (back
--- to CanManageCreditsConfigLocal) at the CM9 cutover.
+-- adding him to a list mid-test. Everything else stays on
+-- CanManageCreditsConfigLocal; the RATES have their own gate
+-- (CanManageCreditsRatesLocal) and their own message, so a rate change no
+-- longer carries a copy of the toggle/lists (that gap is closed
+-- 2026-10-04). LOCAL-only, like that function. Remaining gap: receivers
+-- can't identify the author remotely, so CFGSET itself is accepted from
+-- any officer; only the UI/slash edit path is author-only. Relax this
+-- (back to CanManageCreditsConfigLocal) at the CM9 cutover.
 function ns.CanManageCreditsTestConfigLocal()
     if not ns.IsInTargetGuild() then return false end
     return (DHTools.IsAuthorAccount and DHTools.IsAuthorAccount()) and true or false
@@ -215,6 +223,42 @@ local function IsAuthorizedConfigSender(senderShort)
 end
 -- CM3 (CreditsSync.lua) verifies ledger-sync senders with the same check.
 ns.Credits_IsAuthorizedSender = IsAuthorizedConfigSender
+
+-- 2026-10-04 (Loopi): the Credit/Rep and Rep/Gold RATES are editable by
+-- ONLY: the author (every one of the author's characters), the guild
+-- leader, and the donation recipient - not any shared-list officer.
+-- IsRatesSetterName is the name-based check usable on a REMOTE sender
+-- (RATESET receive side) and on the local player's own name. A receiving
+-- client can't see the sender's account-wide author flag, so "author, all
+-- characters" is approximated by name: Loopi/Loopidot directly, or any
+-- character this client's ledger/GRM resolves to the main "Loopi".
+local RATES_AUTHOR_NAMES = { loopi = true, loopidot = true }
+local RATES_AUTHOR_MAIN = "loopi"
+
+local function IsRatesSetterName(name)
+    if not name or name == "" then return false end
+    if ns.IsGuildLeader(name) then return true end -- includes Loopidot
+    if ns.db and ns.db.recipient and ns.NormalizeName(ns.db.recipient) == ns.NormalizeName(name) then
+        return true
+    end
+    local bare = ns.NormalizeName(name):lower()
+    if RATES_AUTHOR_NAMES[bare] then return true end
+    if ns.Credits_ResolveMain then
+        local main = ns.Credits_ResolveMain(name)
+        if main and ns.NormalizeName(main):lower() == RATES_AUTHOR_MAIN then return true end
+    end
+    return false
+end
+ns.Credits_IsRatesSetterName = IsRatesSetterName
+
+-- LOCAL-only gate for editing the rates (UI + slash): author account (all
+-- of the author's alts, via DHTools.IsAuthorAccount), guild leader, or
+-- the recipient.
+function ns.CanManageCreditsRatesLocal()
+    if not ns.IsInTargetGuild() then return false end
+    if DHTools.IsAuthorAccount and DHTools.IsAuthorAccount() then return true end
+    return IsRatesSetterName(UnitName("player"))
+end
 
 --------------------------------------------------------------------------
 -- Alt resolution (CM2, ongoing - see DH-Bavin-Credits-Design.md's "Data
@@ -744,23 +788,27 @@ end
 -- Points" / "x Rep = y Gold") instead of one decimal. Both positive
 -- integers/numbers, no requirement that they reconcile with each other
 -- or with DH-Store's own creditGoldRatio - Chris's explicit call.
+-- 2026-10-04 (Loopi): both ratio setters are gated by
+-- CanManageCreditsRatesLocal (author / guild leader / recipient) and
+-- broadcast ONLY the rates (RATESET, own ratesUpdatedAt) - never the
+-- master toggle or test lists, which stay author-only in CFGSET.
 function ns.SetCreditsPerRep(x, y)
-    if not ns.CanManageCreditsConfigLocal() then return false end
+    if not ns.CanManageCreditsRatesLocal() then return false end
     local nx, ny = tonumber(x), tonumber(y)
     if not nx or nx <= 0 or not ny or ny <= 0 then return false end
     ns.creditsDb.creditsPerRep = { x = nx, y = ny }
-    ns.creditsDb.configUpdatedAt = time()
-    ns.Credits_BroadcastConfig()
+    ns.creditsDb.ratesUpdatedAt = math.max(time(), (ns.creditsDb.ratesUpdatedAt or 0) + 1)
+    ns.Credits_BroadcastRates()
     return true
 end
 
 function ns.SetRepPerGold(x, y)
-    if not ns.CanManageCreditsConfigLocal() then return false end
+    if not ns.CanManageCreditsRatesLocal() then return false end
     local nx, ny = tonumber(x), tonumber(y)
     if not nx or nx <= 0 or not ny or ny <= 0 then return false end
     ns.creditsDb.repPerGold = { x = nx, y = ny }
-    ns.creditsDb.configUpdatedAt = time()
-    ns.Credits_BroadcastConfig()
+    ns.creditsDb.ratesUpdatedAt = math.max(time(), (ns.creditsDb.ratesUpdatedAt or 0) + 1)
+    ns.Credits_BroadcastRates()
     return true
 end
 
@@ -787,6 +835,13 @@ end
 --                                as Sync.lua's SYNCREQ)
 --   CREDITSYNCDATA|<same payload as CFGSET>
 --                             - WHISPERed reply to CREDITSYNCREQ
+--   RATESET|crX|crY|rgX|rgY|ratesUpdatedAt   (2026-10-04, additive)
+--                             - the two ratios only, own timestamp. The
+--                               crX..rgY fields inside CFGSET are now
+--                               ignored by receivers. Accepted only from
+--                               the author / guild leader / recipient.
+--                               Also WHISPERed in reply to CREDITSYNCREQ
+--                               by clients whose player may set rates.
 --
 -- STANDING RULE (mirrors Sync.lua's k-0009 comment): bump this suffix
 -- any time this wire format changes non-additively - a receiver on the
@@ -854,8 +909,9 @@ local function ApplyIncomingConfig(payload, senderShort)
     ns.creditsDb.masterToggle = (toggleFlag == "1")
     ns.creditsDb.creditTestReceivers = SplitCSV(receiversCSV)
     ns.creditsDb.creditTestSenders = SplitCSV(sendersCSV)
-    ns.creditsDb.creditsPerRep = { x = tonumber(crXStr) or DEFAULT_CREDITS_PER_REP.x, y = tonumber(crYStr) or DEFAULT_CREDITS_PER_REP.y }
-    ns.creditsDb.repPerGold = { x = tonumber(rgXStr) or DEFAULT_REP_PER_GOLD.x, y = tonumber(rgYStr) or DEFAULT_REP_PER_GOLD.y }
+    -- 2026-10-04 (Loopi): the rate fields (crX..rgY) are still on the wire
+    -- for shape compatibility but are IGNORED here - rates travel only in
+    -- RATESET, which has its own, tighter sender check.
     ns.creditsDb.configUpdatedAt = updatedAt
     ns.Credits_EvaluateArming() -- config just changed - re-check Wall 4
     -- Live-refresh CreditsConfig.lua's window if an officer has it open
@@ -868,6 +924,44 @@ function ns.Credits_BroadcastConfig()
     local channel = SyncChannel()
     if not channel then return end
     AddonSendMessage("CFGSET|" .. EncodeConfig(), channel)
+end
+
+-- RATESET|crX|crY|rgX|rgY|ratesUpdatedAt (2026-10-04, Loopi). Additive
+-- message type on the same prefix. Accepted ONLY from the author (all
+-- characters), the guild leader or the donation recipient - checked on
+-- the sender name, never on a claim inside the message. A relay by an
+-- officer who is not one of those is deliberately rejected, so only the
+-- authorised setters' own clients ever seed rates (see the
+-- CREDITSYNCREQ reply below).
+local function EncodeRates()
+    return table.concat({
+        tostring(ns.creditsDb.creditsPerRep.x),
+        tostring(ns.creditsDb.creditsPerRep.y),
+        tostring(ns.creditsDb.repPerGold.x),
+        tostring(ns.creditsDb.repPerGold.y),
+        tostring(ns.creditsDb.ratesUpdatedAt or 0),
+    }, "|")
+end
+
+local function ApplyIncomingRates(payload, senderShort)
+    if not IsRatesSetterName(senderShort) then return end
+    local crXStr, crYStr, rgXStr, rgYStr, updatedAtStr =
+        payload:match("^([%d%.]+)|([%d%.]+)|([%d%.]+)|([%d%.]+)|(%d+)$")
+    if not crXStr then return end
+    local updatedAt = tonumber(updatedAtStr) or 0
+    if updatedAt <= (ns.creditsDb.ratesUpdatedAt or 0) then return end
+    local crX, crY, rgX, rgY = tonumber(crXStr), tonumber(crYStr), tonumber(rgXStr), tonumber(rgYStr)
+    if not crX or crX <= 0 or not crY or crY <= 0 or not rgX or rgX <= 0 or not rgY or rgY <= 0 then return end
+    ns.creditsDb.creditsPerRep = { x = crX, y = crY }
+    ns.creditsDb.repPerGold = { x = rgX, y = rgY }
+    ns.creditsDb.ratesUpdatedAt = updatedAt
+    if ns.CreditsConfig_Refresh then ns.CreditsConfig_Refresh() end
+end
+
+function ns.Credits_BroadcastRates()
+    local channel = SyncChannel()
+    if not channel then return end
+    AddonSendMessage("RATESET|" .. EncodeRates(), channel)
 end
 
 -- Called from this file's own PLAYER_LOGIN handler below - unconditional,
@@ -900,8 +994,15 @@ function ns.Credits_OnAddonMessage(prefix, message, channel, sender)
         if (ns.creditsDb.configUpdatedAt or 0) > 0 then
             AddonSendMessage("CREDITSYNCDATA|" .. EncodeConfig(), "WHISPER", sender)
         end
+        -- Rates: only a client whose own player may set them replies (the
+        -- receiver rejects RATESET from anyone else anyway).
+        if (ns.creditsDb.ratesUpdatedAt or 0) > 0 and IsRatesSetterName(myName) then
+            AddonSendMessage("RATESET|" .. EncodeRates(), "WHISPER", sender)
+        end
     elseif msgType == "CREDITSYNCDATA" then
         ApplyIncomingConfig(rest, senderShort)
+    elseif msgType == "RATESET" then
+        ApplyIncomingRates(rest, senderShort)
     elseif msgType == "LSYNCREQ" or msgType == "LSYNCDATA" then
         -- CM3 officer ledger sync (CreditsSync.lua). Additive message types
         -- on this same prefix; guarded because the file loads after this one.
@@ -1080,7 +1181,7 @@ function ns.Credits_HandleSlash(rest)
         elseif ns.SetCreditsPerRep(x, y) then
             ns.CreditsPrint("Credit/Rep ratio set to " .. x .. " Credits = " .. y .. " Rep Points.")
         else
-            ns.CreditsPrint("Refused - both must be positive numbers, or you're not a shared-list officer.")
+            ns.CreditsPrint("Refused - both must be positive numbers, or you're not the author, guild leader or donation recipient.")
         end
     elseif sub == "reppergold" then
         local x, y = arg1, arg2
@@ -1090,7 +1191,7 @@ function ns.Credits_HandleSlash(rest)
         elseif ns.SetRepPerGold(x, y) then
             ns.CreditsPrint("Rep/Gold ratio set to " .. x .. " Rep = " .. y .. " Gold (not used by anything yet).")
         else
-            ns.CreditsPrint("Refused - both must be positive numbers, or you're not a shared-list officer.")
+            ns.CreditsPrint("Refused - both must be positive numbers, or you're not the author, guild leader or donation recipient.")
         end
     elseif sub == "reset" then
         if arg1 ~= "confirm" then

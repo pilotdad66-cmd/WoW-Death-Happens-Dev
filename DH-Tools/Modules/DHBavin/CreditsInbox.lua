@@ -286,6 +286,42 @@ function ns.CreditsInbox_OnMailFailed(itemID)
     end
 end
 
+-- The mailbox closed (or the player logged out). A take made in the last
+-- EXPIRE seconds that is still unconfirmed may have gone through without
+-- us seeing the MAIL_INBOX_UPDATE, so say so in chat (2026-10-04, Loopi) -
+-- Bavin can then credit it by hand. We deliberately do NOT re-read the
+-- inbox here to "confirm" them: after the close it may no longer reflect
+-- the mailbox, and a false confirm would credit an item never taken. Older
+-- unconfirmed takes are treated as failed takes (bags full etc.) and
+-- dropped quietly. Then everything gathered so far is credited as usual.
+function ns.CreditsInbox_OnMailClosed()
+    local now = Clock()
+    local bySender, order = {}, {}
+    for _, a in ipairs(pending) do
+        if (a.expires or 0) >= now then
+            local s = a.sender or "?"
+            if not bySender[s] then
+                bySender[s] = {}
+                order[#order + 1] = s
+            end
+            local parts = bySender[s]
+            if a.kind == "money" then
+                parts[#parts + 1] = ns.CreditsDon_Fmt((a.copper or 0) / 10000) .. " gold"
+            else
+                local label = a.name or ("item " .. tostring(a.itemID or "?"))
+                if (a.count or 1) > 1 then label = label .. " x" .. a.count end
+                parts[#parts + 1] = label
+            end
+        end
+    end
+    pending = {}
+    for _, s in ipairs(order) do
+        ns.CreditsPrint(("The mailbox closed before the take from %s was confirmed (%s) - it may not have been credited; check it and credit by hand if it went through.")
+            :format(s, table.concat(bySender[s], ", ")))
+    end
+    FlushAll()
+end
+
 function ns.CreditsInbox_OnMailShow()
     FlushAll()
     sticky = true -- every mailbox visit starts CHECKED
@@ -447,7 +483,7 @@ function ns.CreditsInbox_Install()
         elseif event == "MAIL_SHOW" then
             Safe(ns.CreditsInbox_OnMailShow)
         elseif event == "MAIL_CLOSED" or event == "PLAYER_LOGOUT" then
-            Safe(FlushAll)
+            Safe(ns.CreditsInbox_OnMailClosed)
         elseif event == "MAIL_FAILED" then
             Safe(ns.CreditsInbox_OnMailFailed, arg1)
         end

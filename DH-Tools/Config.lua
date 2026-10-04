@@ -1875,7 +1875,7 @@ local function CreateOfficerSettingsPanel(parent)
     currencyHint:SetPoint("RIGHT", -16, 0)
     currencyHint:SetJustifyH("LEFT")
     currencyHint:SetWordWrap(true)
-    currencyHint:SetText("Use -/+ or type a value, then press Set. Rep Points/Gold and Credits/Rep Points can be set by Distribution Officers and above; Credits/Gold by Store Officers and above. The three ratios are independent - none of them has to agree with the others.")
+    currencyHint:SetText("Use -/+ or type a value, then press Set. Rep Points/Gold and Credits/Rep Points can be set by the author, the guild leader and the Donation Recipient; Credits/Gold by Store Officers and above. The three ratios are independent - none of them has to agree with the others.")
 
     -- One numeric box: [-] [edit] [+]. Returns the three widgets.
     local function MakeStepBox(relTo, point, relPoint, dx, dy)
@@ -2127,9 +2127,12 @@ local function CreateOfficerSettingsPanel(parent)
 
         if Bavin.InitCreditsDB then Bavin.InitCreditsDB() end
         local repPerGold = Bavin.creditsDb and Bavin.creditsDb.repPerGold
-        RefreshRatioRow(repGoldRow, repPerGold and repPerGold.x, repPerGold and repPerGold.y, canOpenCredits)
+        -- 2026-10-04 (Loopi): rates are author / guild leader / recipient
+        -- only (not every shared-list officer).
+        local canSetRates = Bavin.CanManageCreditsRatesLocal and Bavin.CanManageCreditsRatesLocal()
+        RefreshRatioRow(repGoldRow, repPerGold and repPerGold.x, repPerGold and repPerGold.y, canSetRates)
         local creditsPerRep = Bavin.creditsDb and Bavin.creditsDb.creditsPerRep
-        RefreshRatioRow(creditsRepRow, creditsPerRep and creditsPerRep.x, creditsPerRep and creditsPerRep.y, canOpenCredits)
+        RefreshRatioRow(creditsRepRow, creditsPerRep and creditsPerRep.x, creditsPerRep and creditsPerRep.y, canSetRates)
 
         --------------------------------------------------------------
         -- Store-owned pieces: Primary Store Officer, Store Officers,

@@ -1110,6 +1110,110 @@ authorAccountFlag = false
 ns.db.editors = {}
 
 --------------------------------------------------------------------------
+-- 2026-10-04 (Loopi): the two RATES are author (all characters) / guild
+-- leader / donation recipient only, travel in their own RATESET message
+-- with their own timestamp, and are no longer applied from CFGSET.
+print("== Credits: rates gate + RATESET ==")
+do
+    local PFX = "DHBavinCreditsV2"
+    local function deliver(from, text) ns.Credits_OnAddonMessage(PFX, text, "GUILD", from) end
+    local function sentType(t)
+        for _, e in ipairs(outboxLog) do
+            if e.text:sub(1, #t + 1) == t .. "|" then return e end
+        end
+    end
+    resetState()
+    inGuild = true
+    guildRosterEntries = {
+        { name = "GLeader", rankIndex = 0 }, { name = "PlainMember", rankIndex = 5 },
+        { name = "Officer1", rankIndex = 3 }, { name = "Bavin", rankIndex = 4 },
+    }
+    ns.UpdateGuildRosterCache()
+    ns.db.editors = { "Officer1" }
+    ns.db.recipient = "Bavin"
+    authorAccountFlag = false
+    check("Rates: ratesUpdatedAt is initialised", type(ns.creditsDb.ratesUpdatedAt) == "number")
+    local before = { x = ns.creditsDb.creditsPerRep.x, y = ns.creditsDb.creditsPerRep.y }
+
+    currentPlayerName = "Officer1"
+    check("Rates: a shared-list officer can open the config but NOT edit rates",
+        ns.CanManageCreditsConfigLocal() == true and ns.CanManageCreditsRatesLocal() == false)
+    check("Rates: officer Set Credits/Rep refused", ns.SetCreditsPerRep(2, 100) == false)
+    check("Rates: officer Set Rep/Gold refused", ns.SetRepPerGold(2, 1) == false)
+    check("Rates: refused set leaves the rates alone",
+        ns.creditsDb.creditsPerRep.x == before.x and ns.creditsDb.creditsPerRep.y == before.y)
+    currentPlayerName = "PlainMember"
+    check("Rates: a plain member is refused", ns.CanManageCreditsRatesLocal() == false)
+
+    currentPlayerName = "Bavin"
+    outboxLog = {}
+    check("Rates: the donation recipient can edit", ns.CanManageCreditsRatesLocal() == true)
+    check("Rates: recipient Set Credits/Rep works", ns.SetCreditsPerRep(2, 100) == true
+        and ns.creditsDb.creditsPerRep.x == 2 and ns.creditsDb.creditsPerRep.y == 100)
+    check("Rates: a set broadcasts RATESET (and not the whole CFGSET)",
+        sentType("RATESET") ~= nil and sentType("CFGSET") == nil)
+    check("Rates: RATESET carries the rates and the new stamp",
+        sentType("RATESET").text:match("^RATESET|2|100|[%d%.]+|[%d%.]+|%d+$") ~= nil and ns.creditsDb.ratesUpdatedAt > 0)
+    currentPlayerName = "GLeader"
+    check("Rates: the guild leader can edit", ns.CanManageCreditsRatesLocal() == true and ns.SetRepPerGold(50, 1) == true)
+    currentPlayerName = "PlainMember"
+    authorAccountFlag = true
+    check("Rates: the author account (any character) can edit", ns.CanManageCreditsRatesLocal() == true)
+    authorAccountFlag = false
+    inGuild = false
+    check("Rates: not in the guild -> refused", ns.CanManageCreditsRatesLocal() == false)
+    inGuild = true
+
+    -- Receive side (local player: PlainMember).
+    currentPlayerName = "PlainMember"
+    ns.creditsDb.creditsPerRep = { x = 1, y = 100 }
+    ns.creditsDb.repPerGold = { x = 100, y = 1 }
+    ns.creditsDb.ratesUpdatedAt = 1000
+    deliver("Officer1", "RATESET|9|900|9|9|2000")
+    check("Rates (receive): a plain officer's RATESET is ignored",
+        ns.creditsDb.creditsPerRep.x == 1 and ns.creditsDb.ratesUpdatedAt == 1000)
+    deliver("PlainMember2", "RATESET|9|900|9|9|2000")
+    check("Rates (receive): an unknown sender's RATESET is ignored", ns.creditsDb.creditsPerRep.x == 1)
+    deliver("Bavin", "RATESET|3|200|40|2|2000")
+    check("Rates (receive): the recipient's RATESET is applied",
+        ns.creditsDb.creditsPerRep.x == 3 and ns.creditsDb.creditsPerRep.y == 200
+        and ns.creditsDb.repPerGold.x == 40 and ns.creditsDb.repPerGold.y == 2 and ns.creditsDb.ratesUpdatedAt == 2000)
+    deliver("GLeader", "RATESET|4|300|41|3|1500")
+    check("Rates (receive): an older stamp loses (last-writer-wins)", ns.creditsDb.creditsPerRep.x == 3)
+    deliver("GLeader", "RATESET|4|300|41|3|3000")
+    check("Rates (receive): the guild leader's newer RATESET is applied", ns.creditsDb.creditsPerRep.x == 4 and ns.creditsDb.ratesUpdatedAt == 3000)
+    deliver("Loopi", "RATESET|5|400|42|4|4000")
+    check("Rates (receive): an author character's RATESET is applied", ns.creditsDb.creditsPerRep.x == 5)
+    deliver("Bavin", "RATESET|0|400|42|4|5000")
+    check("Rates (receive): a zero rate is rejected", ns.creditsDb.creditsPerRep.x == 5 and ns.creditsDb.ratesUpdatedAt == 4000)
+    deliver("Bavin", "RATESET|junk")
+    check("Rates (receive): a malformed RATESET is rejected", ns.creditsDb.ratesUpdatedAt == 4000)
+
+    -- A CFGSET from an officer still applies the toggle but no longer touches the rates.
+    deliver("Officer1", "CFGSET|1|Officer1|Officer1|7|700|8|8|4000000000")
+    check("Rates (receive): CFGSET is applied for the toggle/lists...",
+        ns.creditsDb.masterToggle == true and ns.creditsDb.configUpdatedAt == 4000000000)
+    check("Rates (receive): ...but its rate fields are ignored",
+        ns.creditsDb.creditsPerRep.x == 5 and ns.creditsDb.repPerGold.x == 42 and ns.creditsDb.ratesUpdatedAt == 4000)
+    ns.creditsDb.masterToggle = false
+    ns.creditsDb.configUpdatedAt = 0
+
+    -- Sync request: only a rates-setter's client answers with rates.
+    outboxLog = {}
+    deliver("Officer1", "CREDITSYNCREQ")
+    check("Rates (sync): a plain member's client does not answer with rates", sentType("RATESET") == nil)
+    currentPlayerName = "Bavin"
+    outboxLog = {}
+    deliver("Officer1", "CREDITSYNCREQ")
+    check("Rates (sync): the recipient's client whispers RATESET back",
+        sentType("RATESET") ~= nil and sentType("RATESET").target == "Officer1")
+    currentPlayerName = "PlainMember"
+    ns.creditsDb.creditsPerRep = { x = 1, y = 100 }
+    ns.creditsDb.repPerGold = { x = 100, y = 1 }
+    ns.creditsDb.ratesUpdatedAt = 0
+end
+
+--------------------------------------------------------------------------
 print("== Credits: CreditsSeed_Import ==")
 resetState()
 inGuild = true
@@ -2718,6 +2822,29 @@ do
     update()
     ns.CreditsInbox_OnMailShow()
     check("Reopen: a new mailbox visit flushes what was confirmed before it", logCount() == 1)
+
+    -- ---- unconfirmed takes when the mailbox closes (2026-10-04, Loopi) ---------------------
+    fresh()
+    mail("MainA", "Donation", { item(1, "Test Sword", 2) })
+    ns.CreditsInbox_OnTake("item", 1, 1)       -- hook ran, the inbox update never arrived
+    advance(0.1)
+    ns.CreditsInbox_OnMailClosed()
+    check("Close warning: an unconfirmed take at close prints a chat warning naming sender and item",
+        cm4.said("mailbox closed before the take from MainA") and cm4.said("Test Sword x2"))
+    check("Close warning: ...and credits nothing (never confirmed)", logCount() == 0)
+    fresh()
+    mail("MainA", "Donation", { item(1, "Test Sword", 2) })
+    takeItem(1, 1)
+    update()
+    ns.CreditsInbox_OnMailClosed()
+    check("Close warning: a confirmed take closes quietly and is credited",
+        not cm4.said("mailbox closed before") and logCount() == 1)
+    fresh()
+    mail("MainA", "Donation", { item(1, "Test Sword", 2) })
+    ns.CreditsInbox_OnTake("item", 1, 1)
+    advance(11)                                -- long past the 10s expiry: treated as a failed take
+    ns.CreditsInbox_OnMailClosed()
+    check("Close warning: an old unconfirmed take (failed) does not warn", not cm4.said("mailbox closed before"))
 
     -- ---- Wall 4: the hook is only ever installed by an armed receiver ------------------------
     ns.CreditsInbox_ResetForTests()
