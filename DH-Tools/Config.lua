@@ -634,38 +634,48 @@ local function CreateQuestsPanel(parent)
     local panel = CreateFrame("Frame", nil, parent)
     panel:SetAllPoints()
 
-    local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    -- Scrollbar shown on every settings page (2026-10-04, Loopi), same
+    -- scrollFrame+content pattern as the Store/Bavin pages.
+    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsQuestsScroll", panel, (DHTools and DHTools.SCROLL_TEMPLATE) or "UIPanelScrollFrameTemplate")
+    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(scrollFrame) end
+    scrollFrame:SetPoint("TOPLEFT", 0, -8)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -18, 8)
+    local content = CreateFrame("Frame", nil, scrollFrame)
+    content:SetSize(1, 300) -- width set in Refresh
+    scrollFrame:SetScrollChild(content)
+
+    local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 16, -16)
     title:SetText("Quests")
 
-    local hint = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    local hint = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     hint:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
     hint:SetText("Controls what THIS character shares with the guild. Turning a category off only stops you sharing it - you'll still see other guildmates' shared quests either way.")
 
-    local masterCheck = CreateFrame("CheckButton", "DHToolsQuestsMasterCheck", panel, "UICheckButtonTemplate")
+    local masterCheck = CreateFrame("CheckButton", "DHToolsQuestsMasterCheck", content, "UICheckButtonTemplate")
     masterCheck:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", 0, -16)
     _G[masterCheck:GetName() .. "Text"]:SetText("Share my quests with the guild")
     masterCheck:SetScript("OnClick", function(self)
         DHQuests.db.settings.shareEnabled = self:GetChecked() and true or false
     end)
 
-    local divider = panel:CreateTexture(nil, "ARTWORK")
+    local divider = content:CreateTexture(nil, "ARTWORK")
     divider:SetColorTexture(1, 1, 1, 0.15)
     divider:SetHeight(1)
     divider:SetPoint("TOPLEFT", masterCheck, "BOTTOMLEFT", 0, -14)
     divider:SetPoint("RIGHT", -16, 0)
 
-    local catTitle = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    local catTitle = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     catTitle:SetPoint("TOPLEFT", divider, "BOTTOMLEFT", 0, -14)
     catTitle:SetText("Categories to share:")
 
     local catChecks = {}
     local prevAnchor = catTitle
     for i, cat in ipairs(QUESTS_CATEGORY_ORDER) do
-        local check = CreateFrame("CheckButton", "DHToolsQuestsCat" .. cat .. "Check", panel, "UICheckButtonTemplate")
+        local check = CreateFrame("CheckButton", "DHToolsQuestsCat" .. cat .. "Check", content, "UICheckButtonTemplate")
         if i == 1 then
             check:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", -4, -8)
         else
@@ -680,6 +690,7 @@ local function CreateQuestsPanel(parent)
     end
 
     panel.Refresh = function()
+        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 14))
         if DHQuests.InitDB then
             DHQuests.InitDB()
         end
@@ -1241,18 +1252,27 @@ local function CreateMacrosPanel(parent)
     local panel = CreateFrame("Frame", nil, parent)
     panel:SetAllPoints()
 
-    local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    -- Scrollbar shown on every settings page (2026-10-04, Loopi).
+    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsMacrosScroll", panel, (DHTools and DHTools.SCROLL_TEMPLATE) or "UIPanelScrollFrameTemplate")
+    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(scrollFrame) end
+    scrollFrame:SetPoint("TOPLEFT", 0, -8)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -18, 8)
+    local content = CreateFrame("Frame", nil, scrollFrame)
+    content:SetSize(1, 200) -- width set in Refresh
+    scrollFrame:SetScrollChild(content)
+
+    local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 16, -16)
     title:SetText("Macros")
 
-    local hint = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    local hint = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     hint:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
     hint:SetText("Generates ready-to-use macros from the DH-Tools macro library - pick a class, spec, and macro on the Board, then create it directly or copy the text to paste in yourself.")
 
-    local openBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    local openBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
     openBtn:SetSize(140, 22)
     openBtn:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", 0, -14)
     openBtn:SetText("Open Macro Board")
@@ -1269,15 +1289,16 @@ local function CreateMacrosPanel(parent)
     -- as unaligned) and there was no controllable gap between them. Two
     -- rows fixes both: each is its own left-justified line, with a real
     -- anchor gap in between.
-    local slotsGlobalText = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    local slotsGlobalText = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     slotsGlobalText:SetPoint("TOPLEFT", openBtn, "BOTTOMLEFT", 0, -14)
     slotsGlobalText:SetJustifyH("LEFT")
 
-    local slotsPerCharText = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    local slotsPerCharText = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     slotsPerCharText:SetPoint("TOPLEFT", slotsGlobalText, "BOTTOMLEFT", 0, -8)
     slotsPerCharText:SetJustifyH("LEFT")
 
     panel.Refresh = function()
+        content:SetWidth(math.max(1, scrollFrame:GetWidth() - 14))
         local numGlobal, numPerChar = GetNumMacros()
         local maxGlobal = MAX_ACCOUNT_MACROS or 18
         local maxPerChar = MAX_CHARACTER_MACROS or 18
