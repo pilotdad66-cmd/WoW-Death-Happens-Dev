@@ -293,7 +293,8 @@ local function CreateEditorFrame()
     frame.hint:SetWordWrap(true)
 
     -- Scrollable list of current destinations.
-    frame.scrollFrame = CreateFrame("ScrollFrame", "DHAirDestEditorScrollFrame", frame, "UIPanelScrollFrameTemplate2")
+    frame.scrollFrame = CreateFrame("ScrollFrame", "DHAirDestEditorScrollFrame", frame, (DHTools and DHTools.SCROLL_TEMPLATE) or "UIPanelScrollFrameTemplate")
+    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(frame.scrollFrame) end
     frame.scrollFrame:SetPoint("TOPLEFT", frame.hint, "BOTTOMLEFT", 0, -8)
     frame.scrollFrame:SetPoint("BOTTOMRIGHT", -30, 118)
 

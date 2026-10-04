@@ -1703,7 +1703,8 @@ local function CreateWindow()
     -- One ScrollFrame reused by whichever tab is active - each tab gets
     -- its own scroll CHILD frame, so switching tabs is just a
     -- SetScrollChild swap, not a rebuild.
-    local scrollFrame = CreateFrame("ScrollFrame", "DHBavinCreditsConfigScroll", frame, "UIPanelScrollFrameTemplate2")
+    local scrollFrame = CreateFrame("ScrollFrame", "DHBavinCreditsConfigScroll", frame, (DHTools and DHTools.SCROLL_TEMPLATE) or "UIPanelScrollFrameTemplate")
+    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(scrollFrame) end
     scrollFrame:SetPoint("TOPLEFT", tabBar, "BOTTOMLEFT", 0, -8)
     scrollFrame:SetPoint("BOTTOMRIGHT", -30, 12)
     frame.scrollFrame = scrollFrame
