@@ -447,7 +447,7 @@ local function BuildRosterTab(content)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
-    hint:SetText("Every main's seeded reputation/credit standing. Rank is always by Lifetime Points, regardless of the active sort. Click a column title (Name/Lifetime/Last Donation) to sort by it - click again to flip direction. Left-click a name marked [+] to show its alts; right-click any name for a menu (Show Account, a Discord submenu - Add as Discord / Remove as Discord / Discord Only - and on an alt also Unlink Alt / Promote to Main). Each name is tagged [Main], [Alt], [Discord], [Discord/Main] or [Discord/Alt]; an account has one Discord name and always a real main. Seeding is Distribution Officer only; re-running it overwrites the row for any name in the historical data (SeedData.lua) without touching rows for names outside that dataset.")
+    hint:SetText("Every main's seeded reputation/credit standing. Rank is always by Lifetime Points, regardless of the active sort. Click a column title (Name/Lifetime/Last Donation) to sort by it - click again to flip direction. Left-click a name marked [+] to show its alts; right-click any name for a menu (Show Account, Merge into... on a main - folds an account that was auto-created from a first donation into the account it really belongs to, a Discord submenu - Add as Discord / Remove as Discord / Discord Only - and on an alt also Unlink Alt / Promote to Main). Each name is tagged [Main], [Alt], [Discord], [Discord/Main] or [Discord/Alt]; an account has one Discord name and always a real main. Seeding is Distribution Officer only; re-running it overwrites the row for any name in the historical data (SeedData.lua) without touching rows for names outside that dataset.")
 
     -- Seed button - two-click confirm, mirrors Settings tab's Reset Test Data.
     local seedBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
@@ -678,6 +678,60 @@ local function BuildRosterTab(content)
         LibDropDown:EasyMenu(entries, menuFrame, "cursor", 0, 0, "MENU", 2)
     end
 
+    -- "Merge into..." (CM4 step 8, 2026-10-04). For an account that was
+    -- auto-created on a first donation and turns out to be someone's alt:
+    -- first popup asks which account to merge it INTO (type any of its
+    -- names), second popup is the confirm click; ns.Credits_MergeAccounts
+    -- does the work (officer-gated again there).
+    local function ResolveAccountKey(typed)
+        typed = (typed or ""):match("^%s*(.-)%s*$")
+        if typed == "" or not ns.creditsDb then return nil end
+        local key = ns.creditsDb.toonIndex and ns.creditsDb.toonIndex[ns.NormalizeName(typed):lower()]
+        if key and ns.creditsDb.ledger[key] then return key end
+        if ns.creditsDb.ledger[typed] then return typed end
+        for k, rec in pairs(ns.creditsDb.ledger) do
+            if (ns.Credits_GetDiscord(rec) or ""):lower() == typed:lower() then return k end
+        end
+        return nil
+    end
+    StaticPopupDialogs["DHBAVIN_MERGE_CONFIRM"] = {
+        text = "Merge %s into %s?\n\nAll of its alts, reputation and credits move over and the account being merged is deleted. This cannot be undone.",
+        button1 = "Merge",
+        button2 = CANCEL or "Cancel",
+        OnAccept = function(_, data)
+            local ok, why = ns.Credits_MergeAccounts(data.source, data.target)
+            if not ok then ns.CreditsPrint("Merge refused: " .. tostring(why)) end
+        end,
+        timeout = 0, whileDead = 1, hideOnEscape = 1, preferredIndex = 3,
+    }
+    StaticPopupDialogs["DHBAVIN_MERGE_PICK"] = {
+        text = "Merge %s into which account?\n\nType the main or any alt name of the account that should keep everything.",
+        button1 = "Next",
+        button2 = CANCEL or "Cancel",
+        hasEditBox = 1,
+        maxLetters = 24,
+        OnAccept = function(self, data)
+            local eb = self.editBox or self.EditBox
+            local key = ResolveAccountKey(eb and eb:GetText())
+            local ledger = ns.creditsDb and ns.creditsDb.ledger or {}
+            if not key then
+                ns.CreditsPrint("No account found for that name.")
+            elseif key == data.source then
+                ns.CreditsPrint("That is the same account.")
+            elseif ledger[data.source] and ledger[key] then
+                StaticPopup_Show("DHBAVIN_MERGE_CONFIRM", ledger[data.source].mainToon, ledger[key].mainToon,
+                    { source = data.source, target = key })
+            end
+        end,
+        EditBoxOnEnterPressed = function(self)
+            local parent = self:GetParent()
+            local accept = parent.button1 or parent.Button1
+            if accept then accept:Click() end
+        end,
+        EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+        timeout = 0, whileDead = 1, hideOnEscape = 1, preferredIndex = 3,
+    }
+
     -- "Discord" submenu (2026-09-29, Loopi): Add as Discord / Remove as
     -- Discord / Discord Only. An account has exactly one Discord name and
     -- always a real main, so: Add is greyed on the name that already has the
@@ -739,6 +793,9 @@ local function BuildRosterTab(content)
                 { text = row.mainName or "Account", isTitle = true, notCheckable = true },
                 { text = "Discord", notCheckable = true, hasArrow = true,
                   menuList = DiscordSubmenu(row.mainName, account, "main", canManage) },
+                { text = "Merge into...", notCheckable = true, disabled = not canManage, func = function()
+                    StaticPopup_Show("DHBAVIN_MERGE_PICK", row.mainName, nil, { source = account })
+                end },
                 { text = "Show Account", notCheckable = true, func = function()
                     if ns.Account_ShowFor then ns.Account_ShowFor(account) end
                 end },
@@ -1144,7 +1201,7 @@ local function BuildReviewQueueTab(content)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
-    hint:SetText("Donor names that aren't tied to an account yet - either Step 0 couldn't map them as of its last run, or an officer removed them from an account's alt list. Linking or setting as a new main here is Distribution Officer only and takes effect immediately for live crediting. \"New Main\" seeds the row's real historical lifetime total (raw gold x10, same convention as everywhere else).")
+    hint:SetText("Donor names that aren't tied to an account yet - either Step 0 couldn't map them as of its last run, or an officer removed them from an account's alt list. Linking or setting as a new main here is Distribution Officer only and takes effect immediately for live crediting. \"New Main\" seeds the row's real historical lifetime total (raw gold x10, same convention as everywhere else). A \"held donation\" row is someone who mailed a donation but isn't on any account or in the guild: their rep and credits are held and are applied automatically (on the mail recipient's client) as soon as you link them or make them a new main.")
 
     local filterLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     filterLabel:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", -2, -12)
@@ -1478,11 +1535,21 @@ local function BuildReviewQueueTab(content)
                     tag = "|cffffcc00conflict|r"
                 elseif rec.issue == "removed_alt" then
                     tag = "|cff66ccffremoved alt|r"
+                elseif rec.issue == "unresolved_donor" then
+                    -- CM4: a donation from this name is being HELD until an
+                    -- officer links them (or makes them a new main).
+                    tag = "|cffff9933held donation|r"
                 else
                     tag = "|cff999999unmapped|r"
                 end
                 local dateText = (rec.latestDonation and rec.latestDonation ~= "") and rec.latestDonation or "no date"
-                row.info:SetText(("%s  (%s, last donation %s)"):format(rec.name or "?", tag, dateText))
+                local heldText = ""
+                if rec.issue == "unresolved_donor" and ns.CreditsDon_HeldTotals then
+                    local heldRep, heldCredits = ns.CreditsDon_HeldTotals(rec.name)
+                    heldText = (" - holding |cffffd100%s rep / %s credits|r"):format(
+                        ns.CreditsDon_Fmt(heldRep), ns.CreditsDon_Fmt(heldCredits))
+                end
+                row.info:SetText(("%s  (%s, last donation %s)%s"):format(rec.name or "?", tag, dateText, heldText))
 
                 -- Resolved either as an alt of another account
                 -- (Credits_GetAltMain) or as its own account (a

@@ -1033,7 +1033,7 @@ and don't need further design. (INCOMING: superseded 2026-10-04 - the
 inbox checkbox defaults CHECKED, not sticky. See "CM4 as designed"
 below.)
 
-### CM4 as designed - incoming mail crediting (2026-10-04, Loopi + Claude) - NOT YET BUILT
+### CM4 as designed - incoming mail crediting (2026-10-04, Loopi + Claude) - BUILT, awaiting in-game test (see "CM4 as built" below this section)
 
 Designed and reviewed with Loopi; supersedes the "Incoming" paragraph
 above wherever the two differ. Build in the numbered order.
@@ -1220,6 +1220,19 @@ and synced link), merge totals + toonIndex, max-merge of lifetime
 fields, COD/returned/GM/non-player defaults, toggle reset on version
 change (if 10 is kept). In-game: LoopiBav as receiver, Loopi's other
 characters as senders. Ask before every test zip.
+
+### CM4 as built (2026-10-04) - where the build differs from the design above
+
+Code-complete, harness-proven (Bavin harness 502 checks), NOT yet confirmed in game. Files: `CreditsDonations.lua` (pure logic: valuation, resolution, crediting, held credits + release, merge), `CreditsInbox.lua` (hook, checkboxes, diff-based confirmation - Wall 4 gated), `CreditsSync.lua` additions, small hooks in `Credits.lua` / `CreditsSeed.lua` / `CreditsConfig.lua`. Differences from the design:
+- **Step 10 DROPPED** (Loopi: "the hook should be enough"). The test lists and master toggle are author-account-only for now (`CanManageCreditsTestConfigLocal`); known gap: a non-author officer changing a RATE still broadcasts their copy of the toggle/lists in CFGSET.
+- **Logic split out of the gated file.** Only the hook/frames live in `CreditsInbox.lua` (created solely from `InstallInboxHook()`); `CreditsDonations.lua` loads everywhere but is inert until called, so the harness can drive it.
+- **Held credits and merge tombstones ride the existing `LSYNCDATA` payload** as new item kinds instead of a new top-level message type: `P:<entry>` (held entry), `X:<id>|<stamp>` (released tombstone), `D:<discordName>|<stamp>` (account deleted by a merge). Still additive on `DHBavinCreditsV2` (older clients ignore unknown kinds), still catch-up-able through `LSYNCREQ`. `Q:` review-queue items gained a 4th field, the issue type. All officers need the same build.
+- **Merge tombstone semantics:** an equal-or-older copy of a deleted account never resurrects it; a newer-stamped record (genuine re-creation) is accepted.
+- **max() merge both ways:** a winning record can't lower `lifetimePoints`/`lifetimeCredits`, and a record that LOSES on stamp but carries higher lifetime values still raises ours (tier/prestige/points recomputed). Credits balance stays last-writer-wins. Side effect: after a local Reset + re-seed, higher lifetime values from other officers flow back in.
+- **Release triggers:** local link / new main, a synced record, login (12 s delay), AND every GUILD_ROSTER_UPDATE (cheap no-op unless this is the armed recipient with something held) - the roster trigger exists because a held sender who joins the guild later resolves automatically.
+- **Mail key** = sender + subject + COD + daysLeft(4 dp); checkbox state and pending actions are keyed by it and wiped on MAIL_SHOW. Confirmed takes are credited as ONE entry per mail after 2.5 s without a new confirmed take (or immediately on MAIL_CLOSED / logout / reopening the mailbox). A take confirmed less than ~0.15 s before the mailbox closes can be lost (accepted).
+- A mail that is only unpriced items credits nothing and creates no account (one chat line names the items).
+- Not verified (carried from step 0): Auction House mail sender form, cross-realm sender name, MAIL_FAILED for a money take. In-game to check: checkbox placement (anchored just right of each `MailItemN` row, `CHECK_X` in CreditsInbox.lua), the Merge popups (StaticPopup with edit box), and the Review Queue "held donation" rows.
 
 ## Test strategy - isolating the live system (resolved 2026-09-03)
 
