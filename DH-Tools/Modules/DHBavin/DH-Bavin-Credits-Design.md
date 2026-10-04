@@ -1029,7 +1029,183 @@ already fails loudly rather than silently on its unverified frame
 hooks. A successful send deducts credit and logs the transaction.
 
 Both checkboxes are simple sticky UI state (remember the last value)
-and don't need further design.
+and don't need further design. (INCOMING: superseded 2026-10-04 - the
+inbox checkbox defaults CHECKED, not sticky. See "CM4 as designed"
+below.)
+
+### CM4 as designed - incoming mail crediting (2026-10-04, Loopi + Claude) - NOT YET BUILT
+
+Designed and reviewed with Loopi; supersedes the "Incoming" paragraph
+above wherever the two differ. Build in the numbered order.
+
+**0. Mail-event probe first (throwaway).** The Classic Era (11509) mail
+event sequence is assumed, not confirmed. Same precedent as GRM-Probe
+(2026-09-25): a temporary `/dhbmailprobe` that only LOGS -
+`MAIL_INBOX_UPDATE`, `BAG_UPDATE`, `UI_ERROR_MESSAGE`, plus
+`MAIL_SUCCESS`/`MAIL_FAILED` if they exist on this client, and
+hooksecurefunc on `TakeInboxItem`/`TakeInboxMoney`/`AutoLootMailItem`
+with an inbox snapshot (`GetInboxNumItems`, `GetInboxHeaderInfo`,
+`GetInboxItem`) before and after. Run once on LoopiBav covering: take
+one item; take gold; take the last item of a mail with no body text
+(does it auto-delete, do later indexes shift?); a bags-full failure; a
+COD mail; a mail from the Auction House. Write the findings into this
+section, then delete the probe (and its .toc line) before any build
+that leaves this PC.
+
+**1. Gating - unchanged Wall 4.** New file `CreditsInbox.lua` (.toc).
+Its hooks and frames are created ONLY from Credits.lua's
+`InstallInboxHook()`, i.e. only on a character on `creditTestReceivers`
+with the master toggle on. During testing those lists hold only Loopi's
+own characters. Hard requirement (Loopi): Bavin's current script +
+copy/paste-to-Excel process must keep working untouched until the
+real-mail parallel-run week - his client never installs the hook.
+
+**2. Inbox UI.** A checkbox on each of the 7 InboxFrame rows. Bavin
+opens mail one message at a time and enjoys seeing what people donate
+- that workflow stays. Checkbox state is keyed to the MAIL, not the row
+slot (rows are reused when paging), refreshed on every
+`InboxFrame_Update`.
+- Default CHECKED for player senders. The original "default =
+  last-selected" sticky rule is DROPPED: one uncheck would silently
+  zero every later mail, the exact "0 credit" outcome Loopi ruled out.
+- Default UNCHECKED (shown unchecked, re-checkable): returned mail
+  (`wasReturned`), GM mail (`isGM`), non-player senders (Auction House,
+  Postmaster - detect via a space in the sender name / non-player
+  sender; confirm in the probe).
+- COD mail (`CODAmount > 0`) is NEVER credited and can't be re-checked;
+  print one chat line saying it was skipped.
+- Mail from the recipient's own characters (Bavin's alts or his normal
+  playing characters) IS a normal donation, credited to his own account
+  like anyone else's.
+
+**3. Crediting is diff-based, applied only after a confirmed take.**
+hooksecurefunc `TakeInboxItem`, `TakeInboxMoney`, `AutoLootMailItem`.
+For a checked mail, each call records a pending action that identifies
+the mail by (sender, subject, money, CODAmount, attachment list) - NOT
+by inbox index (indexes shift when a mail auto-deletes) and `daysLeft`
+only as a tiebreak (it drifts while the inbox is open). Keep the inbox
+snapshot from the last `MAIL_INBOX_UPDATE`; on the next update, find
+that mail and credit exactly what disappeared from it (attachments by
+itemID+count, money), or everything it still held if the mail is gone.
+A failed take (bags full) changes nothing, so credits nothing; retries
+and partial takes are safe by construction - no separate idempotency
+table. Unconfirmed pending actions expire after ~10s.
+
+**4. Valuation.**
+- Items: the SAME override-aware per-item lookup the tooltip uses (so
+  Bavin's manual per-item bumps / `itemPointsOverrides` count) x stack
+  count. Unpriced item = 0 rep plus a chat line naming it.
+- Gold: copper / 10000 = gold (fractional) -> rep = gold x
+  `repPerGold.x / repPerGold.y` -> credits as below. Gold rep counts
+  toward `lifetimePoints` and tier/prestige exactly like item rep.
+- Credits = rep x `creditsPerRep.x / creditsPerRep.y`, for items and gold.
+- Rates are ALWAYS the officer-configured Settings values. The
+  `DEFAULT_*` constants in Credits.lua are first-run fallbacks only -
+  do not change them (Loopi: "there is no more default").
+- Decimal math throughout; round only for display.
+- Category: gold = "Gold". Items take their category from the item
+  data IF the Category column has been imported into ItemPoints.lua
+  (check at build start - the CM2 intake was meant to add it); if not,
+  tag "Uncategorized" and raise it with Loopi rather than building the
+  import inside CM4 unasked.
+
+**5. Applying a credit.** `rec.lifetimePoints += rep`;
+`ns.Credits_AdjustCredits(rec, credits)`; stamp `syncedAt` so CM3's
+per-record sync carries it (decided: ride the existing sync). ONE
+transaction-log entry per MAIL, not per item (volume: ~120 donation
+rows/day in the history): `GetServerTime()` timestamp, sender toon,
+account discordName, items {itemID, name, count, rep, category}, gold,
+total rep, total credits, the rates used, tier/prestige before -> after,
+receiver name. One chat line per credited mail (e.g. "Xyz: +450 rep,
++4.5 credits (Friendly 1,200/6,000)"), plus a tier-up line when tier or
+prestige changes.
+
+**6. Who gets credited - new members and remakes.** Identity is by
+character NAME. `toonIndex` is checked first, so a remade character
+with the same name (died, recreated) lands on its old account with all
+its history - by design (Loopi: every same-name character keeps the
+history; accepted risk: a different player who takes a deleted name
+inherits it). `Credits_ResolveMain()` never returns nil (it self-
+falls-back), so add a separate helper rather than changing its contract:
+- Name in `toonIndex` -> that account.
+- Else sender in the guild roster:
+  - GRM names a different main that has an account -> link sender as
+    an alt of it, credit there.
+  - GRM names a main with no account -> create an account for that
+    main (seed convention: discordName = main name), sender as its alt
+    if different.
+  - GRM nil or self -> create an account with the sender as its own
+    main.
+  New members therefore join the roster on their first donation;
+  non-donors never appear (CM6's member window shows "no donations
+  yet").
+- Else (not in the guild) -> HOLD, below.
+
+**7. Held credits (sender not resolvable).** Loopi: nobody gets 0
+credit for a donation. Store each computed entry (same shape as a log
+entry, own id) in `creditsDb.pendingCredits[senderLower]`; add the
+sender to the Review Queue under a new issue type `unresolved_donor`
+(`Credits_AddToReviewQueue` hardcodes `removed_alt` today - add an
+issue parameter); chat line "Held N rep / M credits for X until an
+officer links them". The Review Queue row shows the held totals.
+- Release is AUTOMATIC and happens ONLY on the mail recipient's client.
+  There is only ever one recipient (Loopi, 2026-10-04 - a guild-leader
+  change of recipient is unlikely enough not to design for), so no
+  further double-release protection. Triggers: a local link/new-main,
+  a link arriving via CM3 sync, or login. Each entry is applied as in
+  (5) with its ORIGINAL timestamp, logged "released from pending",
+  then removed; the Review Queue entry clears.
+- Replicated to officers for durability and visibility: a new message
+  type on the `DHBavinCreditsV2` prefix, release = tombstone. Same rule
+  as ledger sync - all officers on the same build.
+- `Credits_ResetTestData` also wipes `pendingCredits`.
+
+**8. Account merge (in CM4 scope - Loopi).** For an auto-created
+account that turns out to be someone's alt. Officer action "Merge
+into..." (two-click confirm, like Reset Test Data): moves the source's
+mainToon + alts into the target (toonIndex updated); adds
+lifetimePoints, credits and lifetimeCredits; keeps the later
+lastDonationDate; re-tags the source's transaction-log entries to the
+target; deletes the source record; logs a merge entry. Tier/prestige
+recompute from the summed lifetime. Syncs via CM3 - check whether
+CreditsSync.lua can delete/tombstone a record; if not, adding that is
+part of this work.
+
+**9. Sync safety (approved).** CM3 receive takes `max()` for
+`lifetimePoints` and `lifetimeCredits` instead of plain last-writer-
+wins - both only ever rise, so a stale officer edit can't erase a
+donation's points. The credits BALANCE stays last-writer-wins until
+CM5/CM6 deltas.
+
+**10. Master toggle on published installs - CONFIRM AT BUILD START.**
+Loopi's ask: during the testing period, any CurseForge/GitHub install
+or update leaves the toggle OFF; the player can turn it back on
+(Loopi will, for testing). Proposed: `build-release-zip.ps1` stamps a
+published-build flag into the staged copy only (hard-fails if the
+stamp didn't apply; test zips unstamped); a stamped build, on first
+load of a new version, sets `masterToggle = false` and records the
+version. Also make the toggle local-only: stop applying it from
+CFGSET and always SEND "0" in that field (keeps v2.1.3/v2.1.4 clients
+off too) - wire shape unchanged, no prefix bump. Remove the stamp at
+CM9 cutover. Loopi's follow-up the same day: what actually protects
+Bavin's live process is the Wall 4 hook gating (only his own
+characters on the test lists), and he hadn't realized the toggle was
+guild-wide - so confirm whether this item is still wanted before
+building it.
+- Related open question: the two test lists are editable by ANY
+  shared-list officer (`CanManageCreditsConfigLocal`) and sync
+  guild-wide, so an officer could add Bavin mid-test. Ask Loopi
+  whether to restrict test-list (and toggle) edits to the author
+  account during testing.
+
+**11. Tests.** Harness: valuation (items, overrides, unpriced, gold,
+fractional), tier/prestige crossings incl. from gold, diff-crediting
+(partial take, bags-full no-op, mail auto-delete), every resolution
+branch incl. auto-create and same-name remake, hold -> release (local
+and synced link), merge totals + toonIndex, max-merge of lifetime
+fields, COD/returned/GM/non-player defaults, toggle reset on version
+change (if 10 is kept). In-game: LoopiBav as receiver, Loopi's other
+characters as senders. Ask before every test zip.
 
 ## Test strategy - isolating the live system (resolved 2026-09-03)
 
@@ -1631,7 +1807,10 @@ whether to pull in more officers or go straight to CM9 cutover.
   needs a prefix bump.
 - **CM4 - Incoming mail processing.** Checkbox UI on the inbox, item
   pull-in hook, point/credit/lifetime crediting, tier/prestige-crossing
-  logic.
+  logic. **Fully specified 2026-10-04 - see "CM4 as designed" under
+  Mail processing flows.** Scope grew to include gold donations,
+  auto-created accounts for new members, held credits for unresolvable
+  senders, account merge, and a max-merge tweak to CM3's receive.
 - **CM5 - Outgoing mail processing.** Checkbox UI on SendMailFrame,
   pre-send credit check + block, deduction on send. **Scope clarified
   2026-09-28 (Chris, DH-Store design conversation):** the charged price
