@@ -930,6 +930,17 @@ function ns.InitStandaloneWindow(targetFrame, rightInset)
     -- Windows keep the default strata; SetToplevel above + this Raise give
     -- normal click-to-front stacking.
     targetFrame:HookScript("OnShow", function(self) self:Raise() end)
+    -- A frame made with CreateFrame is ALREADY shown, so on a window's very
+    -- first open the later :Show() is a no-op, OnShow never fires and the
+    -- Raise above never runs - the window opened UNDER whatever was already
+    -- up (2026-10-04, Loopi: "the Settings window does not open on top the
+    -- first time"). Raise once more after construction finishes (next frame)
+    -- if the window is still showing.
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0, function()
+            if targetFrame:IsShown() then targetFrame:Raise() end
+        end)
+    end
 
     local bg = targetFrame:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
