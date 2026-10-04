@@ -143,8 +143,14 @@ local function Hash(h, s)
     return h
 end
 
+-- 2026-10-04: the "start from scratch" reset number (creditsDb.dataEpoch) is
+-- mixed in once it is > 0, so a client that has not had the reset (or an old
+-- build that does not know the mechanism) never matches and can never push
+-- its old data back in. At epoch 0 the value is exactly the seed hash, so
+-- builds that never saw a reset keep interoperating. The seed part is
+-- cached; the epoch part is cheap and computed on every call.
 local fpCache, fpSeedRef, fpAltRef
-function ns.CreditsSync_Fingerprint()
+local function SeedHash()
     if fpCache and fpSeedRef == ns.CreditsSeedData and fpAltRef == ns.CreditsAltRoster then
         return fpCache
     end
@@ -163,9 +169,16 @@ function ns.CreditsSync_Fingerprint()
     for _, k in ipairs(keys) do
         h = Hash(h, k .. "=" .. table.concat(ns.CreditsAltRoster[k] or {}, ",") .. ";")
     end
-    fpCache = ("%08x"):format(h)
+    fpCache = h
     fpSeedRef, fpAltRef = ns.CreditsSeedData, ns.CreditsAltRoster
     return fpCache
+end
+
+function ns.CreditsSync_Fingerprint()
+    local h = SeedHash()
+    local epoch = ns.creditsDb and ns.creditsDb.dataEpoch or 0
+    if epoch > 0 then h = Hash(h, "E:" .. tostring(epoch)) end
+    return ("%08x"):format(h)
 end
 
 --------------------------------------------------------------------------
@@ -680,7 +693,7 @@ end
 local function WarnMismatch(senderShort, theirFp)
     if warnedMismatch[senderShort] then return end
     warnedMismatch[senderShort] = true
-    ns.CreditsPrint(("Ledger sync with %s skipped: their seed data differs from yours (%s vs %s). Both officers need the same DH-Tools version."):format(
+    ns.CreditsPrint(("Ledger sync with %s skipped: their seed data differs from yours, or one of you has not had the latest \"start from scratch\" reset (%s vs %s). Both officers need the same DH-Tools version; a reset reaches an officer when the author / guild leader / recipient is online."):format(
         senderShort, theirFp, ns.CreditsSync_Fingerprint()))
 end
 

@@ -1214,6 +1214,164 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 2026-10-04 (Loopi): "Start from scratch" - the coordinated reset. Only the
+-- author account starts it; DATAEPOCH is accepted only from setter-class
+-- names and only when newer; offline officers catch up via login / sync
+-- replies; the epoch is folded into the ledger-sync fingerprint.
+print("== Credits: start from scratch (DATAEPOCH) ==")
+do
+    local PFX = "DHBavinCreditsV2"
+    local function deliver(from, text) ns.Credits_OnAddonMessage(PFX, text, "GUILD", from) end
+    local function sentType(t)
+        for _, e in ipairs(outboxLog) do
+            if e.text:sub(1, #t + 1) == t .. "|" then return e end
+        end
+    end
+    local function printed(sub)
+        for _, m in ipairs(printLog) do
+            if tostring(m):find(sub, 1, true) then return true end
+        end
+        return false
+    end
+    local function stray()
+        ns.creditsDb.ledger["Stray"] = { discordName = "Stray", mainToon = "Stray", alts = {}, points = 0, credits = 5, lifetimePoints = 10 }
+        ns.creditsDb.transactionLog = { { id = "old1", ts = 1, kind = "merge", account = "Stray" } }
+        ns.creditsDb.pendingCredits = { somebody = { { id = "p1" } } }
+    end
+    resetState()
+    inGuild = true
+    guildRosterEntries = {
+        { name = "GLeader", rankIndex = 0 }, { name = "PlainMember", rankIndex = 5 },
+        { name = "Officer1", rankIndex = 3 }, { name = "Bavin", rankIndex = 4 },
+    }
+    ns.UpdateGuildRosterCache()
+    ns.db.editors = { "Officer1" }
+    ns.db.recipient = "Bavin"
+    ns.CreditsSeedData = { MainOne = { lifetimePoints = 1500, latestDonation = "2026-09-01" } }
+    ns.CreditsAltRoster = { MainOne = { "AltOne" } }
+    authorAccountFlag = false
+    check("Epoch: dataEpoch starts at 0", (ns.creditsDb.dataEpoch or 0) == 0)
+    local baseFp = ns.CreditsSync_Fingerprint()
+
+    -- Start refused for a non-author.
+    currentPlayerName = "Officer1"
+    stray()
+    outboxLog = {}
+    check("Epoch: a shared-list officer cannot start from scratch", ns.Credits_StartOver() == false)
+    check("Epoch: a refused start leaves the data alone and sends nothing",
+        ns.creditsDb.ledger["Stray"] ~= nil and #ns.creditsDb.transactionLog == 1 and sentType("DATAEPOCH") == nil)
+    currentPlayerName = "Bavin"
+    check("Epoch: the recipient cannot start from scratch either", ns.Credits_StartOver() == false)
+
+    -- Start by the author account.
+    authorAccountFlag = true
+    currentPlayerName = "Loopi"
+    ns.creditsDb.masterToggle = true
+    ns.creditsDb.creditsPerRep = { x = 3, y = 7 }
+    outboxLog, printLog = {}, {}
+    check("Epoch: the author can start from scratch", ns.Credits_StartOver() == true)
+    local epoch1 = ns.creditsDb.dataEpoch
+    check("Epoch: the epoch is raised", epoch1 > 0)
+    check("Epoch: the ledger was wiped and reseeded",
+        ns.creditsDb.ledger["Stray"] == nil and ns.creditsDb.ledger["MainOne"] ~= nil)
+    check("Epoch: audit log, held credits wiped", #ns.creditsDb.transactionLog == 0 and next(ns.creditsDb.pendingCredits) == nil)
+    check("Epoch: config is preserved (toggle, rates)",
+        ns.creditsDb.masterToggle == true and ns.creditsDb.creditsPerRep.x == 3 and ns.creditsDb.creditsPerRep.y == 7)
+    local ann = sentType("DATAEPOCH")
+    check("Epoch: DATAEPOCH is announced on the guild channel with the epoch",
+        ann ~= nil and ann.channel == "GUILD" and ann.text == "DATAEPOCH|" .. epoch1)
+    check("Epoch: the starter gets a chat confirmation", printed("Started from scratch"))
+    local fpAfter = ns.CreditsSync_Fingerprint()
+    check("Epoch: the sync fingerprint changed once the epoch is > 0", fpAfter ~= baseFp)
+    ns.creditsDb.dataEpoch = 0
+    check("Epoch: at epoch 0 the fingerprint is exactly the seed hash", ns.CreditsSync_Fingerprint() == baseFp)
+    ns.creditsDb.dataEpoch = epoch1
+    check("Epoch: a second start gets a strictly newer epoch",
+        ns.Credits_StartOver() == true and ns.creditsDb.dataEpoch == epoch1 + 1)
+    authorAccountFlag = false
+
+    -- Receive side: officer (can reseed).
+    ns.creditsDb.dataEpoch = 0
+    currentPlayerName = "Officer1"
+    stray()
+    printLog = {}
+    deliver("PlainMember", "DATAEPOCH|1800000001")
+    check("Epoch (receive): a plain member's DATAEPOCH is ignored",
+        ns.creditsDb.ledger["Stray"] ~= nil and ns.creditsDb.dataEpoch == 0)
+    deliver("Officer1x", "DATAEPOCH|1800000001")
+    check("Epoch (receive): an unknown sender's DATAEPOCH is ignored", ns.creditsDb.ledger["Stray"] ~= nil)
+    deliver("Bavin", "DATAEPOCH|abc")
+    deliver("Bavin", "DATAEPOCH|")
+    check("Epoch (receive): a malformed DATAEPOCH is ignored", ns.creditsDb.ledger["Stray"] ~= nil and ns.creditsDb.dataEpoch == 0)
+    deliver("Bavin", "DATAEPOCH|1800000001")
+    check("Epoch (receive): the recipient's DATAEPOCH wipes + reseeds an officer",
+        ns.creditsDb.dataEpoch == 1800000001 and ns.creditsDb.ledger["Stray"] == nil
+        and ns.creditsDb.ledger["MainOne"] ~= nil and #ns.creditsDb.transactionLog == 0)
+    check("Epoch (receive): the receiver is told", printed("started the credit data from scratch"))
+    stray()
+    deliver("Bavin", "DATAEPOCH|1800000001")
+    deliver("GLeader", "DATAEPOCH|1700000005")
+    check("Epoch (receive): the same or an older epoch is ignored", ns.creditsDb.ledger["Stray"] ~= nil)
+    deliver("GLeader", "DATAEPOCH|1800000009")
+    check("Epoch (receive): the guild leader's newer epoch is applied",
+        ns.creditsDb.dataEpoch == 1800000009 and ns.creditsDb.ledger["Stray"] == nil)
+    stray()
+    deliver("Loopi", "DATAEPOCH|1800000010")
+    check("Epoch (receive): an author character's newer epoch is applied", ns.creditsDb.dataEpoch == 1800000010 and ns.creditsDb.ledger["Stray"] == nil)
+
+    -- A non-officer client wipes but cannot reseed.
+    currentPlayerName = "PlainMember"
+    ns.creditsDb.dataEpoch = 0
+    stray()
+    deliver("Bavin", "DATAEPOCH|1800000001")
+    check("Epoch (receive): a non-officer is wiped and adopts the epoch, but is not reseeded",
+        ns.creditsDb.dataEpoch == 1800000001 and next(ns.creditsDb.ledger) == nil)
+
+    -- Offline-officer catch-up: setter clients answer CREDITSYNCREQ and announce at login.
+    currentPlayerName = "Bavin"
+    ns.creditsDb.dataEpoch = 1800000001
+    outboxLog = {}
+    deliver("Officer1", "CREDITSYNCREQ")
+    local reply = sentType("DATAEPOCH")
+    check("Epoch (catch-up): the recipient's client whispers DATAEPOCH to a requester",
+        reply ~= nil and reply.channel == "WHISPER" and reply.target == "Officer1" and reply.text == "DATAEPOCH|1800000001")
+    outboxLog = {}
+    ns.Credits_Init()
+    local loginAnn = sentType("DATAEPOCH")
+    check("Epoch (catch-up): a setter client announces the epoch on the guild channel at login",
+        loginAnn ~= nil and loginAnn.channel == "GUILD")
+    currentPlayerName = "Officer1"
+    outboxLog = {}
+    deliver("PlainMember", "CREDITSYNCREQ")
+    ns.Credits_Init()
+    check("Epoch (catch-up): a plain officer's client does not relay or announce it", sentType("DATAEPOCH") == nil)
+    currentPlayerName = "Bavin"
+    ns.creditsDb.dataEpoch = 0
+    outboxLog = {}
+    deliver("Officer1", "CREDITSYNCREQ")
+    ns.Credits_Init()
+    check("Epoch (catch-up): with no reset ever done, nothing is announced", sentType("DATAEPOCH") == nil)
+
+    -- Isolation: a client that has not had the reset can't exchange ledger data.
+    ns.creditsDb.dataEpoch = 1800000001
+    local newFp = ns.CreditsSync_Fingerprint()
+    check("Epoch (isolation): a client on the reset fingerprints differently from one that is not", newFp ~= baseFp)
+    currentPlayerName = "Officer1"
+    ns.creditsDb.ledger["Edited"] = { discordName = "Edited", mainToon = "Edited", alts = {}, points = 0, credits = 1,
+        lifetimePoints = 1, syncedAt = 1800000100 }
+    outboxLog, printLog = {}, {}
+    deliver("GLeader", "LSYNCREQ|" .. newFp .. "|0")
+    check("Epoch (isolation, control): a peer on the same epoch gets a data reply", sentType("LSYNCDATA") ~= nil)
+    outboxLog, printLog = {}, {}
+    deliver("GLeader", "LSYNCREQ|" .. baseFp .. "|0")
+    check("Epoch (isolation): an un-reset peer's LSYNCREQ gets no data and a mismatch warning",
+        sentType("LSYNCDATA") == nil and printed("Ledger sync with GLeader skipped"))
+    ns.creditsDb.dataEpoch = 0
+    ns.creditsDb.masterToggle = false
+    ns.creditsDb.creditsPerRep = { x = 1, y = 100 }
+end
+
+--------------------------------------------------------------------------
 print("== Credits: CreditsSeed_Import ==")
 resetState()
 inGuild = true

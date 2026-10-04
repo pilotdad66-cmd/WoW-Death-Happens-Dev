@@ -393,6 +393,55 @@ local function BuildSettingsTab(content)
         end
     end)
 
+    -- "Start from scratch (all officers)" (2026-10-04, Loopi): the coordinated
+    -- reset - wipes + reseeds this client AND announces it so every officer's
+    -- client (including ones who log in later) does the same. Author account
+    -- only to START; same two-click confirm idiom as above.
+    local startBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    startBtn:SetSize(220, 22)
+    startBtn:SetText("Start from scratch (all officers)")
+
+    local startStatus = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    startStatus:SetPoint("TOPLEFT", startBtn, "BOTTOMLEFT", 2, -4)
+    startStatus:SetPoint("RIGHT", content, "RIGHT", -16, 0)
+    startStatus:SetJustifyH("LEFT")
+    startStatus:SetWordWrap(true)
+
+    local startArmed, startArmedTimer, startMsg = false, nil, nil
+
+    local function StartInfoText()
+        local epoch = ns.creditsDb and ns.creditsDb.dataEpoch or 0
+        local last = (epoch > 0) and ("Last reset: " .. date("%Y-%m-%d %H:%M", epoch)) or "No reset has been done yet."
+        return "|cffaaaaaa" .. last .. "  Wipes the ledger, review queue, held credits and audit log on every officer's client, then reseeds. Config is kept.|r"
+    end
+
+    local function DisarmStart()
+        startArmed = false
+        startBtn:SetText("Start from scratch (all officers)")
+        startStatus:SetText(startMsg or StartInfoText())
+    end
+
+    startBtn:SetScript("OnClick", function()
+        if not ns.CanManageCreditsTestConfigLocal() then return end
+        if not startArmed then
+            startArmed = true
+            startMsg = nil
+            startBtn:SetText("Click again to confirm")
+            startStatus:SetText("|cffffcc00This wipes ALL credit data on EVERY officer's client and reseeds it.|r")
+            if startArmedTimer then startArmedTimer:Cancel() end
+            startArmedTimer = C_Timer.NewTimer(8, DisarmStart)
+            return
+        end
+        if startArmedTimer then startArmedTimer:Cancel() end
+        if ns.Credits_StartOver() then
+            startMsg = "|cff33ff99Started from scratch - announced to online officers.|r"
+        else
+            startMsg = "|cffff3333Refused|r"
+        end
+        DisarmStart()
+        C_Timer.After(4, function() startMsg = nil; if not startArmed then startStatus:SetText(StartInfoText()) end end)
+    end)
+
     return function()
         if not ns.creditsDb then
             statusText:SetText("Not initialized yet.")
@@ -417,11 +466,20 @@ local function BuildSettingsTab(content)
         resetBtn:ClearAllPoints()
         resetBtn:SetPoint("TOPLEFT", senders.GetBottomAnchor(), "BOTTOMLEFT", -8, -20)
 
+        startBtn:ClearAllPoints()
+        startBtn:SetPoint("TOPLEFT", resetBtn, "BOTTOMLEFT", 0, -16)
+        if ns.CanManageCreditsTestConfigLocal() then
+            startBtn:Enable()
+        else
+            startBtn:Disable()
+        end
+        if not startArmed and not startMsg then startStatus:SetText(StartInfoText()) end
+
         -- Shrink the scroll content to fit what's actually laid out
         -- (2026-09-25, Chris: "too much wasted space") - GetTop/GetBottom
         -- are nil until the frame has actually rendered once, hence the
         -- guard; falls back to leaving the generous fixed estimate alone.
-        local top, bottom = content:GetTop(), resetStatus:GetBottom()
+        local top, bottom = content:GetTop(), startStatus:GetBottom()
         if top and bottom then
             content:SetHeight(math.max(200, top - bottom + 20))
         end

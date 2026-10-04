@@ -174,6 +174,14 @@ function ns.InitCreditsDB()
     if type(ns.creditsDb.ratesUpdatedAt) ~= "number" then
         ns.creditsDb.ratesUpdatedAt = ns.creditsDb.configUpdatedAt or 0
     end
+    -- 2026-10-04 (Loopi): "start from scratch" reset number. 0 = never reset.
+    -- Raised only by ns.Credits_StartOver (author account) and adopted from a
+    -- DATAEPOCH announcement; folded into the ledger-sync fingerprint once it
+    -- is > 0 (CreditsSync.lua), so a client that has NOT had the reset can
+    -- never push its old data into one that has.
+    if type(ns.creditsDb.dataEpoch) ~= "number" then
+        ns.creditsDb.dataEpoch = 0
+    end
 end
 
 --------------------------------------------------------------------------
@@ -842,6 +850,13 @@ end
 --                               the author / guild leader / recipient.
 --                               Also WHISPERed in reply to CREDITSYNCREQ
 --                               by clients whose player may set rates.
+--   DATAEPOCH|<epoch>         (2026-10-04, additive) - "start from scratch":
+--                               the credit data was reset at <epoch>. Accepted
+--                               only from a setter-class sender name and only
+--                               if strictly newer than the local epoch. Sent on
+--                               GUILD at reset and at login, WHISPERed in reply
+--                               to CREDITSYNCREQ. Also folded into the LSYNC
+--                               fingerprint (when > 0).
 --
 -- STANDING RULE (mirrors Sync.lua's k-0009 comment): bump this suffix
 -- any time this wire format changes non-additively - a receiver on the
@@ -964,6 +979,31 @@ function ns.Credits_BroadcastRates()
     AddonSendMessage("RATESET|" .. EncodeRates(), channel)
 end
 
+-- DATAEPOCH|<epoch> (2026-10-04, additive) - see "Start from scratch" below.
+function ns.Credits_BroadcastEpoch(target)
+    if not ns.creditsDb or (ns.creditsDb.dataEpoch or 0) <= 0 then return end
+    if target then
+        AddonSendMessage("DATAEPOCH|" .. ns.creditsDb.dataEpoch, "WHISPER", target)
+        return
+    end
+    local channel = SyncChannel()
+    if not channel then return end
+    AddonSendMessage("DATAEPOCH|" .. ns.creditsDb.dataEpoch, channel)
+end
+
+local function ApplyIncomingEpoch(payload, senderShort)
+    if not IsRatesSetterName(senderShort) then return end
+    local epoch = tonumber(payload:match("^(%d+)$") or "")
+    if not epoch or epoch <= (ns.creditsDb.dataEpoch or 0) then return end
+    ns.Credits_WipeSyncedData()
+    ns.creditsDb.dataEpoch = epoch
+    local seeded = false
+    if ns.CreditsSeed_Import and ns.CanManageCreditsConfigLocal() then seeded = ns.CreditsSeed_Import() end
+    ns.CreditsPrint(("%s started the credit data from scratch: your copy was wiped%s."):format(
+        senderShort, seeded and " and reseeded" or ""))
+    if ns.CreditsConfig_Refresh then ns.CreditsConfig_Refresh() end
+end
+
 -- Called from this file's own PLAYER_LOGIN handler below - unconditional,
 -- same GATING philosophy as Sync.lua's own SYNCREQ (fires regardless of
 -- the local player's role; the receive side is what's permission-gated).
@@ -972,6 +1012,12 @@ function ns.Credits_Init()
     local channel = SyncChannel()
     if channel then
         AddonSendMessage("CREDITSYNCREQ", channel)
+        -- A setter-class client (author / guild leader / recipient) that
+        -- has had a reset announces it at login, so officers who were
+        -- offline when it happened pick it up.
+        if (ns.creditsDb.dataEpoch or 0) > 0 and IsRatesSetterName(UnitName("player")) then
+            ns.Credits_BroadcastEpoch()
+        end
     end
 end
 
@@ -999,6 +1045,12 @@ function ns.Credits_OnAddonMessage(prefix, message, channel, sender)
         if (ns.creditsDb.ratesUpdatedAt or 0) > 0 and IsRatesSetterName(myName) then
             AddonSendMessage("RATESET|" .. EncodeRates(), "WHISPER", sender)
         end
+        -- Reset number: same reasoning (receiver checks the sender name).
+        if (ns.creditsDb.dataEpoch or 0) > 0 and IsRatesSetterName(myName) then
+            ns.Credits_BroadcastEpoch(sender)
+        end
+    elseif msgType == "DATAEPOCH" then
+        ApplyIncomingEpoch(rest, senderShort)
     elseif msgType == "CREDITSYNCDATA" then
         ApplyIncomingConfig(rest, senderShort)
     elseif msgType == "RATESET" then
@@ -1082,6 +1134,16 @@ end
 -- one; officers coordinate a reset verbally during the test phase.
 function ns.Credits_ResetTestData()
     if not ns.CanManageCreditsConfigLocal() then return false end
+    ns.Credits_WipeSyncedData()
+    ns.CreditsPrint("Test credit data wiped (ledger, toon index, dynamic review queue, held credits, transaction log).")
+    return true
+end
+
+-- Wipes every piece of credit data that is replicated between officers (or
+-- derived from it) - NOT the config (master toggle, test lists, rates).
+-- No permission gate: callers (the local reset above, Credits_StartOver and
+-- the DATAEPOCH receive path) gate themselves.
+function ns.Credits_WipeSyncedData()
     ns.creditsDb.ledger = {}
     ns.creditsDb.toonIndex = {}
     ns.creditsDb.dynamicReviewQueue = {}
@@ -1093,7 +1155,48 @@ function ns.Credits_ResetTestData()
     ns.creditsDb.pendingCredits = {}
     ns.creditsDb.pendingReleased = {}
     ns.creditsDb.ledgerTombstones = {}
-    ns.CreditsPrint("Test credit data wiped (ledger, toon index, dynamic review queue, held credits, transaction log).")
+end
+
+--------------------------------------------------------------------------
+-- "Start from scratch" - the coordinated, all-officers reset
+-- (2026-10-04, Loopi: the plan was always to reset before going live, and
+-- the mechanism needs testing early; NOT an automatic reset on a new build).
+--
+-- ns.creditsDb.dataEpoch is a reset number (the server time of the reset, so
+-- two resets can never collide and no coordination is needed). Starting over:
+--   1. only the author account may start it (CanManageCreditsTestConfigLocal);
+--   2. the starter wipes the synced credit data, raises dataEpoch, reseeds
+--      from the shipped SeedData/AltRoster and announces DATAEPOCH|<epoch>;
+--   3. a receiver adopts it only if the SENDER NAME is the author / guild
+--      leader / donation recipient (IsRatesSetterName - a remote client can't
+--      tell the author's account from the other two, so the receive check is
+--      that wide, the START check is author-only) AND the epoch is strictly
+--      newer than its own; it then wipes, adopts the epoch and reseeds (if it
+--      is an officer - the seed import is officer-gated);
+--   4. an officer who was offline gets it at login: clients whose player may
+--      set it announce it on login and answer CREDITSYNCREQ with it;
+--   5. dataEpoch is mixed into the ledger-sync fingerprint once > 0, so a
+--      client that has not had the reset (including old builds that don't
+--      know the mechanism) can never push its old data back in.
+-- Config (master toggle, test lists, rates) is deliberately kept.
+--------------------------------------------------------------------------
+local function ReseedLocal()
+    if ns.CreditsSeed_Import and ns.CanManageCreditsConfigLocal() then
+        return ns.CreditsSeed_Import()
+    end
+    return false
+end
+
+function ns.Credits_StartOver()
+    if not ns.CanManageCreditsTestConfigLocal() then return false end
+    if not ns.creditsDb then return false end
+    local epoch = math.max(time(), (ns.creditsDb.dataEpoch or 0) + 1)
+    ns.Credits_WipeSyncedData()
+    ns.creditsDb.dataEpoch = epoch
+    ReseedLocal()
+    ns.Credits_BroadcastEpoch()
+    ns.CreditsPrint("Started from scratch: credit data wiped and reseeded, reset announced to online officers (others get it when they log in).")
+    if ns.CreditsConfig_Refresh then ns.CreditsConfig_Refresh() end
     return true
 end
 
@@ -1209,6 +1312,13 @@ function ns.Credits_HandleSlash(rest)
         else
             ns.CreditsPrint("Refused - Distribution Officer only.")
         end
+    elseif sub == "startover" then
+        -- 2026-10-04: coordinated all-officers reset (see "Start from scratch").
+        if arg1 ~= "confirm" then
+            ns.CreditsPrint("This wipes the credit data (ledger, review queue, held credits, audit log) on YOUR client AND every officer's, then reseeds from the shipped data. Config (toggle, test lists, rates) is kept. Run '/dhb credits startover confirm' to proceed.")
+        elseif not ns.Credits_StartOver() then
+            ns.CreditsPrint("Refused - only the addon author can start from scratch.")
+        end
 
     -- 2026-09-28 (Chris): "/dhb credits officer add|remove" removed -
     -- the officer list is DH-Bavin's shared one now, managed on the
@@ -1248,6 +1358,6 @@ function ns.Credits_HandleSlash(rest)
         end
     else
         ns.CreditsPrint("Unknown: /dhb credits " .. rest)
-        ns.CreditsPrint("Commands: window (opens the config UI), status, toggle on|off, multiplier <n>, officer add|remove <name>, receiver add|remove <name>, sender add|remove <name>, reset confirm")
+        ns.CreditsPrint("Commands: window (opens the config UI), status, toggle on|off, multiplier <n>, officer add|remove <name>, receiver add|remove <name>, sender add|remove <name>, reset confirm, startover confirm, log")
     end
 end
