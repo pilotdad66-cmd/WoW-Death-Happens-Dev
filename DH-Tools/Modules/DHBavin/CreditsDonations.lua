@@ -278,8 +278,11 @@ local function Announce(rec, entry, logged)
     end
 end
 
+-- Every audit-log row is also pushed live to the online officers (CM7:
+-- the log is replicated to every officer, every row - CreditsSync.lua).
 local function LogEntry(logged)
     table.insert(ns.creditsDb.transactionLog, logged)
+    if ns.CreditsSync_LogAdded then ns.CreditsSync_LogAdded(logged) end
 end
 
 local function SyncChanged(keys, queueChanges, extra)
@@ -467,7 +470,7 @@ function ns.Credits_MergeAccounts(sourceKey, targetKey)
     for _, e in ipairs(db.transactionLog) do
         if e.account == sourceKey then e.account = targetKey end
     end
-    table.insert(db.transactionLog, {
+    LogEntry({
         id = NewId(),
         ts = Now(),
         kind = "merge",

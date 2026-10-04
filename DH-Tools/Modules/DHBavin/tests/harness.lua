@@ -1372,6 +1372,218 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 2026-10-04 (Loopi: "1. Every officer. 2. Every row."): the audit log is
+-- replicated between officers - immutable rows, union by id, per-day digest
+-- reconciliation, merge re-tagging derived from the merge rows.
+print("== Credits: audit log replication (CM7) ==")
+do
+    local PFX = "DHBavinCreditsV2"
+    local function deliver(from, text) ns.Credits_OnAddonMessage(PFX, text, "WHISPER", from) end
+    local function payloadsTo(target)
+        local order, byId = {}, {}
+        for _, e in ipairs(outboxLog) do
+            if e.target == target and e.channel == "WHISPER" then
+                local id, i, n, chunk = e.text:match("^LSYNCDATA|(%x+)|(%d+)/(%d+)|(.*)$")
+                if id then
+                    if not byId[id] then byId[id] = {}; order[#order + 1] = id end
+                    byId[id][tonumber(i)] = chunk
+                end
+            end
+        end
+        local out = {}
+        for _, id in ipairs(order) do out[#out + 1] = table.concat(byId[id]) end
+        return out
+    end
+    local function allTo(target) return table.concat(payloadsTo(target), "\n") end
+    local function setup()
+        resetState()
+        inGuild = true
+        guildRosterEntries = {
+            { name = "GLeader", rankIndex = 0 }, { name = "Officer1", rankIndex = 3 },
+            { name = "Officer2", rankIndex = 3 }, { name = "Member1", rankIndex = 5 },
+        }
+        ns.UpdateGuildRosterCache()
+        currentPlayerName = "Officer1"
+        ns.db.editors = { "Officer1", "Officer2" }
+        ns.CreditsSeedData = { MainA = { lifetimePoints = 100 }, MainB = { lifetimePoints = 200 } }
+        ns.CreditsAltRoster = {}
+        ns.CreditsSeed_Import()
+        outboxLog, printLog = {}, {}
+    end
+    local function fp() return ns.CreditsSync_Fingerprint() end
+    local enc, dec = ns.CreditsSync_EncodeLogRow, ns.CreditsSync_DecodeLogRow
+    local unpackFn = table.unpack or unpack
+    local wrapCounter = 0xa000
+    local function wrap(...)
+        wrapCounter = wrapCounter + 1
+        return ("LSYNCDATA|%x|1/1|F:"):format(wrapCounter) .. fp() .. ";" .. table.concat({ ... }, ";")
+    end
+    local DAY = 86400
+    local now = time()
+    local today = math.floor(now / DAY)
+    local function don(id, ts, account)
+        return { id = id, ts = ts, sender = "We|ird;Don,or%~", receiver = "Bavin", account = account,
+            items = { { itemID = 123, name = "Silk|Cloth; x", count = 20, rep = 5.5, category = "Cloth", unpriced = false },
+                      { itemID = 9, name = "Odd", count = 1, rep = 0, category = "Uncategorized", unpriced = true } },
+            gold = 12.5, rep = 5.5, credits = 0.055, creditsPerRep = { x = 1, y = 100 }, repPerGold = { x = 100, y = 1 },
+            tierBefore = "Neutral", prestigeBefore = 0, tierAfter = "Friendly", prestigeAfter = 0, released = true }
+    end
+    local function merge(id, ts, target, source)
+        return { id = id, ts = ts, kind = "merge", account = target, source = source, sourceMain = source,
+            moved = { source }, rep = 1, credits = 0, officer = "Officer1" }
+    end
+    local function logById(id)
+        for _, e in ipairs(ns.creditsDb.transactionLog) do if e.id == id then return e end end
+    end
+
+    -- ---- row codec --------------------------------------------------------
+    local r = don("id-1", 1700000000, "Main|A")
+    local e1 = enc(r)
+    check("Log row: encoded form has no raw ';' (item delimiter)", not e1:find(";", 1, true))
+    local d1 = dec(e1)
+    check("Log row: scalars round-trip (hostile characters included)",
+        d1 and d1.id == "id-1" and d1.ts == 1700000000 and d1.sender == r.sender and d1.account == "Main|A"
+        and d1.gold == 12.5 and d1.rep == 5.5 and d1.released == true and d1.tierAfter == "Friendly")
+    check("Log row: nested item lines round-trip",
+        d1 and #d1.items == 2 and d1.items[1].name == "Silk|Cloth; x" and d1.items[1].count == 20
+        and d1.items[1].rep == 5.5 and d1.items[1].unpriced == false and d1.items[2].unpriced == true and d1.items[2].itemID == 9)
+    check("Log row: nested rate tables round-trip",
+        d1 and d1.creditsPerRep.x == 1 and d1.creditsPerRep.y == 100 and d1.repPerGold.x == 100)
+    local m1 = dec(enc({ id = "m-1", ts = 5, kind = "merge", moved = { "A,lt", "B|lt" }, account = "T" }))
+    check("Log row: a list of strings round-trips", m1 and #m1.moved == 2 and m1.moved[1] == "A,lt" and m1.moved[2] == "B|lt")
+    local m2 = dec(enc({ id = "m-2", ts = 5, moved = {} }))
+    check("Log row: an empty list stays an empty table", m2 and type(m2.moved) == "table" and #m2.moved == 0)
+    check("Log row: a row without an id is rejected", dec("ts=n5") == nil)
+    check("Log row: a row without a timestamp is rejected", dec("id=sx") == nil)
+    check("Log row: a non-numeric / zero timestamp is rejected", dec("id=sx|ts=sabc") == nil and dec("id=sx|ts=n0") == nil)
+    local tol = dec("id=sx|ts=n5|junk|zz=q9|a=n1")
+    check("Log row: junk fields are ignored, the rest decodes", tol and tol.id == "x" and tol.ts == 5 and tol.a == 1)
+
+    -- ---- live push ----------------------------------------------------------
+    setup()
+    ns.CreditsSync_LogAdded(don("L1", now, "MainA"))
+    local pushed = allTo("Officer2")
+    check("Live push: a new row is whispered to an online officer",
+        pushed:match("^F:" .. fp() .. ";T:") ~= nil and pushed:find("id=sL1", 1, true) ~= nil)
+    check("Live push: nothing goes to a non-officer", #payloadsTo("Member1") == 0)
+    local anyGuild = false
+    for _, ev in ipairs(outboxLog) do if ev.channel == "GUILD" then anyGuild = true end end
+    check("Live push: never on the GUILD channel", not anyGuild)
+    setup()
+    check("Merge wiring: merging accounts succeeds", ns.Credits_MergeAccounts("MainB", "MainA") == true)
+    check("Merge wiring: the merge row is pushed live", allTo("Officer2"):find("kind=smerge", 1, true) ~= nil)
+    setup()
+    guildRosterEntries[3].online = false
+    ns.UpdateGuildRosterCache()
+    outboxLog = {}
+    ns.CreditsSync_LogAdded(don("L2", now, "MainA"))
+    check("Live push: with no officer online nothing is sent (reconciliation covers it later)", #payloadsTo("Officer2") == 0)
+
+    -- ---- receive: union by id ----------------------------------------------
+    setup()
+    deliver("Officer2", wrap("T:" .. enc(don("R1", now - DAY, "MainA"))))
+    check("Receive: a row from an officer is added", #ns.creditsDb.transactionLog == 1 and logById("R1") ~= nil)
+    check("Receive: the row's nested data survived", logById("R1").items[1].name == "Silk|Cloth; x")
+    deliver("Officer2", wrap("T:" .. enc(don("R1", now - DAY, "MainA"))))
+    check("Receive: a row with a known id is not added twice", #ns.creditsDb.transactionLog == 1)
+    deliver("Member1", wrap("T:" .. enc(don("R2", now - DAY, "MainA"))))
+    check("Receive: a row from a non-officer is ignored", logById("R2") == nil)
+    deliver("Officer2", "LSYNCDATA|b002|1/1|F:deadbeef;T:" .. enc(don("R3", now - DAY, "MainA")))
+    check("Receive: a row under a mismatching fingerprint is ignored", logById("R3") == nil)
+    deliver("Officer2", wrap("T:garbage", "T:", "T:id=sR4", "T:id=sR5|ts=n9"))
+    check("Receive: malformed rows are ignored without error", logById("R4") == nil and logById("R5") ~= nil and #ns.creditsDb.transactionLog == 2)
+
+    -- ---- merge re-tagging on a replica -----------------------------------------
+    setup()
+    deliver("Officer2", wrap("T:" .. enc(merge("M1", now - 100, "MainA", "SrcX"))))
+    deliver("Officer2", wrap("T:" .. enc(don("D1", now - 200, "SrcX")), "T:" .. enc(don("D2", now, "SrcX"))))
+    check("Merge: an older row that arrives AFTER the merge row is re-tagged to the target", logById("D1").account == "MainA")
+    check("Merge: a row newer than the merge keeps its account", logById("D2").account == "SrcX")
+    check("Merge: the merge row keeps its target", logById("M1").account == "MainA")
+    deliver("Officer2", wrap("T:" .. enc(merge("M2", now - 50, "MainB", "MainA"))))
+    check("Merge: a chained merge carries earlier rows through (D1 -> MainA -> MainB)", logById("D1").account == "MainB")
+    check("Merge: ...and re-tags the earlier merge row, as the merging client does", logById("M1").account == "MainB")
+    check("Merge: ...but still not a newer row of the original source", logById("D2").account == "SrcX")
+
+    -- ---- digests / reconciliation -----------------------------------------------
+    local function theirs(rows, extra)
+        local saved = ns.creditsDb.transactionLog
+        ns.creditsDb.transactionLog = rows
+        local dg = ns.CreditsSync_LogDigest()
+        ns.creditsDb.transactionLog = saved
+        local items = { "W:" .. (today - 90) .. "|" .. (today + 1) }
+        local days = {}
+        for day in pairs(dg) do days[#days + 1] = day end
+        table.sort(days)
+        for _, day in ipairs(days) do items[#items + 1] = ("G:%d|%d|%d"):format(day, dg[day].n, dg[day].h) end
+        for _, x in ipairs(extra or {}) do items[#items + 1] = x end
+        return wrap(unpackFn(items))
+    end
+    local rowA = don("A", now - 3 * DAY, "MainA")
+    local rowB = don("B", now - 1 * DAY, "MainA")
+    setup()
+    ns.creditsDb.transactionLog = { rowA, rowB }
+    deliver("Officer2", theirs({ rowA, rowB }))
+    check("Digest: identical logs -> no reply", #payloadsTo("Officer2") == 0)
+    deliver("Officer2", theirs({ rowA }))
+    local reply = allTo("Officer2")
+    check("Digest: the peer lacks a row -> we send the rows of the differing day only",
+        reply:find("id=sB", 1, true) ~= nil and reply:find("id=sA", 1, true) == nil)
+    check("Digest: ...plus our own window and digest so they can answer", reply:find(";W:", 1, true) ~= nil and reply:find(";G:", 1, true) ~= nil)
+    outboxLog = {}
+    local extraDay = ("G:%d|2|777"):format(today - 5)
+    deliver("Officer2", theirs({ rowA, rowB }, { extraDay }))
+    reply = allTo("Officer2")
+    check("Digest: the peer has a day we lack -> we send only our digest (they will send the rows)",
+        reply ~= "" and reply:find(";T:", 1, true) == nil and reply:find(";G:", 1, true) ~= nil)
+    outboxLog = {}
+    deliver("Officer2", theirs({}))
+    reply = allTo("Officer2")
+    check("Digest: an empty peer gets every row we hold", reply:find("id=sA", 1, true) ~= nil and reply:find("id=sB", 1, true) ~= nil)
+    -- A peer that sends us rows we lack, in the same payload as its digest.
+    setup()
+    ns.creditsDb.transactionLog = { rowA }
+    deliver("Officer2", theirs({ rowA, rowB }, { "T:" .. enc(rowB) }))
+    check("Digest: rows in the same payload are applied before the comparison, so no reply is needed",
+        logById("B") ~= nil and #payloadsTo("Officer2") == 0)
+    -- Round cap: a mismatch that never resolves cannot loop forever.
+    setup()
+    ns.creditsDb.transactionLog = { rowA }
+    deliver("Officer2", "LSYNCREQ|" .. fp() .. "|0")   -- (the cap is per peer and persists across setup())
+    outboxLog = {}
+    for _ = 1, 10 do deliver("Officer2", theirs({ rowA }, { extraDay })) end
+    check("Digest: replies per peer are capped", #payloadsTo("Officer2") == 6)
+    deliver("Officer2", "LSYNCREQ|" .. fp() .. "|0")
+    outboxLog = {}
+    deliver("Officer2", theirs({ rowA }, { extraDay }))
+    check("Digest: a fresh LSYNCREQ from the peer resets the cap", #payloadsTo("Officer2") == 1)
+
+    -- Our side of the conversation: login/appearance sends our digest.
+    setup()
+    ns.creditsDb.transactionLog = { rowA, don("OLD", now - 200 * DAY, "MainA") }
+    outboxLog = {}
+    ns.CreditsSync_OnLogin()
+    local sent = allTo("Officer2")
+    check("Login: our digest goes to an online officer with the window",
+        sent:find(";W:" .. (today - 90) .. "|" .. (today + 1), 1, true) ~= nil)
+    check("Login: ...with this day's row counted", sent:find(("G:%d|1|"):format(today - 3), 1, true) ~= nil)
+    check("Login: ...and a row older than the window is not part of the digest", sent:find(("G:%d|"):format(today - 200), 1, true) == nil)
+
+    -- Two clients converge: client X's log delivered to client Y as T rows.
+    setup()
+    local X = { don("X1", now - 2 * DAY, "MainA"), don("X2", now - 2 * DAY, "MainB"), merge("XM", now - DAY, "MainA", "MainB") }
+    local items = {}
+    for _, row in ipairs(X) do items[#items + 1] = "T:" .. enc(row) end
+    deliver("Officer2", wrap(unpackFn(items)))
+    local dY = ns.CreditsSync_LogDigest()
+    ns.creditsDb.transactionLog = X
+    local dX = ns.CreditsSync_LogDigest()
+    local same = true
+    for day, v in pairs(dX) do if not dY[day] or dY[day].n ~= v.n or dY[day].h ~= v.h then same = false end end
+    check("Two clients: digests match once the rows have been exchanged", same)
+end
+
+--------------------------------------------------------------------------
 print("== Credits: CreditsSeed_Import ==")
 resetState()
 inGuild = true

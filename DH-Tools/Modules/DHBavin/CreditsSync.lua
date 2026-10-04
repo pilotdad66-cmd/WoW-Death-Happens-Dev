@@ -36,6 +36,10 @@
 --                                         F:<fp>
 --                                         R:<record>
 --                                         Q:<name>|<1 add / 0 remove>|<stamp>
+--                                         T:<audit-log row> W:<from>|<to>
+--                                         G:<day>|<n>|<h>   (2026-10-04, CM7:
+--                                         audit log replication - see the
+--                                         "Audit-log replication" section)
 --   <record> = discordName|mainToon|alts(csv)|points|credits|tier|prestige|
 --              lifetimePoints|lastDonationDate|lastUpdated|syncedAt|
 --              lifetimeCredits            (lifetimeCredits LAST/optional)
@@ -381,6 +385,255 @@ local function PendingItem(e) return "P:" .. EncodePending(e) end
 local function ReleasedItem(id, t) return "X:" .. Esc(id) .. "|" .. Num(t.ts) end
 
 --------------------------------------------------------------------------
+-- Audit-log replication (CM7 step 2b, 2026-10-04, Loopi: "1. Every officer.
+-- 2. Every row.")
+--
+-- transactionLog rows (donations, released holds, merges - and CM5's spends
+-- later) are IMMUTABLE events with a unique id, so replication is a plain
+-- union by id: no stamps, no last-writer-wins. The only mutation a row ever
+-- gets is a merge re-tagging its `account`, and that is DERIVED from the
+-- merge rows themselves (RewriteMergedAccounts), so replicas converge.
+--   T:<row>              one row, sent live to online officers when it is
+--                        written, and again by reconciliation.
+--   W:<from>|<to>        day window (UTC day numbers) a digest covers.
+--   G:<day>|<n>|<h>      per-day digest: row count and sum of id hashes.
+-- Reconciliation (why digests and not a "since" time): a row created while
+-- an officer was offline can be missed by a since-based catch-up for good if
+-- that officer happened to sync with someone else later. So when an officer
+-- asks for a sync it also sends its digest; the peer compares day by day,
+-- sends its rows for every day that differs plus its own digest, and the
+-- first side answers the same way until both match (a round cap per peer
+-- guards against a row that can never be applied looping forever). Rows older
+-- than LOG_WINDOW_DAYS are not reconciled (the planned 6-8 week purge keeps
+-- the log inside it).
+-- Row wire format: key=value fields joined by '|' (keys sorted); value =
+-- s<str> | n<num> | b1/b0 | a<elem,elem> (elem = scalar or m<k=v~k=v>) |
+-- m<k=v~k=v>. Strings are Esc'd, so no value contains | ; , ~ unescaped.
+--------------------------------------------------------------------------
+local LOG_WINDOW_DAYS = 90
+local MAX_RECON_ROUNDS = 6
+local MAX_LOG_ROWS = 50000
+local reconRounds = {}     -- peer -> reconciliation replies sent since they last asked
+
+local function IsKeyName(k) return type(k) == "string" and k:match("^[%a_][%w_]*$") ~= nil end
+
+local function EncScalar(v)
+    local t = type(v)
+    if t == "string" then return "s" .. Esc(v) end
+    if t == "number" then
+        if v ~= v or v == math.huge or v == -math.huge then return nil end
+        return "n" .. tostring(v)
+    end
+    if t == "boolean" then return v and "b1" or "b0" end
+    return nil
+end
+
+local function EncMap(t)
+    local keys = {}
+    for k in pairs(t) do if IsKeyName(k) then keys[#keys + 1] = k end end
+    table.sort(keys)
+    local parts = {}
+    for _, k in ipairs(keys) do
+        local s = EncScalar(t[k])
+        if s then parts[#parts + 1] = k .. "=" .. s end
+    end
+    return "m" .. table.concat(parts, "~")
+end
+
+local function EncValue(v)
+    if type(v) ~= "table" then return EncScalar(v) end
+    if next(v) == nil or v[1] ~= nil then
+        local parts = {}
+        for _, e in ipairs(v) do
+            local s
+            if type(e) == "table" then s = EncMap(e) else s = EncScalar(e) end
+            if s then parts[#parts + 1] = s end
+        end
+        return "a" .. table.concat(parts, ",")
+    end
+    return EncMap(v)
+end
+
+local function EncodeLogRow(row)
+    local keys = {}
+    for k in pairs(row) do if IsKeyName(k) then keys[#keys + 1] = k end end
+    table.sort(keys)
+    local parts = {}
+    for _, k in ipairs(keys) do
+        local s = EncValue(row[k])
+        if s then parts[#parts + 1] = k .. "=" .. s end
+    end
+    return table.concat(parts, "|")
+end
+
+local function DecScalar(s)
+    local tag, body = s:sub(1, 1), s:sub(2)
+    if tag == "s" then return true, Unesc(body) end
+    if tag == "n" then
+        local n = tonumber(body)
+        if n == nil or n ~= n or n == math.huge or n == -math.huge then return false end
+        return true, n
+    end
+    if tag == "b" then
+        if body == "1" then return true, true end
+        if body == "0" then return true, false end
+    end
+    return false
+end
+
+local function DecMap(s)
+    local t = {}
+    if s == "" then return t end
+    for _, f in ipairs(Split(s, "~")) do
+        local k, v = f:match("^([%a_][%w_]*)=(.*)$")
+        if k then
+            local ok, val = DecScalar(v)
+            if ok then t[k] = val end
+        end
+    end
+    return t
+end
+
+local function DecValue(s)
+    local tag = s:sub(1, 1)
+    if tag == "a" then
+        local t, body = {}, s:sub(2)
+        if body ~= "" then
+            for _, e in ipairs(Split(body, ",")) do
+                if e:sub(1, 1) == "m" then
+                    t[#t + 1] = DecMap(e:sub(2))
+                else
+                    local ok, val = DecScalar(e)
+                    if ok then t[#t + 1] = val end
+                end
+            end
+        end
+        return true, t
+    end
+    if tag == "m" then return true, DecMap(s:sub(2)) end
+    return DecScalar(s)
+end
+
+local function DecodeLogRow(body)
+    local row = {}
+    for _, f in ipairs(Split(body, "|")) do
+        local k, v = f:match("^([%a_][%w_]*)=(.*)$")
+        if k then
+            local ok, val = DecValue(v)
+            if ok then row[k] = val end
+        end
+    end
+    if type(row.id) ~= "string" or row.id == "" or #row.id > 80 then return nil end
+    if type(row.ts) ~= "number" or row.ts <= 0 then return nil end
+    return row
+end
+
+ns.CreditsSync_EncodeLogRow = EncodeLogRow
+ns.CreditsSync_DecodeLogRow = DecodeLogRow
+
+local function DayOf(ts) return math.floor((tonumber(ts) or 0) / 86400) end
+
+-- day -> { n = rows, h = sum of id hashes (order independent) }
+local function LogDigest(db)
+    local d = {}
+    for _, e in ipairs(db.transactionLog or {}) do
+        if type(e) == "table" and type(e.id) == "string" and tonumber(e.ts) then
+            local day = DayOf(e.ts)
+            local x = d[day]
+            if not x then
+                x = { n = 0, h = 0 }
+                d[day] = x
+            end
+            x.n = x.n + 1
+            x.h = (x.h + Hash(7, e.id)) % 2147483629
+        end
+    end
+    return d
+end
+ns.CreditsSync_LogDigest = function() return LogDigest(ns.creditsDb or {}) end
+
+local function DigestItems(db)
+    local today = DayOf(time())
+    local from, to = today - LOG_WINDOW_DAYS, today + 1
+    local items = { "W:" .. from .. "|" .. to }
+    local d = LogDigest(db)
+    local days = {}
+    for day in pairs(d) do
+        if day >= from and day <= to then days[#days + 1] = day end
+    end
+    table.sort(days)
+    for _, day in ipairs(days) do
+        items[#items + 1] = ("G:%d|%d|%d"):format(day, d[day].n, d[day].h)
+    end
+    return items
+end
+
+-- Re-tag the account on rows that predate a merge: for every merge row (oldest
+-- first) rows with account == its source and ts <= the merge's become the
+-- target. Exactly what Credits_MergeAccounts does on the officer who merged,
+-- so it is a no-op there and brings replicas (and rows that arrive after the
+-- merge row did) to the same state.
+local function RewriteMergedAccounts(db)
+    local log = db.transactionLog
+    local merges = {}
+    for _, e in ipairs(log) do
+        if e.kind == "merge" and type(e.source) == "string" and type(e.account) == "string" then merges[#merges + 1] = e end
+    end
+    if #merges == 0 then return end
+    table.sort(merges, function(a, b)
+        if a.ts ~= b.ts then return a.ts < b.ts end
+        return tostring(a.id) < tostring(b.id)
+    end)
+    for _, m in ipairs(merges) do
+        for _, e in ipairs(log) do
+            if e ~= m and e.account == m.source and (tonumber(e.ts) or 0) <= m.ts then e.account = m.account end
+        end
+    end
+end
+
+-- Live push of a freshly written row. With nobody online it is simply
+-- skipped: reconciliation delivers it when an officer next appears.
+function ns.CreditsSync_LogAdded(row)
+    local db = EnsureDb()
+    if not db or type(row) ~= "table" then return end
+    local peers = PeerList()
+    if #peers == 0 then return end
+    local items = { "T:" .. EncodeLogRow(row) }
+    for _, peer in ipairs(peers) do SendItems(peer, items) end
+end
+
+-- Compare a peer's digest with ours; send our rows for every day that differs
+-- plus our own digest so they can do the same.
+local function ReconcileLog(peer, from, to, theirs)
+    local db = EnsureDb()
+    if not db then return end
+    local today = DayOf(time())
+    if from < today - 120 then from = today - 120 end
+    if to > today + 2 then to = today + 2 end
+    if to < from then return end
+    local mine = LogDigest(db)
+    local diffDays, mismatch = {}, false
+    for day = from, to do
+        local m, t = mine[day], theirs[day]
+        if (m and (not t or t.n ~= m.n or t.h ~= m.h)) or (t and not m) then
+            mismatch = true
+            if m then diffDays[day] = true end
+        end
+    end
+    if not mismatch then return end
+    if (reconRounds[peer] or 0) >= MAX_RECON_ROUNDS then return end
+    reconRounds[peer] = (reconRounds[peer] or 0) + 1
+    local items = {}
+    for _, e in ipairs(db.transactionLog) do
+        if type(e) == "table" and type(e.id) == "string" and tonumber(e.ts) and diffDays[DayOf(e.ts)] then
+            items[#items + 1] = "T:" .. EncodeLogRow(e)
+        end
+    end
+    for _, it in ipairs(DigestItems(db)) do items[#items + 1] = it end
+    SendItems(peer, items)
+end
+
+--------------------------------------------------------------------------
 -- Local mutation -> stamp + push
 --------------------------------------------------------------------------
 -- Called by Credits.lua's Link/Unlink/SetAsNewMain AFTER they mutate the
@@ -525,7 +778,13 @@ end
 local function RequestFromPeers(peers)
     local db = EnsureDb()
     if not db or #peers == 0 then return end
-    for _, peer in ipairs(peers) do SendRequest(peer) end
+    for _, peer in ipairs(peers) do
+        SendRequest(peer)
+        -- Audit-log reconciliation: our digest; the peer answers with the
+        -- rows we lack (see "Audit-log replication").
+        reconRounds[peer] = 0
+        SendItems(peer, DigestItems(db))
+    end
     db.lastSyncAt = time()
     local dirtyItems = FlushDirty()
     if #dirtyItems > 0 then
@@ -706,9 +965,34 @@ local function ApplyPayload(payload, senderShort)
         return
     end
     local changedRecords, changedQueue = 0, 0
+    -- Audit-log rows (T), digest window (W) and per-day digests (G).
+    local addedLog, winFrom, winTo, theirDays = 0, nil, nil, {}
+    local haveIds
     for i = 2, #items do
         local kind, body = items[i]:match("^(%a):(.*)$")
-        if kind == "R" then
+        if kind == "T" then
+            local row = DecodeLogRow(body)
+            if row then
+                local db = ns.creditsDb
+                if not haveIds then
+                    haveIds = {}
+                    for _, e in ipairs(db.transactionLog) do
+                        if type(e) == "table" and e.id then haveIds[e.id] = true end
+                    end
+                end
+                if not haveIds[row.id] and #db.transactionLog < MAX_LOG_ROWS then
+                    haveIds[row.id] = true
+                    table.insert(db.transactionLog, row)
+                    addedLog = addedLog + 1
+                end
+            end
+        elseif kind == "W" then
+            local a, b = body:match("^(%-?%d+)|(%-?%d+)$")
+            if a then winFrom, winTo = tonumber(a), tonumber(b) end
+        elseif kind == "G" then
+            local d, n, h = body:match("^(%-?%d+)|(%d+)|(%d+)$")
+            if d then theirDays[tonumber(d)] = { n = tonumber(n), h = tonumber(h) } end
+        elseif kind == "R" then
             local rec = DecodeRecord(body)
             if rec and ApplyRecord(rec) then changedRecords = changedRecords + 1 end
         elseif kind == "Q" then
@@ -737,7 +1021,9 @@ local function ApplyPayload(payload, senderShort)
         end
     end
     if changedRecords > 0 then ns.Credits_RebuildToonIndex() end
-    if changedRecords > 0 or changedQueue > 0 then
+    if addedLog > 0 then RewriteMergedAccounts(ns.creditsDb) end
+    if winFrom then ReconcileLog(senderShort, winFrom, winTo, theirDays) end
+    if changedRecords > 0 or changedQueue > 0 or addedLog > 0 then
         if ns.CreditsConfig_Refresh then ns.CreditsConfig_Refresh() end
     end
     -- CM4: a link/new account that just arrived may be what a held donation
@@ -758,6 +1044,7 @@ function ns.CreditsSync_OnMessage(msgType, rest, sender, senderShort)
             WarnMismatch(senderShort, fp)
             return
         end
+        reconRounds[senderShort] = 0   -- a fresh ask resets the log-reconciliation cap
         SendItems(senderShort, CollectSince(tonumber(sinceStr) or 0))
         -- Reciprocate once so edits THIS client made while the requester was
         -- away flow back too. No loop: SendRequest marks requestedFrom.
