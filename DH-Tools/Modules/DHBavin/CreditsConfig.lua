@@ -2034,6 +2034,35 @@ local function BuildAuditTab(content)
         return options[(idx % #options) + 1]
     end
 
+    -- Drop-down list under the clicked filter button (2026-10-04, Loopi: the
+    -- filter buttons "should be drop down lists", not rotate through the
+    -- choices). Same vendored dropdown library + EasyMenu-at-the-cursor idiom
+    -- as the Roster right-click menu (the proven path in this client); if the
+    -- library is somehow missing it falls back to cycling.
+    -- choices = { { value = , label = }, ... }; onPick(value) applies it.
+    local LibDropDown = LibStub and LibStub("LibUIDropDownMenuDHTools-4.0", true)
+    local choiceMenuFrame
+    local function OpenChoiceMenu(choices, current, onPick)
+        if not LibDropDown then
+            local idx = 0
+            for i, c in ipairs(choices) do if c.value == current then idx = i break end end
+            onPick(choices[(idx % #choices) + 1].value)
+            return
+        end
+        if not choiceMenuFrame then
+            choiceMenuFrame = LibDropDown:Create_UIDropDownMenu("DHBavinAuditChoiceMenuFrame", UIParent)
+        end
+        local entries = {}
+        for _, c in ipairs(choices) do
+            entries[#entries + 1] = {
+                text = c.label,
+                checked = (c.value == current),
+                func = function() onPick(c.value) end,
+            }
+        end
+        LibDropDown:EasyMenu(entries, choiceMenuFrame, "cursor", 0, 0, "MENU", 2)
+    end
+
     local lastShown = {} -- the filtered+sorted rows, for the export button
 
     local function Refresh()
@@ -2047,11 +2076,21 @@ local function BuildAuditTab(content)
         if not Known(kindValue, kindOptions) then kindValue = "" end
         if not Known(byValue, byOptions) then byValue = "" end
 
-        kindBtn:SetText("Kind: " .. (kindValue == "" and "All" or (ns.CreditsLog_KindLabels[kindValue] or kindValue)))
-        rangeBtn:SetText(AUDIT_RANGES[rangeIdx].label)
-        byBtn:SetText("By: " .. (byValue == "" and "Anyone" or byValue))
-        kindBtn:SetScript("OnClick", function() kindValue = NextOf(kindValue, kindOptions); pageState.page = 1; ns.CreditsConfig_Refresh() end)
-        byBtn:SetScript("OnClick", function() byValue = NextOf(byValue, byOptions); pageState.page = 1; ns.CreditsConfig_Refresh() end)
+        kindBtn:SetText("Kind: " .. (kindValue == "" and "All" or (ns.CreditsLog_KindLabels[kindValue] or kindValue)) .. "  v")
+        rangeBtn:SetText(AUDIT_RANGES[rangeIdx].label .. "  v")
+        byBtn:SetText("By: " .. (byValue == "" and "Anyone" or byValue) .. "  v")
+        kindBtn:SetScript("OnClick", function()
+            local choices = { { value = "", label = "All kinds" } }
+            for i = 2, #kindOptions do
+                choices[#choices + 1] = { value = kindOptions[i], label = ns.CreditsLog_KindLabels[kindOptions[i]] or kindOptions[i] }
+            end
+            OpenChoiceMenu(choices, kindValue, function(v) kindValue = v; pageState.page = 1; ns.CreditsConfig_Refresh() end)
+        end)
+        byBtn:SetScript("OnClick", function()
+            local choices = { { value = "", label = "Anyone" } }
+            for i = 2, #byOptions do choices[#choices + 1] = { value = byOptions[i], label = byOptions[i] } end
+            OpenChoiceMenu(choices, byValue, function(v) byValue = v; pageState.page = 1; ns.CreditsConfig_Refresh() end)
+        end)
 
         local days = AUDIT_RANGES[rangeIdx].days
         local list = ns.CreditsLog_Filter(all, {
@@ -2126,9 +2165,9 @@ local function BuildAuditTab(content)
         ns.CreditsConfig_Refresh()
     end)
     rangeBtn:SetScript("OnClick", function()
-        rangeIdx = (rangeIdx % #AUDIT_RANGES) + 1
-        pageState.page = 1
-        ns.CreditsConfig_Refresh()
+        local choices = {}
+        for i, r in ipairs(AUDIT_RANGES) do choices[#choices + 1] = { value = i, label = r.label } end
+        OpenChoiceMenu(choices, rangeIdx, function(v) rangeIdx = v; pageState.page = 1; ns.CreditsConfig_Refresh() end)
     end)
     tierCheck:SetScript("OnClick", function(self)
         tierUpOnly = self:GetChecked() and true or false
