@@ -1824,6 +1824,48 @@ do
         back and back.discord == back.discordName)
 end
 
+-- Displaced / cleared Discord-only names go to the Review Queue (2026-10-04,
+-- Loopi: Avrony, a real alt set to Discord Only, vanished completely when
+-- Loopi was later set as the Discord name).
+do
+    resetState()
+    inGuild = true
+    guildRosterEntries = { { name = "Officer1", rankIndex = 3 } }
+    ns.UpdateGuildRosterCache()
+    currentPlayerName = "Officer1"
+    ns.db.editors = { "Officer1" }
+    ns.CreditsSeedData = { Loopi = { lifetimePoints = 10 } }
+    ns.CreditsAltRoster = { Loopi = { "Avrony", "Second" } }
+    ns.CreditsSeed_Import()
+    local rec = ns.creditsDb.ledger["Loopi"]
+    local function inQueue(name)
+        for _, r in ipairs(ns.Credits_ReviewQueueRows()) do if r.name == name then return true end end
+        return false
+    end
+
+    check("Avrony: Discord Only on the alt", ns.Credits_MakeDiscordOnly("Avrony") == true and rec.discord == "Avrony")
+    check("Avrony: not queued while it is still the Discord tag", not inQueue("Avrony"))
+    local ok, displaced = ns.Credits_SetDiscord("Loopi")
+    check("Avrony: Add as Discord succeeds and reports the displaced Discord-only name",
+        ok == true and displaced == "Avrony" and rec.discord == "Loopi")
+    check("Avrony: the displaced Discord-only name is now in the Review Queue", inQueue("Avrony"))
+    check("Avrony: it did not come back as an alt of the account", ns.creditsDb.toonIndex["avrony"] == nil)
+
+    -- Remove as Discord on a Discord-only name also queues it (no data loss).
+    check("Second: Discord Only on the other alt", ns.Credits_MakeDiscordOnly("Second") == true and rec.discord == "Second")
+    local ok2, cleared = ns.Credits_ClearDiscord("Loopi")
+    check("Second: Remove as Discord succeeds and reports the cleared Discord-only name",
+        ok2 == true and cleared == "Second" and rec.discord == "")
+    check("Second: the cleared Discord-only name is in the Review Queue", inQueue("Second"))
+
+    -- Replacing/clearing a tag on a REAL character queues nothing.
+    local ok3, d3 = ns.Credits_SetDiscord("Loopi")
+    check("Setting the tag when none is set reports no displaced name", ok3 == true and d3 == nil)
+    local ok4, c4 = ns.Credits_ClearDiscord("Loopi")
+    check("Clearing the tag on a real character reports no cleared Discord-only name", ok4 == true and c4 == nil)
+    check("...and the main is never queued", not inQueue("Loopi"))
+end
+
 -- Migration: a record saved before the field existed.
 do
     resetState()

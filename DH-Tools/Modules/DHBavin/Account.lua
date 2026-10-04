@@ -463,6 +463,14 @@ function ns.Account_Refresh()
         frame.creditsText:SetText("Credits Balance: |cff888888not synced yet|r")
         frame.noteText:SetText("Reputation and Store Credits come from the guild ledger, which isn't shared to your client yet. They'll show here once it is.")
     end
+    -- Footer: the "appear once you've logged into them" line only makes
+    -- sense in your OWN window (it explains the non-guild section, which an
+    -- officer's view of someone else's account never shows).
+    if viewKey then
+        frame.footer:SetText("Green * = online.")
+    else
+        frame.footer:SetText("Level and class for characters outside the guild appear once you've logged into them with DH-Tools. Green * = online.")
+    end
     frame.list:SetData(data)
 end
 

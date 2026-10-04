@@ -435,9 +435,23 @@ local function ToonInRecord(rec, name)
     return nil
 end
 
+-- The account's Discord name IF it is a Discord-only entry (names no
+-- character on the account), else nil. Such a name is always a former alt
+-- that "Discord Only" turned into a bare tag, so when it is displaced or
+-- cleared it must not just vanish (2026-10-04, Loopi: Avrony, a real alt,
+-- disappeared completely when another Discord name was set) - it goes to
+-- the Review Queue like any other unlinked character.
+local function DiscordOnlyName(rec)
+    local d = ns.Credits_GetDiscord(rec)
+    if d == "" then return nil end
+    if ToonInRecord(rec, d) then return nil end
+    return d
+end
+
 -- "Add as Discord": tags one of the account's characters as the Discord
 -- name. There is only ever one, so any previous tag (on another character,
--- or a Discord-only name) is replaced.
+-- or a Discord-only name) is replaced. A displaced Discord-only name is
+-- sent to the Review Queue; returns true, displacedName in that case.
 function ns.Credits_SetDiscord(name)
     if not ns.CanManageCreditsConfigLocal() then return false end
     if not name or name == "" or not ns.creditsDb then return false end
@@ -449,28 +463,43 @@ function ns.Credits_SetDiscord(name)
     local canon = ToonInRecord(rec, bare)
     if not canon then return false end
     if ns.Credits_IsDiscordName(rec, canon) then return false end
+    local displaced = DiscordOnlyName(rec)
     rec.discord = canon
-    if ns.CreditsSync_Changed then ns.CreditsSync_Changed({ key }, nil) end
-    return true
+    local rqChanges
+    if displaced then
+        ns.Credits_AddToReviewQueue(displaced)
+        rqChanges = { { name = displaced, present = true } }
+    end
+    if ns.CreditsSync_Changed then ns.CreditsSync_Changed({ key }, rqChanges) end
+    return true, displaced
 end
 
 -- "Remove as Discord": clears the account's Discord name. Takes the ledger
 -- key (not a character name) so it also works on a Discord-only entry,
--- which is not a character and so is not in toonIndex. A Discord-only name
--- is gone for good once cleared - the UI asks for a second click first.
+-- which is not a character and so is not in toonIndex. A cleared
+-- Discord-only name is NOT lost: it is sent to the Review Queue (returns
+-- true, clearedName in that case), so no confirmation click is needed.
 function ns.Credits_ClearDiscord(accountKey)
     if not ns.CanManageCreditsConfigLocal() then return false end
     local rec = ns.creditsDb and accountKey and ns.creditsDb.ledger[accountKey]
     if not rec then return false end
     if ns.Credits_GetDiscord(rec) == "" then return false end
+    local displaced = DiscordOnlyName(rec)
     rec.discord = ""
-    if ns.CreditsSync_Changed then ns.CreditsSync_Changed({ accountKey }, nil) end
-    return true
+    local rqChanges
+    if displaced then
+        ns.Credits_AddToReviewQueue(displaced)
+        rqChanges = { { name = displaced, present = true } }
+    end
+    if ns.CreditsSync_Changed then ns.CreditsSync_Changed({ accountKey }, rqChanges) end
+    return true, displaced
 end
 
 -- "Discord Only": the name is a Discord name, not a character. Removes it
--- from the account's alts (WITHOUT sending it to the Review Queue - it was
--- never a real donor character) and tags it as the account's Discord name.
+-- from the account's alts (NOT sent to the Review Queue now - it is still
+-- the account's Discord tag) and tags it as the account's Discord name.
+-- If that tag is later replaced or cleared (Credits_SetDiscord /
+-- Credits_ClearDiscord), the name goes to the Review Queue then.
 -- Refused for the main: an account must always have a real main toon.
 function ns.Credits_MakeDiscordOnly(name)
     if not ns.CanManageCreditsConfigLocal() then return false end

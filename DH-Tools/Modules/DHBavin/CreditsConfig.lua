@@ -683,41 +683,47 @@ local function BuildRosterTab(content)
     -- always a real main, so: Add is greyed on the name that already has the
     -- tag, Remove is greyed on names that don't, and Discord Only (turn an
     -- ALT into a pure Discord name that is not a character) is greyed on the
-    -- main and on entries that are already Discord-only. Removing a
-    -- Discord-only name deletes it outright, so that one asks twice.
-    local pendingClear   -- { account=, t= } after the first "Remove as Discord" on a Discord-only name
+    -- main and on entries that are already Discord-only. Removing or
+    -- replacing a Discord-only name no longer deletes it (2026-10-04,
+    -- Loopi): it goes to the Review Queue, so there is no confirm click.
+    -- The "sent to the Review Queue" notice is shown center-screen as well
+    -- as in chat, because a chat line alone was easy to miss.
+    local function NotifyQueued(msg)
+        ns.CreditsPrint(msg)
+        if UIErrorsFrame and UIErrorsFrame.AddMessage then
+            UIErrorsFrame:AddMessage(msg, 1.0, 0.82, 0.0)
+        end
+    end
     local function DiscordSubmenu(name, account, kind, canManage)
         local rec = ns.creditsDb and ns.creditsDb.ledger and ns.creditsDb.ledger[account]
         local tagged = rec and ns.Credits_IsDiscordName(rec, name) or false
-        local armed = kind == "discord" and pendingClear and pendingClear.account == account
-            and (GetTime() - pendingClear.t) < PROMOTE_CONFIRM_SECS
-        if not armed then pendingClear = nil end
         return {
             { text = "Add as Discord", notCheckable = true, disabled = not canManage or tagged or not rec,
               func = function()
-                pendingClear = nil
-                if ns.Credits_SetDiscord(name) then
+                local ok, displaced = ns.Credits_SetDiscord(name)
+                if ok then
                     ns.CreditsPrint(name .. " is now the Discord name for that account.")
+                    if displaced then
+                        NotifyQueued(displaced .. " was only a Discord name - it has been sent to the Review Queue.")
+                    end
                     ns.CreditsConfig_Refresh()
                 end
               end },
-            { text = armed and "|cffffcc00Click again to confirm|r" or "Remove as Discord",
+            { text = "Remove as Discord",
               notCheckable = true, disabled = not canManage or not tagged,
               func = function()
-                if kind == "discord" and not armed then
-                    pendingClear = { account = account, t = GetTime() }
-                    ns.CreditsPrint(("%s is only a Discord name - removing it deletes the entry. Right-click it and choose Discord > Remove as Discord again within %d seconds to confirm."):format(name, PROMOTE_CONFIRM_SECS))
-                    return
-                end
-                pendingClear = nil
-                if ns.Credits_ClearDiscord(account) then
-                    ns.CreditsPrint("Discord name removed from that account.")
+                local ok, cleared = ns.Credits_ClearDiscord(account)
+                if ok then
+                    if cleared then
+                        NotifyQueued(cleared .. " was only a Discord name - it has been sent to the Review Queue.")
+                    else
+                        ns.CreditsPrint("Discord name removed from that account.")
+                    end
                     ns.CreditsConfig_Refresh()
                 end
               end },
             { text = "Discord Only", notCheckable = true, disabled = not canManage or kind ~= "alt",
               func = function()
-                pendingClear = nil
                 if ns.Credits_MakeDiscordOnly(name) then
                     ns.CreditsPrint(name .. " is now a Discord name only (not a character).")
                     ns.CreditsConfig_Refresh()
@@ -748,7 +754,6 @@ local function BuildRosterTab(content)
                 { text = "Discord", notCheckable = true, hasArrow = true,
                   menuList = DiscordSubmenu(dname, account, "discord", canManage) },
                 { text = "Show Account", notCheckable = true, func = function()
-                    pendingClear = nil
                     if ns.Account_ShowFor then ns.Account_ShowFor(account) end
                 end },
             })
@@ -1642,14 +1647,13 @@ local function CreateWindow()
 
     DHTools.InitStandaloneWindow(frame)
 
-    -- 2026-09-25 (Chris: "should open on top of the bavin config, not
-    -- below it") - DHToolsConfigFrame (Config.lua, where this window is
-    -- opened FROM) is also toplevel at the default "MEDIUM" strata, so
-    -- z-order between the two otherwise depends on click/raise history,
-    -- not on which one is "supposed" to be on top. Bumping this one
-    -- explicit strata higher makes it always win, independent of that
-    -- history.
-    frame:SetFrameStrata("HIGH")
+    -- 2026-10-04 (Loopi: this window "is still set to always on top - it
+    -- blocks other windows"): the explicit SetFrameStrata("HIGH") that
+    -- used to be here (2026-09-25, to open above the Bavin config) is
+    -- GONE. Open-on-top is now handled for every DH window by
+    -- InitStandaloneWindow's Raise() on each show (Core.lua) - NOT by a
+    -- higher strata, which made this window float above everything,
+    -- including windows opened after it. Do not re-add a strata here.
 
     -- Resizable (2026-09-25, Chris) - same grip/bounds idiom as
     -- PriorityEditor.lua and DH-Tools\Config.lua's own window.
