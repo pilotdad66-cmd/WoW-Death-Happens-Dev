@@ -395,8 +395,7 @@ local function CreateBoardFrame()
     -- those anchor to scrollFrame's own live geometry (same reason DH-Air's
     -- Board.lua does this) so they stay lined up with the actual columns
     -- as the window resizes.
-    frame.scrollFrame = CreateFrame("ScrollFrame", "DHQuestsBoardScrollFrame", frame, (DHTools and DHTools.SCROLL_TEMPLATE) or "UIPanelScrollFrameTemplate")
-    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(frame.scrollFrame) end
+    frame.scrollFrame = CreateFrame("ScrollFrame", "DHQuestsBoardScrollFrame", frame, "UIPanelScrollFrameTemplate2")
     frame.scrollFrame:SetPoint("TOPLEFT", frame.statText, "BOTTOMLEFT", 0, -28)
     frame.scrollFrame:SetPoint("BOTTOMRIGHT", -30, 12)
 

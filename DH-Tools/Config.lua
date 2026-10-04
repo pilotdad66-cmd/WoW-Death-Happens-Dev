@@ -50,8 +50,7 @@ local function CreateToolsPanel(parent)
     -- added (7 real modules already), so it's both the most likely
     -- source of Chris's "rows appear outside the bottom of the window"
     -- report and the one most likely to overflow again later.
-    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsToolsScroll", panel, (DHTools and DHTools.SCROLL_TEMPLATE) or "UIPanelScrollFrameTemplate")
-    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(scrollFrame) end
+    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsToolsScroll", panel, "UIPanelScrollFrameTemplate2")
     scrollFrame:SetPoint("TOPLEFT", 0, -8)
     scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
 
@@ -334,8 +333,7 @@ local function CreateMobMarkerPanel(parent)
     local panel = CreateFrame("Frame", nil, parent)
     panel:SetAllPoints()
 
-    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsMobMarkerScroll", panel, (DHTools and DHTools.SCROLL_TEMPLATE) or "UIPanelScrollFrameTemplate")
-    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(scrollFrame) end
+    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsMobMarkerScroll", panel, "UIPanelScrollFrameTemplate2")
     scrollFrame:SetPoint("TOPLEFT", 0, -8)
     scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
 
@@ -709,8 +707,7 @@ local function CreateBavinPanel(parent)
     -- to scroll to them - this fixes that regardless. Same session:
     -- suggestion pools shrunk from 8 to 4 rows each to cut the dead gap
     -- they reserved before the Editors section.
-    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsBavinScroll", panel, (DHTools and DHTools.SCROLL_TEMPLATE) or "UIPanelScrollFrameTemplate")
-    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(scrollFrame) end
+    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsBavinScroll", panel, "UIPanelScrollFrameTemplate2")
     scrollFrame:SetPoint("TOPLEFT", 0, -8)
     scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
 
@@ -793,8 +790,7 @@ local function CreateDangerPanel(parent)
     -- page well past a fixed frame's visible height. Same
     -- scrollFrame+content+generous-fixed-height pattern as the Bavin and
     -- Mob Marker pages - pad rather than trim if the estimate is off.
-    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsDangerScroll", panel, (DHTools and DHTools.SCROLL_TEMPLATE) or "UIPanelScrollFrameTemplate")
-    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(scrollFrame) end
+    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsDangerScroll", panel, "UIPanelScrollFrameTemplate2")
     scrollFrame:SetPoint("TOPLEFT", 0, -8)
     scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
 
@@ -1314,8 +1310,7 @@ local function CreateStorePanel(parent)
     local panel = CreateFrame("Frame", nil, parent)
     panel:SetAllPoints()
 
-    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsStoreScroll", panel, (DHTools and DHTools.SCROLL_TEMPLATE) or "UIPanelScrollFrameTemplate")
-    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(scrollFrame) end
+    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsStoreScroll", panel, "UIPanelScrollFrameTemplate2")
     scrollFrame:SetPoint("TOPLEFT", 0, -8)
     scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
 
@@ -1365,8 +1360,7 @@ local function CreateOfficerSettingsPanel(parent)
     local panel = CreateFrame("Frame", nil, parent)
     panel:SetAllPoints()
 
-    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsOfficerScroll", panel, (DHTools and DHTools.SCROLL_TEMPLATE) or "UIPanelScrollFrameTemplate")
-    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(scrollFrame) end
+    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsOfficerScroll", panel, "UIPanelScrollFrameTemplate2")
     scrollFrame:SetPoint("TOPLEFT", 0, -8)
     scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
 
@@ -2178,8 +2172,7 @@ local function CreateAboutPanel(parent)
     -- slash-command list (see below) pushed this page close enough to a
     -- fixed window's height that it's cheap insurance against the same
     -- overflow-past-the-bottom bug Chris reported.
-    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsAboutScroll", panel, (DHTools and DHTools.SCROLL_TEMPLATE) or "UIPanelScrollFrameTemplate")
-    if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(scrollFrame) end
+    local scrollFrame = CreateFrame("ScrollFrame", "DHToolsAboutScroll", panel, "UIPanelScrollFrameTemplate2")
     scrollFrame:SetPoint("TOPLEFT", 0, -8)
     scrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)
 
