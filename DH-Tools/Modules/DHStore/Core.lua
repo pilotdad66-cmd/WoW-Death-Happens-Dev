@@ -737,7 +737,7 @@ local function BuildCategoryPanel(parent)
     local panel = CreateFrame("Frame", "DHStoreCategoryPanel", parent)
     panel:SetWidth(CATEGORY_PANEL_WIDTH)
 
-    local scrollFrame = CreateFrame("ScrollFrame", "DHStoreCategoryScroll", panel, "UIPanelScrollFrameTemplate")
+    local scrollFrame = CreateFrame("ScrollFrame", "DHStoreCategoryScroll", panel, (DHTools and DHTools.SCROLL_TEMPLATE) or "UIPanelScrollFrameTemplate")
     if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(scrollFrame) end
     scrollFrame:SetPoint("TOPLEFT", 0, 0)
     scrollFrame:SetPoint("BOTTOMRIGHT", -22, 0)

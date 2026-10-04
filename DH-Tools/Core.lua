@@ -949,6 +949,28 @@ function ns.InitStandaloneWindow(targetFrame, rightInset)
     return dragRegion
 end
 
+-- Scrollbar templates (2026-10-04, Loopi: match Blizzard's framed scrollbar,
+-- as GRM does with UIPanelScrollBarTrimTemplate). UIPanelScrollFrameTemplate2
+-- is the same scroll frame as UIPanelScrollFrameTemplate but its ScrollBar
+-- inherits the Trim template (arrows + thumb inside Blizzard's own framed
+-- track); HybridScrollBarTrimTemplate is the equivalent for hybrid lists.
+-- Each name is probed once at load and falls back to the plain template if
+-- the client lacks it, so a missing template can never break a window.
+-- Windows read these as `(DHTools and DHTools.SCROLL_TEMPLATE) or
+-- "UIPanelScrollFrameTemplate"` (the `or` covers the headless harnesses).
+-- The probe frames are NAMED on purpose: a template's "$parent..." children
+-- of an anonymous frame would otherwise create generic globals like
+-- "ScrollBar" that could collide with other addons.
+local function ProbeTemplate(frameType, probeName, template)
+    local ok, f = pcall(CreateFrame, frameType, probeName, UIParent, template)
+    if ok and type(f) == "table" and f.Hide then f:Hide() end
+    return ok
+end
+ns.SCROLL_TEMPLATE = ProbeTemplate("ScrollFrame", "DHToolsScrollProbe", "UIPanelScrollFrameTemplate2")
+    and "UIPanelScrollFrameTemplate2" or "UIPanelScrollFrameTemplate"
+ns.HYBRID_BAR_TEMPLATE = ProbeTemplate("Slider", "DHToolsHybridBarProbe", "HybridScrollBarTrimTemplate")
+    and "HybridScrollBarTrimTemplate" or "HybridScrollBarTemplate"
+
 -- Gives a ScrollFrame's scrollbar the Blizzard-default "own frame" look
 -- (2026-10-04, Loopi: the arrows and thumb should read as sitting in their
 -- own bordered track so they're obvious). The stock template's scrollbar is
@@ -959,7 +981,12 @@ end
 -- Safe to call on any ScrollFrame (UIPanelScrollFrameTemplate or
 -- HybridScrollFrameTemplate); does nothing if no scrollbar is found, and is
 -- idempotent. Call once right after CreateFrame("ScrollFrame", ...).
-function ns.SkinScrollBar(scrollFrame)
+function ns.SkinScrollBar(scrollFrame, trimmed)
+    -- Blizzard's own "Trim" scrollbar templates (what GRM uses) already draw
+    -- the framed look, so there is nothing to add. This hand-drawn track is
+    -- only the fallback when the client lacks them.
+    if trimmed == nil then trimmed = (ns.SCROLL_TEMPLATE == "UIPanelScrollFrameTemplate2") end
+    if trimmed then return end
     if not scrollFrame or scrollFrame.dhScrollTrack then return end
     local bar = scrollFrame.ScrollBar
     local frameName = scrollFrame.GetName and scrollFrame:GetName()

@@ -62,14 +62,17 @@ function ns.Widgets.CreateScrollList(parent, opts)
     scrollFrame:SetScrollChild(scrollChild)
     scrollFrame.scrollChild = scrollChild
 
-    local scrollBar = CreateFrame("Slider", frameName .. "ScrollBar", scrollFrame, "HybridScrollBarTemplate")
+    -- Blizzard's framed "Trim" variant when the client has it (probed in
+    -- Core.lua), else the plain bar + our drawn track below.
+    local barTemplate = ns.HYBRID_BAR_TEMPLATE or "HybridScrollBarTemplate"
+    local scrollBar = CreateFrame("Slider", frameName .. "ScrollBar", scrollFrame, barTemplate)
     scrollBar:SetPoint("TOPRIGHT", scrollFrame, "TOPRIGHT", 0, -16)
     scrollBar:SetPoint("BOTTOMRIGHT", scrollFrame, "BOTTOMRIGHT", 0, 16)
     scrollBar:SetMinMaxValues(0, 0)
     scrollBar:SetValue(0)
     scrollFrame.scrollBar = scrollBar
-    -- Blizzard-style bordered track behind the arrows + thumb (2026-10-04).
-    if ns.SkinScrollBar then ns.SkinScrollBar(scrollFrame) end
+    -- Fallback only: draws our own bordered track when the Trim bar wasn't used.
+    if ns.SkinScrollBar then ns.SkinScrollBar(scrollFrame, barTemplate == "HybridScrollBarTrimTemplate") end
 
     local emptyText
     if opts.emptyText then

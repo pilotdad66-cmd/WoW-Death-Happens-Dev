@@ -30,7 +30,7 @@ local function CreateOptionsPanel(parent)
     -- children, so content could render past the window's bottom edge
     -- when resized down. Wrapped in the same UIPanelScrollFrameTemplate
     -- idiom the Messages page and Guild Instructions box already use.
-    local scrollFrame = CreateFrame("ScrollFrame", "DHAirOptionsScroll", panel, "UIPanelScrollFrameTemplate")
+    local scrollFrame = CreateFrame("ScrollFrame", "DHAirOptionsScroll", panel, (DHTools and DHTools.SCROLL_TEMPLATE) or "UIPanelScrollFrameTemplate")
     if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(scrollFrame) end
     scrollFrame:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
     scrollFrame:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -28, 4) -- -28: room for the template's scrollbar
@@ -440,7 +440,7 @@ local function CreateWrapMessageBox(parent, name, anchorTo, xOfs, yOfs, rows, ge
     local TOP_PAD = math.floor(ROW_H * 1.2 + 0.5) -- ~22px breathing room above the text, same as GI_TOP_PAD below
     local visibleHeight = rows * ROW_H
 
-    local scroll = CreateFrame("ScrollFrame", name .. "Scroll", parent, "UIPanelScrollFrameTemplate")
+    local scroll = CreateFrame("ScrollFrame", name .. "Scroll", parent, (DHTools and DHTools.SCROLL_TEMPLATE) or "UIPanelScrollFrameTemplate")
     if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(scroll) end
     scroll:SetPoint("TOPLEFT", anchorTo, "BOTTOMLEFT", xOfs, yOfs)
     scroll:SetSize(292, visibleHeight)
@@ -514,7 +514,7 @@ local function CreateMessagesPanel(parent)
     -- instead of directly on `panel`, so it scrolls internally and can
     -- never spill outside the window regardless of how small the window
     -- gets resized.
-    local scrollFrame = CreateFrame("ScrollFrame", "DHAirMessagesScroll", panel, "UIPanelScrollFrameTemplate")
+    local scrollFrame = CreateFrame("ScrollFrame", "DHAirMessagesScroll", panel, (DHTools and DHTools.SCROLL_TEMPLATE) or "UIPanelScrollFrameTemplate")
     if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(scrollFrame) end
     scrollFrame:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -10)
     -- 44 (not 4): leaves room for the fixed Save Changes footer pinned to
@@ -600,7 +600,7 @@ local function CreateMessagesPanel(parent)
     -- row content's own indent), and this added ANOTHER +6 on top of
     -- that (compounding to +12 total). 0 here now matches giTitle's own
     -- left edge exactly, same as the channel rows' edit boxes.
-    local giScroll = CreateFrame("ScrollFrame", "DHAirGuildInstructionsScroll", scrollChild, "UIPanelScrollFrameTemplate")
+    local giScroll = CreateFrame("ScrollFrame", "DHAirGuildInstructionsScroll", scrollChild, (DHTools and DHTools.SCROLL_TEMPLATE) or "UIPanelScrollFrameTemplate")
     if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(giScroll) end
     giScroll:SetPoint("TOPLEFT", giTitle, "BOTTOMLEFT", 0, -8)
     giScroll:SetSize(310, 54) -- ~3 wrapped lines visible; scrolls for more (unconfirmed in-game)
