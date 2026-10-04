@@ -2452,14 +2452,49 @@ do
     check("Checkbox default: GM mail is UNCHECKED", ns.CreditsInbox_IsChecked(4) == false)
     check("Checkbox default: COD mail is UNCHECKED", ns.CreditsInbox_IsChecked(5) == false)
     check("Checkbox default: a mail with no sender is UNCHECKED", ns.CreditsInbox_IsChecked(6) == false)
-    ns.CreditsInbox_SetChecked(1, false)
-    check("Checkbox: unchecking one mail does not change the next mail's default (no sticky rule)",
-        ns.CreditsInbox_IsChecked(1) == false)
-    ns.CreditsInbox_SetChecked(1, true)
-    check("Checkbox: re-checking works", ns.CreditsInbox_IsChecked(1) == true)
-    check("Checkbox: an unchecked-by-default mail can be re-checked",
-        ns.CreditsInbox_SetChecked(2, true) == true and ns.CreditsInbox_IsChecked(2) == true)
     check("Checkbox: COD can never be checked", ns.CreditsInbox_SetChecked(5, true) == false and ns.CreditsInbox_IsChecked(5) == false)
+
+    -- ---- sticky in-mail checkbox -------------------------------------------
+    mail("MainB", "Second donation", { item(1, "Test Sword", 1) })              -- 7 normal
+    mail("MainC", "Third donation", { item(1, "Test Sword", 1) })               -- 8 normal
+    ns.CreditsInbox_SetChecked(1, false)
+    check("Sticky: unchecking one normal mail clears the remembered setting",
+        ns.CreditsInbox_GetSticky() == false and ns.CreditsInbox_IsChecked(1) == false)
+    check("Sticky: the next normal mail inherits the unchecked setting",
+        ns.CreditsInbox_IsChecked(7) == false and ns.CreditsInbox_IsChecked(8) == false)
+    check("Sticky: special mail is still shown unchecked and re-tickable without touching the setting",
+        ns.CreditsInbox_SetChecked(2, true) == true and ns.CreditsInbox_IsChecked(2) == true
+        and ns.CreditsInbox_GetSticky() == false and ns.CreditsInbox_IsChecked(3) == false)
+    ns.CreditsInbox_SetChecked(1, true)
+    check("Sticky: re-checking a normal mail carries to the next normal mail",
+        ns.CreditsInbox_IsChecked(7) == true and ns.CreditsInbox_IsChecked(8) == true)
+    ns.CreditsInbox_SetChecked(3, true)  -- returned mail ticked
+    check("Sticky: unchecking a special mail never changes the remembered setting",
+        (ns.CreditsInbox_SetChecked(3, false) == true) and ns.CreditsInbox_GetSticky() == true
+        and ns.CreditsInbox_IsChecked(7) == true)
+    ns.CreditsInbox_SetChecked(1, false)
+    ns.CreditsInbox_OnMailShow()
+    check("Sticky: opening the mailbox again resets the setting to CHECKED and clears special overrides",
+        ns.CreditsInbox_GetSticky() == true and ns.CreditsInbox_IsChecked(7) == true
+        and ns.CreditsInbox_IsChecked(2) == false)
+    -- an unopened take (Open-All style) follows the remembered setting
+    fresh()
+    mail("MainA", "Donation", { item(1, "Test Sword", 2) })
+    mail("MainB", "Other", { item(1, "Test Sword", 1) })
+    ns.CreditsInbox_SetChecked(2, false)
+    takeItem(1, 1)
+    update()
+    advance(3)
+    check("Sticky: a take from a mail that was never opened uses the remembered (unchecked) setting",
+        logCount() == 0)
+    ns.CreditsInbox_SetChecked(2, true)
+    mail("MainA", "Later", { item(1, "Test Sword", 1) })
+    takeItem(3, 1)
+    update()
+    advance(3)
+    check("Sticky: ...and the checked setting credits it", logCount() == 1)
+    fresh()
+    mail("MainA", "Donation", { item(1, "Test Sword", 2) })
 
     -- ---- one item taken, confirmed by the next update ----------------------
     fresh()

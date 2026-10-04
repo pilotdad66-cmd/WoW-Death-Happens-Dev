@@ -1,5 +1,6 @@
 -- CM4 (DH-Bavin-Credits-Design.md "CM4 as designed", steps 1-3): the
--- incoming-mail side of crediting - a checkbox on every InboxFrame row and a
+-- incoming-mail side of crediting - ONE "credit this mail" checkbox inside the
+-- opened mail (sticky from mail to mail until the mailbox closes) and a
 -- diff-based confirmation of what the player actually took, handed to
 -- CreditsDonations.lua (ns.CreditsDon_Credit) once per mail.
 --
@@ -36,16 +37,17 @@ local ns = DHTools.Bavin
 
 local EXPIRE = 10          -- seconds an unconfirmed take is remembered
 local QUIET = 2.5          -- seconds without a new confirmed take before a mail is credited
-local CHECK_X = -2         -- checkbox offset from the right edge of an inbox row
+local CHECK_ANCHOR = "BOTTOMLEFT"   -- in-mail checkbox position on OpenMailFrame
+local CHECK_X, CHECK_Y = 24, 10      -- (unverified layout: tune after the in-game look)
 local MAX_ATTACH = ATTACHMENTS_MAX_RECEIVE or 16
-local ROWS = INBOXITEMS_TO_DISPLAY or 7
 
 local installed = false
-local checked = {}         -- mailKey -> boolean for this mailbox visit
+local sticky = true        -- the remembered "credit this" setting, carried mail to mail
+local checked = {}         -- mailKey -> boolean: per-mail override for SPECIAL mail only
 local codWarned = {}       -- mailKey -> true once the COD chat line was shown
 local pending = {}         -- unconfirmed take actions
 local batches = {}         -- mailKey -> { sender, items, copper, lastAt }
-local checks = {}          -- row index -> CheckButton
+local openCheck            -- the single CheckButton inside the opened mail
 
 local function Safe(fn, ...)
     local ok, err = pcall(fn, ...)
@@ -82,24 +84,25 @@ local function ItemsLeft(h)
     return h.hasItem and 1 or 0
 end
 
--- Spec step 2: CHECKED for player senders; UNCHECKED for returned mail, GM
--- mail and non-player senders (Auction House / Postmaster - detected by a
--- space in the sender name or no sender at all); COD is never credited.
-local function DefaultChecked(h)
-    if h.cod > 0 then return false end
-    if h.returned or h.gm then return false end
+-- SPECIAL mail: returned, GM, and non-player senders (Auction House /
+-- Postmaster - detected by a space in the sender name or no sender at all).
+-- These show UNCHECKED whatever the remembered setting is (the player can
+-- re-tick one, which affects only that mail), and never change the
+-- remembered setting. COD is special too, but locked off.
+local function IsSpecial(h)
+    if h.returned or h.gm then return true end
     local s = h.sender
-    if not s or s == "" or s:find(" ", 1, true) then return false end
-    return true
+    return (not s) or s == "" or s:find(" ", 1, true) ~= nil
 end
 
+-- The effective state for one mail: COD never; special mail its own
+-- override (default off); everything else the remembered setting. A take of
+-- a mail that is not the open one (Open-All style addons, Take All) uses the
+-- same rule, so "unopened takes use the current remembered setting".
 local function IsChecked(key, h)
-    if h.cod > 0 then
-        checked[key] = false
-        return false
-    end
-    if checked[key] == nil then checked[key] = DefaultChecked(h) end
-    return checked[key]
+    if h.cod > 0 then return false end
+    if IsSpecial(h) then return checked[key] == true end
+    return sticky
 end
 
 --------------------------------------------------------------------------
@@ -256,90 +259,101 @@ end
 
 function ns.CreditsInbox_OnMailShow()
     FlushAll()
+    sticky = true -- every mailbox visit starts CHECKED
     checked, codWarned, pending, batches = {}, {}, {}, {}
 end
 
 --------------------------------------------------------------------------
 -- Checkbox state for tests / UI
 --------------------------------------------------------------------------
--- By inbox index (what a row knows). false for COD or an unknown index.
+-- By inbox index. The effective state for that mail (false for COD).
 function ns.CreditsInbox_IsChecked(i)
     if not GetInboxHeaderInfo or not i then return false end
     local h = Header(i)
     return IsChecked(KeyOf(h), h)
 end
 
+-- What clicking the in-mail checkbox does for mail i: COD is locked; special
+-- mail records a per-mail override (the remembered setting is untouched); any
+-- other mail changes the remembered setting that carries to the next mail.
 function ns.CreditsInbox_SetChecked(i, value)
     local h = Header(i)
     if h.cod > 0 then return false end
-    checked[KeyOf(h)] = value and true or false
+    value = value and true or false
+    if IsSpecial(h) then
+        checked[KeyOf(h)] = value
+    else
+        sticky = value
+    end
     return true
 end
 
+function ns.CreditsInbox_GetSticky() return sticky end
+
 --------------------------------------------------------------------------
--- UI: one checkbox per InboxFrame row (spec step 2)
+-- UI: ONE checkbox inside the opened mail (OpenMailFrame). Its state is the
+-- remembered setting, so the player sees the whole mail before deciding and
+-- the choice carries to the next mail until the mailbox closes.
 --------------------------------------------------------------------------
-local function BuildChecks()
-    for i = 1, ROWS do
-        local row = _G["MailItem" .. i]
-        if row and not checks[i] then
-            local cb = CreateFrame("CheckButton", "DHBavinInboxCheck" .. i, row, "UICheckButtonTemplate")
-            cb:SetSize(24, 24)
-            cb:SetPoint("LEFT", row, "RIGHT", CHECK_X, 0)
-            cb:SetScript("OnClick", function(self)
-                if self.mailKey and not self.locked then
-                    checked[self.mailKey] = self:GetChecked() and true or false
-                end
-            end)
-            cb:SetScript("OnEnter", function(self)
-                if not GameTooltip then return end
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                GameTooltip:SetText("DH-Bavin credit", 1, 1, 1)
-                if self.locked then
-                    GameTooltip:AddLine("COD mail is never credited.", 1, 0.3, 0.3, true)
-                else
-                    GameTooltip:AddLine("Checked: what you take from this mail is credited to the donor's account.", 0.8, 0.8, 0.8, true)
-                end
-                GameTooltip:Show()
-            end)
-            cb:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
-            checks[i] = cb
+local function BuildCheck()
+    if openCheck or not OpenMailFrame then return end
+    local cb = CreateFrame("CheckButton", "DHBavinOpenMailCheck", OpenMailFrame, "UICheckButtonTemplate")
+    cb:SetSize(24, 24)
+    cb:SetPoint("BOTTOMLEFT", OpenMailFrame, CHECK_ANCHOR, CHECK_X, CHECK_Y)
+    local label = cb:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+    label:SetPoint("LEFT", cb, "RIGHT", 0, 1)
+    label:SetText("Credit this mail (DH-Bavin)")
+    cb.label = label
+    -- Make the label part of the click target.
+    if cb.SetHitRectInsets then cb:SetHitRectInsets(0, -150, 0, 0) end
+    cb:SetScript("OnClick", function(self)
+        local idx = self.mailIndex
+        if idx and not self.locked then
+            ns.CreditsInbox_SetChecked(idx, self:GetChecked())
         end
-    end
+    end)
+    cb:SetScript("OnEnter", function(self)
+        if not GameTooltip then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("DH-Bavin credit", 1, 1, 1)
+        if self.locked then
+            GameTooltip:AddLine("COD mail is never credited.", 1, 0.3, 0.3, true)
+        else
+            GameTooltip:AddLine("Checked: what you take is credited to the donor's account. The setting carries to the next mail until you close the mailbox.", 0.8, 0.8, 0.8, true)
+        end
+        GameTooltip:Show()
+    end)
+    cb:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+    openCheck = cb
 end
 
-local function RefreshChecks()
-    if not GetInboxNumItems then return end
-    local page = (InboxFrame and InboxFrame.pageNum) or 1
-    local n = GetInboxNumItems() or 0
-    for i = 1, ROWS do
-        local cb = checks[i]
-        if cb then
-            local idx = (page - 1) * ROWS + i
-            if idx > n then
-                cb.mailKey = nil
-                cb:Hide()
-            else
-                local h = Header(idx)
-                if h.money == 0 and ItemsLeft(h) == 0 then
-                    cb.mailKey = nil -- hollow mail: nothing left to credit
-                    cb:Hide()
-                else
-                    local key = KeyOf(h)
-                    cb.mailKey = key
-                    cb.locked = h.cod > 0
-                    cb:SetChecked(IsChecked(key, h))
-                    if cb.locked then cb:Disable() else cb:Enable() end
-                    cb:Show()
-                end
-            end
-        end
+local function RefreshCheck()
+    local cb = openCheck
+    if not cb then return end
+    local idx = InboxFrame and InboxFrame.openMailID
+    local n = GetInboxNumItems and GetInboxNumItems() or 0
+    if not idx or idx < 1 or idx > n then
+        cb.mailIndex = nil
+        cb:Hide()
+        return
     end
+    local h = Header(idx)
+    if h.money == 0 and ItemsLeft(h) == 0 then
+        cb.mailIndex = nil -- nothing left in this mail to credit
+        cb:Hide()
+        return
+    end
+    cb.mailIndex = idx
+    cb.locked = h.cod > 0
+    cb:SetChecked(IsChecked(KeyOf(h), h))
+    if cb.locked then cb:Disable() else cb:Enable() end
+    cb:Show()
 end
 
 -- Test hook: forget all session state and allow Install to run again.
 function ns.CreditsInbox_ResetForTests()
     installed = false
+    sticky = true
     checked, codWarned, pending, batches = {}, {}, {}, {}
     ns.creditsInboxFrame = nil
 end
@@ -361,9 +375,15 @@ function ns.CreditsInbox_Install()
         if AutoLootMailItem then
             hooksecurefunc("AutoLootMailItem", function(i) Safe(ns.CreditsInbox_OnTake, "all", i) end)
         end
-        if InboxFrame_Update then
-            hooksecurefunc("InboxFrame_Update", function() Safe(RefreshChecks) end)
+        if OpenMail_Update then
+            hooksecurefunc("OpenMail_Update", function() Safe(RefreshCheck) end)
         end
+        if InboxFrame_Update then
+            hooksecurefunc("InboxFrame_Update", function() Safe(RefreshCheck) end)
+        end
+    end
+    if OpenMailFrame and OpenMailFrame.HookScript then
+        OpenMailFrame:HookScript("OnShow", function() Safe(RefreshCheck) end)
     end
 
     local f = CreateFrame("Frame")
@@ -375,6 +395,7 @@ function ns.CreditsInbox_Install()
     f:SetScript("OnEvent", function(_, event, arg1)
         if event == "MAIL_INBOX_UPDATE" then
             Safe(ns.CreditsInbox_OnInboxUpdate)
+            Safe(RefreshCheck)
         elseif event == "MAIL_SHOW" then
             Safe(ns.CreditsInbox_OnMailShow)
         elseif event == "MAIL_CLOSED" or event == "PLAYER_LOGOUT" then
@@ -385,6 +406,6 @@ function ns.CreditsInbox_Install()
     end)
     ns.creditsInboxFrame = f
 
-    Safe(BuildChecks)
-    Safe(RefreshChecks)
+    Safe(BuildCheck)
+    Safe(RefreshCheck)
 end
