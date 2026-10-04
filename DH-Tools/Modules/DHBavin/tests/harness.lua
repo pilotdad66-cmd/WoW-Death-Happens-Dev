@@ -56,6 +56,8 @@ _G.time = function() return wallClock end
 -- bookkeeping (see Sync.lua's priorityList comment: NOT part of the wire
 -- payload). A fixed value is enough; nothing here depends on it advancing.
 _G.GetTime = function() return 5000 end
+-- WoW's date() is os.date (CM4's lastDonationDate stamp uses it).
+_G.date = os.date
 
 _G.CreateFrame = function(frameType, name, parentFrame, template)
     local f = {}
@@ -167,7 +169,7 @@ _G.DHTools = {
 --------------------------------------------------------------------------
 
 local ADDON_ROOT = "C:\\AIProjects-NOSYNC\\WoW\\src\\DH-Tools\\Modules\\DHBavin\\"
-local FILES = { "Core.lua", "Sync.lua", "ItemPoints.lua", "ToonDonations.lua", "Credits.lua", "CreditsSeed.lua", "CreditsSync.lua" }
+local FILES = { "Core.lua", "Sync.lua", "ItemPoints.lua", "ToonDonations.lua", "Credits.lua", "CreditsSeed.lua", "CreditsSync.lua", "CreditsDonations.lua", "CreditsInbox.lua" }
 
 for _, filename in ipairs(FILES) do
     local chunk, err = loadfile(ADDON_ROOT .. filename)
@@ -251,7 +253,14 @@ local function resetState()
         -- CM3 sync bookkeeping (CreditsSync.lua)
         ns.creditsDb.rqStamps = {}
         ns.creditsDb.lastSyncAt = nil
+        -- CM4 (CreditsDonations.lua / CreditsSync.lua additions)
+        ns.creditsDb.pendingCredits = {}
+        ns.creditsDb.pendingReleased = {}
+        ns.creditsDb.ledgerTombstones = {}
+        ns.creditsDb.creditsPerRep = { x = 1, y = 100 }
+        ns.creditsDb.repPerGold = { x = 100, y = 1 }
     end
+    ns.creditsArmedInbox = false
     if ns.CreditsSync_ResetSession then ns.CreditsSync_ResetSession() end
     ns.CreditsSeedData = nil
     ns.CreditsAltRoster = nil
@@ -1896,6 +1905,785 @@ do
     DHBavinCreditsDB = { ledger = { Legacy = { discordName = "Legacy", mainToon = "Legacy", alts = {}, credits = 0 } } }
     ns.InitCreditsDB()
     check("InitCreditsDB gives pre-existing records discord = ledger key", ns.creditsDb.ledger["Legacy"].discord == "Legacy")
+end
+
+--------------------------------------------------------------------------
+-- CM4: donation logic (CreditsDonations.lua) - valuation, who is credited,
+-- tier crossings, held credits + release, merge
+--------------------------------------------------------------------------
+local cm4 = {}
+cm4.origItemPoints = ns.ITEM_POINTS
+function cm4.said(sub)
+    for _, l in ipairs(printLog) do
+        if tostring(l):find(sub, 1, true) then return true end
+    end
+    return false
+end
+function cm4.setup()
+    resetState()
+    ns.ITEM_POINTS = {
+        ["Test Sword"] = { points = 50, itemId = 1, category = "Weapon" },
+        ["Test Herb"] = { points = 2, itemId = 2 },
+    }
+    inGuild = true
+    guildRosterEntries = {
+        { name = "GLeader", rankIndex = 0 },
+        { name = "Officer1", rankIndex = 3 },
+        { name = "Officer2", rankIndex = 3 },
+        { name = "Donor1", rankIndex = 5 },
+        { name = "Donor2", rankIndex = 5 },
+        { name = "NewMember", rankIndex = 5 },
+    }
+    ns.UpdateGuildRosterCache()
+    currentPlayerName = "Officer1"
+    ns.db.editors = { "Officer1", "Officer2" }
+    ns.CreditsSeedData = { MainA = { lifetimePoints = 2900 }, MainB = { lifetimePoints = 100 } }
+    ns.CreditsAltRoster = { MainA = { "AltA1" } }
+    ns.CreditsSeed_Import()
+    ns.creditsArmedInbox = true
+    _G.GRM = nil
+    outboxLog, printLog = {}, {}
+end
+function cm4.sword(n) return { itemID = 1, name = "Test Sword", count = n or 1 } end
+_G.GetRealmName = function() return "SkullRock" end
+
+print("== Credits: CM4 valuation ==")
+do
+    cm4.setup()
+    local e = ns.CreditsDon_Value({ sender = "X", items = { cm4.sword(2) } })
+    check("Valuation: 2 x 50-point item = 100 rep", e.rep == 100)
+    check("Valuation: Credit/Rep 1/100 turns 100 rep into 1 credit", e.credits == 1)
+    check("Valuation: category comes from the item data", e.items[1].category == "Weapon")
+    check("Valuation: the entry records the sender, a unique id and a timestamp",
+        e.sender == "X" and type(e.id) == "string" and e.id ~= "" and type(e.ts) == "number")
+
+    ns.db.itemPointsOverrides["Test Sword"] = { points = 80 }
+    e = ns.CreditsDon_Value({ sender = "X", items = { cm4.sword(2) } })
+    check("Valuation: a live override (tooltip's lookup) beats the baseline", e.rep == 160)
+    check("Valuation: an override with no category keeps the baseline category", e.items[1].category == "Weapon")
+    ns.db.itemPointsOverrides = {}
+
+    e = ns.CreditsDon_Value({ sender = "X", items = { cm4.sword(1), cm4.sword(2) } })
+    check("Valuation: the same item in two slots collapses into one line",
+        #e.items == 1 and e.items[1].count == 3 and e.rep == 150)
+
+    e = ns.CreditsDon_Value({ sender = "X", items = { { itemID = 9, name = "Mystery", count = 4 }, { itemID = 2, name = "Test Herb", count = 5 } } })
+    check("Valuation: an unpriced item is worth 0 and flagged, priced ones still count",
+        e.rep == 10 and e.items[1].unpriced == true and e.items[1].rep == 0)
+    check("Valuation: an item without a category is Uncategorized", e.items[2].category == "Uncategorized")
+
+    e = ns.CreditsDon_Value({ sender = "X", copper = 25000 })
+    check("Valuation: 2.5 gold at 100 rep per gold = 250 rep", e.rep == 250 and e.gold == 2.5)
+    check("Valuation: gold turns into credits too (2.5)", e.credits == 2.5)
+    e = ns.CreditsDon_Value({ sender = "X", copper = 1234 })
+    check("Valuation: fractional gold keeps its decimals (0.1234 gold = 12.34 rep)", math.abs(e.rep - 12.34) < 1e-9)
+
+    ns.creditsDb.creditsPerRep = { x = 3, y = 200 }
+    ns.creditsDb.repPerGold = { x = 7, y = 2 }
+    e = ns.CreditsDon_Value({ sender = "X", copper = 20000, items = { cm4.sword(1) } })
+    check("Valuation: Rep/Gold uses the officer's X/Y (7 Rep = 2 Gold: 2 gold = 7 rep)", math.abs(e.rep - (50 + 7)) < 1e-9)
+    check("Valuation: Credit/Rep uses the officer's X/Y (3 Credits = 200 Rep)", math.abs(e.credits - 57 * 3 / 200) < 1e-9)
+    check("Valuation: the entry records the rates it used",
+        e.creditsPerRep.x == 3 and e.creditsPerRep.y == 200 and e.repPerGold.x == 7 and e.repPerGold.y == 2)
+end
+
+print("== Credits: CM4 crediting + tier/prestige crossings ==")
+do
+    cm4.setup()
+    local rec = ns.creditsDb.ledger["MainA"]
+    local res = ns.CreditsDon_Credit({ sender = "AltA1", items = { cm4.sword(3) } })
+    check("Credit: a known alt is credited to its account", res.status == "credited" and res.account == rec)
+    check("Credit: lifetimePoints rises by the rep (2900 + 150)", rec.lifetimePoints == 3050)
+    check("Credit: crossing the Neutral cap moves to Friendly with the carry-over",
+        rec.tier == "Friendly" and rec.prestige == 0 and rec.points == 50)
+    check("Credit: credits and lifetimeCredits both rise by 1.5", rec.credits == 1.5 and rec.lifetimeCredits == 1.5)
+    check("Credit: exactly one transaction-log entry per mail", #ns.creditsDb.transactionLog == 1)
+    local log = ns.creditsDb.transactionLog[1]
+    check("Credit: the log entry names the account, sender, receiver and totals",
+        log.account == "MainA" and log.sender == "AltA1" and log.receiver == "Officer1" and log.rep == 150 and log.credits == 1.5)
+    check("Credit: the log entry has tier before -> after",
+        log.tierBefore == "Neutral" and log.tierAfter == "Friendly")
+    check("Credit: the log entry lists items with itemID, name, count, rep and category",
+        log.items[1].itemID == 1 and log.items[1].name == "Test Sword" and log.items[1].count == 3
+        and log.items[1].rep == 150 and log.items[1].category == "Weapon")
+    check("Credit: the log entry records the rates used", log.creditsPerRep.x == 1 and log.creditsPerRep.y == 100)
+    check("Credit: one chat line per mail with rep, credits and progress",
+        cm4.said("AltA1 (MainA): +150 rep, +1.5 credits (Friendly 50/6,000)"))
+    check("Credit: a tier-up line is printed", cm4.said("TIER UP") and cm4.said("Friendly"))
+    check("Credit: lastDonationDate is stamped", rec.lastDonationDate ~= "" and rec.syncedAt ~= nil)
+
+    -- Gold alone can cross a tier.
+    cm4.setup()
+    rec = ns.creditsDb.ledger["MainA"]
+    ns.CreditsDon_Credit({ sender = "MainA", copper = 50000 }) -- 5 gold = 500 rep
+    check("Credit: gold rep counts toward lifetimePoints and crosses the tier (2900 + 500)",
+        rec.lifetimePoints == 3400 and rec.tier == "Friendly" and rec.points == 400)
+    check("Credit: the log entry for gold has the gold amount and no items",
+        ns.creditsDb.transactionLog[1].gold == 5 and #ns.creditsDb.transactionLog[1].items == 0)
+
+    -- Exalted prestige loop.
+    cm4.setup()
+    rec = ns.creditsDb.ledger["MainA"]
+    rec.lifetimePoints = 3000 + 6000 + 12000 + 21000 + 49950
+    rec.tier, rec.prestige, rec.points = ns.Credits_TierStateForLifetime(rec.lifetimePoints)
+    check("Prestige setup: Exalted at 49,950/50,000", rec.tier == "Exalted" and rec.prestige == 0 and rec.points == 49950)
+    ns.CreditsDon_Credit({ sender = "MainA", items = { cm4.sword(2) } }) -- +100
+    check("Credit: crossing the Exalted lap bumps prestige and keeps the carry-over",
+        rec.tier == "Exalted" and rec.prestige == 1 and rec.points == 50)
+    check("Credit: a prestige-up line is printed", cm4.said("PRESTIGE UP"))
+
+    -- Several tiers in one big donation.
+    cm4.setup()
+    rec = ns.creditsDb.ledger["MainB"] -- 100 lifetime
+    ns.CreditsDon_Credit({ sender = "MainB", copper = 2000000 }) -- 200 gold = 20,000 rep
+    check("Credit: one donation can cross more than one tier (100 + 20,000 -> Honored)",
+        rec.tier == "Honored" and rec.lifetimePoints == 20100 and rec.points == 20100 - 3000 - 6000)
+
+    -- Only-unpriced mail: nothing credited, nothing created, one chat line.
+    cm4.setup()
+    local before = ns.creditsDb.ledger["MainA"].lifetimePoints
+    res = ns.CreditsDon_Credit({ sender = "NewMember", items = { { itemID = 9, name = "Mystery", count = 1 } } })
+    check("Unpriced only: status zero, no account created for the sender",
+        res.status == "zero" and ns.creditsDb.ledger["NewMember"] == nil and #ns.creditsDb.transactionLog == 0)
+    check("Unpriced only: the item is named in a chat line", cm4.said("Mystery") and cm4.said("no Bavin Points entry"))
+    check("Unpriced only: other accounts untouched", ns.creditsDb.ledger["MainA"].lifetimePoints == before)
+end
+
+print("== Credits: CM4 who gets credited ==")
+do
+    -- Auto-create: guild member with no account and no GRM -> own main.
+    cm4.setup()
+    local res = ns.CreditsDon_Credit({ sender = "NewMember", items = { cm4.sword(1) } })
+    local acct = ns.creditsDb.ledger["NewMember"]
+    check("Resolve: a guild member with no account gets one (own main)",
+        res.status == "credited" and acct and acct.mainToon == "NewMember" and acct.discord == "NewMember"
+        and acct.lifetimePoints == 50 and #acct.alts == 0)
+    check("Resolve: toonIndex knows the new account", ns.creditsDb.toonIndex["newmember"] == "NewMember")
+    check("Resolve: the new account is synced (stamped)", acct.syncedAt ~= nil)
+
+    -- Same-name remake / second donation lands on the same account.
+    ns.CreditsDon_Credit({ sender = "NewMember", items = { cm4.sword(1) } })
+    check("Resolve: a later donation from the same name goes to the same account (history kept)",
+        acct.lifetimePoints == 100 and #ns.creditsDb.transactionLog == 2)
+    ns.CreditsDon_Credit({ sender = "newmember-SkullRock", items = { cm4.sword(1) } })
+    check("Resolve: a realm-qualified / differently-cased sender name resolves too", acct.lifetimePoints == 150)
+
+    -- GRM: main already has an account -> sender linked as an alt.
+    cm4.setup()
+    _G.GRM = { GetPlayerMain = function(n) if n == "Donor1-SkullRock" then return "MainA-SkullRock" end end }
+    res = ns.CreditsDon_Credit({ sender = "Donor1", items = { cm4.sword(1) } })
+    local a = ns.creditsDb.ledger["MainA"]
+    local linked = false
+    for _, alt in ipairs(a.alts) do if alt == "Donor1" then linked = true end end
+    check("Resolve (GRM): sender linked as an alt of GRM's main and credited there",
+        res.status == "credited" and linked and a.lifetimePoints == 2950 and ns.creditsDb.toonIndex["donor1"] == "MainA")
+    check("Resolve (GRM): no separate account was created for the alt", ns.creditsDb.ledger["Donor1"] == nil)
+
+    -- GRM: main has NO account yet -> account created for the main, sender is its alt.
+    cm4.setup()
+    _G.GRM = { GetPlayerMain = function(n) if n == "Donor2-SkullRock" then return "BrandNewMain" end end }
+    res = ns.CreditsDon_Credit({ sender = "Donor2", items = { cm4.sword(2) } })
+    local nm = ns.creditsDb.ledger["BrandNewMain"]
+    check("Resolve (GRM): an account is created for GRM's main (discord = main name), sender as its alt",
+        res.status == "credited" and nm and nm.mainToon == "BrandNewMain" and nm.discord == "BrandNewMain"
+        and nm.alts[1] == "Donor2" and nm.lifetimePoints == 100)
+    check("Resolve (GRM): both names resolve to the new account",
+        ns.creditsDb.toonIndex["brandnewmain"] == "BrandNewMain" and ns.creditsDb.toonIndex["donor2"] == "BrandNewMain")
+
+    -- GRM names the sender itself -> own main.
+    cm4.setup()
+    _G.GRM = { GetPlayerMain = function(n) return "Donor1" end }
+    ns.CreditsDon_Credit({ sender = "Donor1", items = { cm4.sword(1) } })
+    check("Resolve (GRM): GRM naming the sender itself makes it its own main",
+        ns.creditsDb.ledger["Donor1"] and ns.creditsDb.ledger["Donor1"].mainToon == "Donor1")
+    -- GRM errors are survivable.
+    cm4.setup()
+    _G.GRM = { GetPlayerMain = function() error("boom") end }
+    res = ns.CreditsDon_Credit({ sender = "Donor1", items = { cm4.sword(1) } })
+    check("Resolve (GRM): a GRM error falls back to own main", res.status == "credited" and ns.creditsDb.ledger["Donor1"] ~= nil)
+    _G.GRM = nil
+
+    -- A sender who is not in the guild is held, not credited to anyone.
+    cm4.setup()
+    local ledgerCount = 0
+    for _ in pairs(ns.creditsDb.ledger) do ledgerCount = ledgerCount + 1 end
+    res = ns.CreditsDon_Credit({ sender = "Rando", items = { cm4.sword(2) } })
+    local after = 0
+    for _ in pairs(ns.creditsDb.ledger) do after = after + 1 end
+    check("Resolve: a non-guild, unknown sender is held", res.status == "held")
+    check("Resolve: holding creates no account and no log entry", after == ledgerCount and #ns.creditsDb.transactionLog == 0)
+    check("Resolve: the held entry is stored under the sender", #ns.creditsDb.pendingCredits["rando"] == 1
+        and ns.creditsDb.pendingCredits["rando"][1].rep == 100)
+    local q = ns.creditsDb.dynamicReviewQueue[1]
+    check("Resolve: the sender enters the Review Queue as unresolved_donor",
+        q and q.name == "Rando" and q.issue == "unresolved_donor")
+    check("Resolve: the Review Queue row says what is held", q and q.details:find("100", 1, true) ~= nil)
+    check("Resolve: a 'Held' chat line is printed", cm4.said("Held 100 rep / 1 credits for Rando"))
+    local hr, hc, hn = ns.CreditsDon_HeldTotals("Rando")
+    check("HeldTotals reports rep/credits/count (case-insensitive)", hr == 100 and hc == 1 and hn == 1
+        and select(1, ns.CreditsDon_HeldTotals("rANDO")) == 100)
+    ns.CreditsDon_Credit({ sender = "Rando", copper = 10000 })
+    hr, hc, hn = ns.CreditsDon_HeldTotals("Rando")
+    check("A second donation from the same held sender adds to the held totals", hr == 200 and hn == 2)
+    local queued = 0
+    for _, row in ipairs(ns.creditsDb.dynamicReviewQueue) do if row.name == "Rando" then queued = queued + 1 end end
+    check("...and the Review Queue still has one row for them", queued == 1)
+end
+
+print("== Credits: CM4 held credits release ==")
+do
+    -- Local link releases (recipient's armed client), original timestamp kept.
+    cm4.setup()
+    wallClock = 1700000100
+    ns.CreditsDon_Credit({ sender = "Rando", items = { cm4.sword(2) } })
+    ns.CreditsDon_Credit({ sender = "Rando", copper = 10000 })
+    local origTs = ns.creditsDb.pendingCredits["rando"][1].ts
+    wallClock = 1700009999
+    local rec = ns.creditsDb.ledger["MainA"]
+    local lifeBefore = rec.lifetimePoints
+    printLog = {}
+    check("Release: linking the held name succeeds", ns.Credits_LinkAlt("Rando", "MainA") == true)
+    check("Release: both held entries were applied (100 + 100 rep)", rec.lifetimePoints == lifeBefore + 200)
+    check("Release: nothing is held for the name any more", ns.creditsDb.pendingCredits["rando"] == nil)
+    check("Release: the Review Queue row is gone", #ns.creditsDb.dynamicReviewQueue == 0)
+    local logs = ns.creditsDb.transactionLog
+    check("Release: each released entry is logged as released from pending, to the right account",
+        #logs == 2 and logs[1].released == true and logs[1].account == "MainA" and logs[2].released == true)
+    check("Release: the log keeps the ORIGINAL timestamp", logs[1].ts == origTs and logs[1].releasedAt >= origTs)
+    check("Release: the chat line says it was released", cm4.said("released from pending"))
+    check("Release: tombstones were recorded for the released ids",
+        ns.creditsDb.pendingReleased[logs[1].id] ~= nil and ns.creditsDb.pendingReleased[logs[2].id] ~= nil)
+    wallClock = 1700000000
+
+    -- Not the recipient's client: link does NOT release.
+    cm4.setup()
+    ns.CreditsDon_Credit({ sender = "Rando", items = { cm4.sword(2) } })
+    ns.creditsArmedInbox = false
+    rec = ns.creditsDb.ledger["MainA"]
+    lifeBefore = rec.lifetimePoints
+    ns.Credits_LinkAlt("Rando", "MainA")
+    check("Release: an unarmed client never releases (only the mail recipient does)",
+        rec.lifetimePoints == lifeBefore and ns.creditsDb.pendingCredits["rando"] ~= nil)
+    ns.creditsArmedInbox = true
+    check("Release: ReleasePending on the armed client then applies it", ns.Credits_ReleasePending() == 1 and rec.lifetimePoints == lifeBefore + 100)
+
+    -- New main releases onto the new account.
+    cm4.setup()
+    ns.CreditsDon_Credit({ sender = "Rando", items = { cm4.sword(4) } })
+    check("Release: Set as New Main succeeds", ns.Credits_SetAsNewMain("Rando", 0, "") == true)
+    local rnd = ns.creditsDb.ledger["Rando"]
+    check("Release: the new main account receives the held rep", rnd and rnd.lifetimePoints == 200 and rnd.credits == 2)
+    check("Release: held store is empty", next(ns.creditsDb.pendingCredits) == nil)
+
+    -- Login / roster: a held sender who has since joined the guild resolves.
+    cm4.setup()
+    ns.CreditsDon_Credit({ sender = "Latecomer", items = { cm4.sword(2) } })
+    check("Release (roster): still held while not in the guild", ns.Credits_ReleasePending() == 0)
+    guildRosterEntries[#guildRosterEntries + 1] = { name = "Latecomer", rankIndex = 5 }
+    ns.UpdateGuildRosterCache()
+    check("Release (roster): once in the guild roster, the next release pass creates the account and applies",
+        ns.Credits_ReleasePending() == 1 and ns.creditsDb.ledger["Latecomer"] and ns.creditsDb.ledger["Latecomer"].lifetimePoints == 100)
+
+    -- Reset wipes held credits and tombstones.
+    cm4.setup()
+    ns.CreditsDon_Credit({ sender = "Rando", items = { cm4.sword(1) } })
+    ns.creditsDb.pendingReleased["x"] = { ts = 1 }
+    ns.creditsDb.ledgerTombstones["Y"] = { ts = 1 }
+    check("Reset: Credits_ResetTestData succeeds", ns.Credits_ResetTestData() == true)
+    check("Reset: held credits and tombstones are wiped",
+        next(ns.creditsDb.pendingCredits) == nil and next(ns.creditsDb.pendingReleased) == nil
+        and next(ns.creditsDb.ledgerTombstones) == nil)
+end
+
+print("== Credits: CM4 account merge ==")
+do
+    cm4.setup()
+    local A, B = ns.creditsDb.ledger["MainA"], ns.creditsDb.ledger["MainB"]
+    A.alts = { "AltA1" }
+    A.credits, A.lifetimeCredits, A.lastDonationDate = 5, 8, "2026-09-01"
+    B.credits, B.lifetimeCredits, B.lastDonationDate = 2, 2, "2026-10-01"
+    ns.Credits_RebuildToonIndex()
+    ns.CreditsDon_Credit({ sender = "AltA1", items = { cm4.sword(1) } }) -- a log entry on A
+    local lifeA, lifeB = A.lifetimePoints, B.lifetimePoints
+    local credA, credB = A.credits, B.credits
+    check("Merge: refused for a non-officer", (function()
+        currentPlayerName = "Donor1"
+        local ok = ns.Credits_MergeAccounts("MainA", "MainB")
+        currentPlayerName = "Officer1"
+        return ok == false and ns.creditsDb.ledger["MainA"] ~= nil
+    end)())
+    check("Merge: an account cannot merge into itself", ns.Credits_MergeAccounts("MainA", "MainA") == false)
+    check("Merge: an unknown account is refused", ns.Credits_MergeAccounts("Nope", "MainB") == false)
+    outboxLog = {}
+    local ok = ns.Credits_MergeAccounts("MainA", "MainB")
+    check("Merge: succeeds for an officer", ok == true)
+    check("Merge: the source account is deleted", ns.creditsDb.ledger["MainA"] == nil)
+    check("Merge: the target gets the source's main and alts",
+        (function()
+            local have = {}
+            for _, n in ipairs(B.alts) do have[n] = true end
+            return have["MainA"] and have["AltA1"]
+        end)())
+    check("Merge: toonIndex points every moved name at the target",
+        ns.creditsDb.toonIndex["maina"] == "MainB" and ns.creditsDb.toonIndex["alta1"] == "MainB"
+        and ns.creditsDb.toonIndex["mainb"] == "MainB")
+    check("Merge: lifetimePoints, credits and lifetimeCredits are summed",
+        B.lifetimePoints == lifeA + lifeB and B.credits == credA + credB and B.lifetimeCredits == 8 + 0.5 + 2)
+    check("Merge: tier/prestige/points recompute from the summed lifetime",
+        (function()
+            local t, p, pts = ns.Credits_TierStateForLifetime(B.lifetimePoints)
+            return B.tier == t and B.prestige == p and B.points == pts and t == "Friendly"
+        end)())
+    check("Merge: the later lastDonationDate wins", B.lastDonationDate == "2026-10-01" or B.lastDonationDate > "2026-09-01")
+    local retagged = false
+    for _, e in ipairs(ns.creditsDb.transactionLog) do
+        if e.sender == "AltA1" and e.account == "MainB" then retagged = true end
+    end
+    check("Merge: the source's log entries are re-tagged to the target", retagged)
+    local last = ns.creditsDb.transactionLog[#ns.creditsDb.transactionLog]
+    check("Merge: a merge entry is logged", last.kind == "merge" and last.source == "MainA" and last.account == "MainB")
+    check("Merge: a tombstone is recorded for the deleted account", ns.creditsDb.ledgerTombstones["MainA"] ~= nil)
+    check("Merge: a later donation from the moved alt credits the target",
+        (function()
+            local r = ns.CreditsDon_Credit({ sender = "AltA1", items = { cm4.sword(1) } })
+            return r.account == B
+        end)())
+end
+
+print("== Credits: CM4 sync (max-merge, merge tombstones, held-credit replication) ==")
+do
+    local PFX = "DHBavinCreditsV2"
+    local function deliver(from, text) ns.Credits_OnAddonMessage(PFX, text, "WHISPER", from) end
+    local function payloadTo(target)
+        local parts = {}
+        for _, e in ipairs(outboxLog) do
+            if e.target == target and e.channel == "WHISPER" then
+                local id, i, n, chunk = e.text:match("^LSYNCDATA|(%x+)|(%d+)/(%d+)|(.*)$")
+                if id then parts[tonumber(i)] = chunk end
+            end
+        end
+        return table.concat(parts)
+    end
+    local function msgFor(...)
+        return "LSYNCDATA|abc1|1/1|F:" .. ns.CreditsSync_Fingerprint() .. ";" .. table.concat({ ... }, ";")
+    end
+    local function recText(rec) return "R:" .. ns.CreditsSync_EncodeRecord(rec) end
+    local function rec(over)
+        local r = { discordName = "MainA", mainToon = "MainA", alts = {}, points = 0, credits = 0, tier = "Neutral",
+            prestige = 0, lifetimePoints = 0, lastDonationDate = "", lastUpdated = 5, syncedAt = 1000, lifetimeCredits = 0 }
+        for k, v in pairs(over or {}) do r[k] = v end
+        return r
+    end
+
+    -- max() for lifetime fields.
+    cm4.setup()
+    ns.creditsDb.ledger["MainA"] = rec({ lifetimePoints = 5000, tier = "Friendly", points = 2000, credits = 10, lifetimeCredits = 50, syncedAt = 1000 })
+    deliver("Officer2", msgFor(recText(rec({ lifetimePoints = 4000, tier = "Friendly", points = 1000, credits = 3, lifetimeCredits = 20, syncedAt = 2000, alts = { "NewAlt" } }))))
+    local r = ns.creditsDb.ledger["MainA"]
+    check("Max-merge: a newer record still applies (alts/credits balance are last-writer-wins)",
+        r.alts[1] == "NewAlt" and r.credits == 3 and r.syncedAt == 2000)
+    check("Max-merge: but it cannot LOWER lifetimePoints or lifetimeCredits", r.lifetimePoints == 5000 and r.lifetimeCredits == 50)
+    check("Max-merge: tier/points follow the kept lifetimePoints", r.tier == "Friendly" and r.points == 2000)
+    -- an older record with HIGHER lifetime raises ours
+    deliver("Officer2", msgFor(recText(rec({ lifetimePoints = 9500, tier = "Honored", points = 500, credits = 30, lifetimeCredits = 70, syncedAt = 1500 }))))
+    r = ns.creditsDb.ledger["MainA"]
+    check("Max-merge: a stale record with higher lifetime values raises ours without touching the rest",
+        r.lifetimePoints == 9500 and r.lifetimeCredits == 70 and r.syncedAt == 2000 and r.credits == 3 and r.alts[1] == "NewAlt")
+    check("Max-merge: tier recomputed from the raised lifetime (9,500 = Honored 500)", r.tier == "Honored" and r.points == 500)
+
+    -- merge tombstone
+    cm4.setup()
+    ns.creditsDb.ledger["Gone"] = rec({ discordName = "Gone", mainToon = "Gone", syncedAt = 1000 })
+    ns.Credits_RebuildToonIndex()
+    deliver("Officer2", msgFor("D:Gone|2000"))
+    check("Tombstone: a D item deletes the account", ns.creditsDb.ledger["Gone"] == nil and ns.creditsDb.toonIndex["gone"] == nil)
+    check("Tombstone: it is remembered", ns.creditsDb.ledgerTombstones["Gone"].ts == 2000)
+    deliver("Officer2", msgFor(recText(rec({ discordName = "Gone", mainToon = "Gone", syncedAt = 1500 }))))
+    check("Tombstone: an older copy of the deleted account does not resurrect it", ns.creditsDb.ledger["Gone"] == nil)
+    deliver("Officer2", msgFor(recText(rec({ discordName = "Gone", mainToon = "Gone", syncedAt = 2000 }))))
+    check("Tombstone: an equal-stamp copy does not resurrect it either", ns.creditsDb.ledger["Gone"] == nil)
+    deliver("Officer2", msgFor(recText(rec({ discordName = "Gone", mainToon = "Gone", syncedAt = 3000 }))))
+    check("Tombstone: a genuinely newer record (re-created account) is accepted", ns.creditsDb.ledger["Gone"] ~= nil)
+    deliver("Officer2", msgFor("D:Gone|1000"))
+    check("Tombstone: an older tombstone does not delete the re-created account", ns.creditsDb.ledger["Gone"] ~= nil)
+
+    -- Merge replicates: payload carries D + target record.
+    cm4.setup()
+    outboxLog = {}
+    ns.Credits_MergeAccounts("MainA", "MainB")
+    local pay = payloadTo("Officer2")
+    check("Merge sync: the payload carries the tombstone for the deleted source", pay:find("D:MainA|", 1, true) ~= nil)
+    check("Merge sync: ...and the merged target record", pay:find("R:MainB|", 1, true) ~= nil)
+
+    -- held-entry codec + replication
+    cm4.setup()
+    local e = { id = "ab-1-2", sender = "We|ird;Na,me", ts = 1700000123, receiver = "Rec;v", gold = 2.5, rep = 350.25, credits = 3.5025,
+        items = { { itemID = 1, name = "Sw,or~d|x", count = 2, rep = 100, category = "Wea;pon" }, { itemID = 5, name = "Herb", count = 1, rep = 2, category = "Uncategorized" } },
+        creditsPerRep = { x = 1, y = 100 }, repPerGold = { x = 100, y = 1 }, syncedAt = 4242 }
+    local enc = ns.CreditsSync_EncodePending(e)
+    check("Pending codec: no raw ';' in the encoded entry", not enc:find(";", 1, true))
+    local d = ns.CreditsSync_DecodePending(enc)
+    check("Pending codec: round-trips sender/receiver/numbers with hostile characters",
+        d and d.sender == e.sender and d.receiver == e.receiver and d.gold == 2.5 and d.rep == 350.25 and d.syncedAt == 4242
+        and d.creditsPerRep.y == 100 and d.repPerGold.x == 100)
+    check("Pending codec: round-trips items", d and #d.items == 2 and d.items[1].name == "Sw,or~d|x" and d.items[1].count == 2
+        and d.items[1].category == "Wea;pon" and d.items[2].itemID == 5)
+    check("Pending codec: rejects too few fields", ns.CreditsSync_DecodePending("a|b|c") == nil)
+    check("Pending codec: rejects a negative rep", ns.CreditsSync_DecodePending((enc:gsub("|350.25|", "|-1|"))) == nil)
+
+    cm4.setup()
+    outboxLog = {}
+    ns.CreditsDon_Credit({ sender = "Rando", items = { cm4.sword(2) } })
+    pay = payloadTo("Officer2")
+    check("Held sync: the payload carries the held entry", pay:find("P:", 1, true) ~= nil)
+    check("Held sync: ...and the Review Queue add with its issue type", pay:find("Q:Rando|1|", 1, true) ~= nil and pay:find("|unresolved_donor", 1, true) ~= nil)
+    local heldId = ns.creditsDb.pendingCredits["rando"][1].id
+    outboxLog = {}
+    ns.Credits_LinkAlt("Rando", "MainA")
+    pay = payloadTo("Officer2")
+    check("Release sync: the payload carries the released tombstone", pay:find("X:" .. heldId:gsub("%-", "%%-"), 1) ~= nil)
+    check("Release sync: ...and the updated account", pay:find("R:MainA|", 1, true) ~= nil)
+
+    -- officer (non-recipient) receives held entry, then the release.
+    cm4.setup()
+    ns.creditsArmedInbox = false
+    local pe = { id = "zz-1-1", sender = "Rando", ts = 1700000123, receiver = "Bavin", gold = 0, rep = 100, credits = 1,
+        items = { { itemID = 1, name = "Test Sword", count = 2, rep = 100, category = "Weapon" } },
+        creditsPerRep = { x = 1, y = 100 }, repPerGold = { x = 100, y = 1 }, syncedAt = 3000 }
+    local pText = "P:" .. ns.CreditsSync_EncodePending(pe)
+    deliver("Officer2", msgFor(pText, "Q:Rando|1|3000|unresolved_donor"))
+    check("Held sync (receive): an officer stores the entry", ns.creditsDb.pendingCredits["rando"] and #ns.creditsDb.pendingCredits["rando"] == 1)
+    check("Held sync (receive): the Review Queue row arrives with its issue",
+        ns.creditsDb.dynamicReviewQueue[1] and ns.creditsDb.dynamicReviewQueue[1].issue == "unresolved_donor")
+    local hr = ns.CreditsDon_HeldTotals("Rando")
+    check("Held sync (receive): held totals visible to the officer", hr == 100)
+    deliver("Officer2", msgFor(pText))
+    check("Held sync (receive): the same entry twice is stored once", #ns.creditsDb.pendingCredits["rando"] == 1)
+    check("Held sync (receive): an unarmed officer never applies it to the ledger",
+        ns.creditsDb.ledger["MainA"].lifetimePoints == 2900)
+    deliver("Officer2", msgFor("X:zz-1-1|4000", "Q:Rando|0|4000|removed_alt"))
+    check("Release sync (receive): the tombstone removes the officer's copy", ns.creditsDb.pendingCredits["rando"] == nil)
+    deliver("Officer2", msgFor(pText))
+    check("Release sync (receive): a late copy of a released entry is ignored", ns.creditsDb.pendingCredits["rando"] == nil)
+
+    -- A link arriving by sync releases on the armed recipient.
+    cm4.setup()
+    ns.CreditsDon_Credit({ sender = "Rando", items = { cm4.sword(2) } })
+    local life0 = ns.creditsDb.ledger["MainA"].lifetimePoints
+    local linked = rec({ alts = { "AltA1", "Rando" }, lifetimePoints = life0, tier = "Neutral", points = life0, syncedAt = 5000 })
+    deliver("Officer2", msgFor(recText(linked), "Q:Rando|0|5000|removed_alt"))
+    check("Release (sync link): the recipient releases when a link for the held sender arrives",
+        ns.creditsDb.pendingCredits["rando"] == nil and ns.creditsDb.ledger["MainA"].lifetimePoints == life0 + 100)
+end
+
+--------------------------------------------------------------------------
+-- CM4: inbox hook (CreditsInbox.lua) - checkbox defaults, diff-based
+-- crediting of what was actually taken, Wall 4 install gating
+--------------------------------------------------------------------------
+print("== Credits: CM4 inbox hook ==")
+do
+    local inbox, mailCounter = {}, 0
+    local mockNow, timers = 1000, {}
+    local savedGetTime = _G.GetTime
+    _G.GetTime = function() return mockNow end
+    _G.C_Timer = { After = function(d, fn) timers[#timers + 1] = { at = mockNow + d, fn = fn } end }
+    local function advance(dt)
+        mockNow = mockNow + dt
+        local due, rest = {}, {}
+        for _, t in ipairs(timers) do
+            if t.at <= mockNow then due[#due + 1] = t else rest[#rest + 1] = t end
+        end
+        timers = rest
+        for _, t in ipairs(due) do t.fn() end
+    end
+
+    -- Mock of the Classic Era mail API, shaped exactly like the 2026-10-04 probe found it.
+    _G.GetInboxNumItems = function() return #inbox, #inbox end
+    _G.GetInboxHeaderInfo = function(i)
+        local m = inbox[i]
+        if not m then return end
+        local n = 0
+        for _ in pairs(m.items) do n = n + 1 end
+        return nil, nil, m.sender, m.subject, m.money, m.cod, m.daysLeft, (n > 0) and n or nil,
+            false, m.returned, false, true, m.gm
+    end
+    _G.GetInboxItem = function(i, j)
+        local m = inbox[i]
+        local it = m and m.items[j]
+        if not it then return nil end
+        return it.name, it.itemID, "tex", it.count, 1, true
+    end
+    local function mail(sender, subject, items, money, extra)
+        mailCounter = mailCounter + 1
+        local m = { sender = sender, subject = subject or "Hi", items = items or {}, money = money or 0, cod = 0,
+            daysLeft = 20 - mailCounter * 0.0013, returned = false, gm = false }
+        for k, v in pairs(extra or {}) do m[k] = v end
+        inbox[#inbox + 1] = m
+        return m
+    end
+    local function item(id, name, count) return { itemID = id, name = name, count = count or 1 } end
+    local function fresh()
+        cm4.setup()
+        ns.CreditsInbox_ResetForTests()
+        inbox, timers = {}, {}
+        mockNow = 1000
+        ns.CreditsInbox_OnMailShow()
+    end
+    local function update() ns.CreditsInbox_OnInboxUpdate() end
+    -- What the client does for a single-item take: hook (after the call, before
+    -- the inbox changes), then the slot disappears, then MAIL_INBOX_UPDATE.
+    local function takeItem(i, j)
+        ns.CreditsInbox_OnTake("item", i, j)
+        inbox[i].items[j] = nil
+    end
+    local function logCount() return #ns.creditsDb.transactionLog end
+
+    -- ---- default checkbox state ------------------------------------------
+    fresh()
+    mail("MainA", "Donation", { item(1, "Test Sword", 2) })                    -- 1 player
+    mail("Auction House", "Auction successful", {}, 50000)                      -- 2 non-player
+    mail("MainA", "Returned", { item(1, "Test Sword", 1) }, 0, { returned = true }) -- 3 returned
+    mail("MainA", "GM", { item(1, "Test Sword", 1) }, 0, { gm = true })         -- 4 GM
+    mail("MainA", "Pay me", { item(1, "Test Sword", 1) }, 0, { cod = 5000 })    -- 5 COD
+    mail(nil, "Mystery", { item(1, "Test Sword", 1) })                          -- 6 no sender
+    check("Checkbox default: a player sender's mail is CHECKED", ns.CreditsInbox_IsChecked(1) == true)
+    check("Checkbox default: Auction House (space in sender) is UNCHECKED", ns.CreditsInbox_IsChecked(2) == false)
+    check("Checkbox default: returned mail is UNCHECKED", ns.CreditsInbox_IsChecked(3) == false)
+    check("Checkbox default: GM mail is UNCHECKED", ns.CreditsInbox_IsChecked(4) == false)
+    check("Checkbox default: COD mail is UNCHECKED", ns.CreditsInbox_IsChecked(5) == false)
+    check("Checkbox default: a mail with no sender is UNCHECKED", ns.CreditsInbox_IsChecked(6) == false)
+    ns.CreditsInbox_SetChecked(1, false)
+    check("Checkbox: unchecking one mail does not change the next mail's default (no sticky rule)",
+        ns.CreditsInbox_IsChecked(1) == false)
+    ns.CreditsInbox_SetChecked(1, true)
+    check("Checkbox: re-checking works", ns.CreditsInbox_IsChecked(1) == true)
+    check("Checkbox: an unchecked-by-default mail can be re-checked",
+        ns.CreditsInbox_SetChecked(2, true) == true and ns.CreditsInbox_IsChecked(2) == true)
+    check("Checkbox: COD can never be checked", ns.CreditsInbox_SetChecked(5, true) == false and ns.CreditsInbox_IsChecked(5) == false)
+
+    -- ---- one item taken, confirmed by the next update ----------------------
+    fresh()
+    mail("MainA", "Donation", { item(1, "Test Sword", 2), item(2, "Test Herb", 5) })
+    takeItem(1, 1)
+    check("Take: nothing is credited before the inbox confirms", logCount() == 0)
+    update()
+    advance(3)
+    check("Take: confirmed by the update, credited as one entry (2 swords = 100 rep)",
+        logCount() == 1 and ns.creditsDb.transactionLog[1].rep == 100 and ns.creditsDb.ledger["MainA"].lifetimePoints == 3000)
+    check("Take: only the item taken was credited (the herb still in the mail is not)",
+        #ns.creditsDb.transactionLog[1].items == 1)
+    -- taking it again (the slot is empty now) credits nothing
+    ns.CreditsInbox_OnTake("item", 1, 1)
+    update()
+    advance(3)
+    check("Take: re-taking an already-emptied slot credits nothing", logCount() == 1)
+
+    -- ---- bags full: slot unchanged => nothing credited; retry credits once ----
+    fresh()
+    mail("MainA", "Donation", { item(1, "Test Sword", 2) })
+    ns.CreditsInbox_OnTake("item", 1, 1)         -- hook fires, but bags are full: slot stays
+    update()
+    check("Bags full: the slot is still there so nothing is credited", logCount() == 0)
+    ns.CreditsInbox_OnMailFailed(1)              -- MAIL_FAILED(itemID)
+    update()
+    advance(3)
+    check("Bags full: nothing credited after MAIL_FAILED either", logCount() == 0)
+    takeItem(1, 1)                               -- player makes room and retries
+    update()
+    advance(3)
+    check("Bags full: the successful retry is credited exactly once", logCount() == 1 and ns.creditsDb.transactionLog[1].rep == 100)
+
+    -- retry WITHOUT a MAIL_FAILED in between must not double count
+    fresh()
+    mail("MainA", "Donation", { item(1, "Test Sword", 2) })
+    ns.CreditsInbox_OnTake("item", 1, 1)
+    update()
+    mockNow = mockNow + 1
+    takeItem(1, 1)                               -- second attempt replaces the first pending action
+    update()
+    advance(3)
+    check("Retry: two attempts on the same slot still credit once", logCount() == 1 and ns.creditsDb.transactionLog[1].rep == 100)
+
+    -- ---- AutoLootMailItem: many slots + money, one log entry --------------------
+    fresh()
+    mail("MainA", "Everything", { item(1, "Test Sword", 2), item(2, "Test Herb", 5), item(1, "Test Sword", 1) }, 20000)
+    local printedBefore = #printLog
+    ns.CreditsInbox_OnTake("all", 1)
+    for slot = 1, 3 do
+        inbox[1].items[slot] = nil
+        advance(0.15)
+        update()
+    end
+    inbox[1].money = 0
+    advance(0.15)
+    update()
+    check("Auto-loot: nothing is credited until the take settles", logCount() == 0)
+    table.remove(inbox, 1) -- the emptied mail is removed and indexes shift
+    advance(0.2)
+    update()
+    advance(3)
+    check("Auto-loot: ONE log entry for the whole mail", logCount() == 1)
+    local le = ns.creditsDb.transactionLog[1]
+    check("Auto-loot: items merged (3 swords, 5 herbs), gold 2, total rep 360",
+        #le.items == 2 and le.gold == 2 and le.rep == 360)
+    local lines = 0
+    for i = printedBefore + 1, #printLog do
+        if tostring(printLog[i]):find("MainA: +360 rep", 1, true) then lines = lines + 1 end
+    end
+    check("Auto-loot: ONE credited chat line for the mail", lines == 1)
+
+    -- ---- mail identified by key, not index ---------------------------------------
+    fresh()
+    mail("Donor1", "First", { item(1, "Test Sword", 1) })   -- 1
+    mail("MainA", "Second", { item(1, "Test Sword", 2) })   -- 2
+    takeItem(2, 1)
+    table.remove(inbox, 1)                                  -- another mail disappears first: MainA's is now index 1
+    update()
+    advance(3)
+    check("Index shift: credit lands on the mail's own sender, found by key not index",
+        logCount() == 1 and ns.creditsDb.transactionLog[1].sender == "MainA" and ns.creditsDb.transactionLog[1].rep == 100)
+
+    -- ---- two mails with the same sender+subject stay distinct (daysLeft tiebreak) -
+    fresh()
+    mail("MainA", "Donation", { item(1, "Test Sword", 1) })
+    mail("MainA", "Donation", { item(1, "Test Sword", 4) })
+    takeItem(2, 1)
+    update()
+    advance(3)
+    check("Duplicate subjects: only the mail actually taken is credited (4 swords = 200 rep)",
+        logCount() == 1 and ns.creditsDb.transactionLog[1].rep == 200)
+
+    -- ---- unchecked mail: taken, never credited --------------------------------------
+    fresh()
+    mail("Auction House", "Auction successful", {}, 50000)
+    ns.CreditsInbox_OnTake("money", 1)
+    inbox[1].money = 0
+    update()
+    advance(3)
+    check("Unchecked: gold taken from an unchecked mail credits nothing", logCount() == 0 and next(ns.creditsDb.pendingCredits) == nil)
+    fresh()
+    mail("Auction House", "Auction successful", {}, 50000)
+    ns.CreditsInbox_SetChecked(1, true)
+    ns.CreditsInbox_OnTake("money", 1)
+    inbox[1].money = 0
+    update()
+    advance(3)
+    check("Unchecked: once the officer ticks it, the take IS credited (held - not a guild member)",
+        next(ns.creditsDb.pendingCredits) ~= nil and ns.creditsDb.pendingCredits["auction house"] ~= nil)
+
+    -- ---- COD: never credited, one chat line --------------------------------------------
+    fresh()
+    mail("MainA", "Pay me", { item(1, "Test Sword", 1) }, 0, { cod = 5000 })
+    printLog = {}
+    ns.CreditsInbox_OnTake("item", 1, 1)
+    ns.CreditsInbox_OnTake("all", 1)
+    inbox[1].items[1] = nil
+    update()
+    advance(3)
+    local codLines = 0
+    for _, l in ipairs(printLog) do if tostring(l):find("COD mail from MainA skipped", 1, true) then codLines = codLines + 1 end end
+    check("COD: never credited even when taken", logCount() == 0)
+    check("COD: exactly one skipped line per COD mail", codLines == 1)
+
+    -- ---- gold-only mail via TakeInboxMoney ----------------------------------------------
+    fresh()
+    mail("MainA", "[5 Gold]", {}, 50000)
+    ns.CreditsInbox_OnTake("money", 1)
+    inbox[1].money = 0
+    update()
+    advance(3)
+    check("Gold take: 5 gold credited as 500 rep", logCount() == 1 and ns.creditsDb.transactionLog[1].gold == 5
+        and ns.creditsDb.transactionLog[1].rep == 500 and ns.creditsDb.transactionLog[1].category == nil)
+    local gl = ns.creditsDb.transactionLog[1]
+    check("Gold take: items empty, receiver recorded", #gl.items == 0 and gl.receiver == "Officer1")
+
+    -- ---- several manual clicks on one mail = one entry ------------------------------------
+    fresh()
+    mail("MainA", "Bundle", { item(1, "Test Sword", 1), item(2, "Test Herb", 3), item(1, "Test Sword", 2) })
+    takeItem(1, 1); advance(0.2); update()
+    advance(1)
+    takeItem(1, 2); advance(0.2); update()
+    advance(1)
+    takeItem(1, 3); advance(0.2); update()
+    check("Clicks: still waiting inside the quiet window (nothing logged yet)", logCount() == 0)
+    advance(3)
+    check("Clicks: three separate clicks on one mail become ONE entry",
+        logCount() == 1 and ns.creditsDb.transactionLog[1].rep == 50 + 6 + 100)
+
+    -- ---- expiry ---------------------------------------------------------------------------
+    fresh()
+    mail("MainA", "Donation", { item(1, "Test Sword", 1) })
+    ns.CreditsInbox_OnTake("item", 1, 1)   -- never confirmed
+    advance(11)                            -- the expiry timer runs an update: slot still there, action expires
+    inbox[1].items[1] = nil                -- taken some other way much later
+    update()
+    advance(3)
+    check("Expiry: an unconfirmed take is dropped after ~10s and credits nothing later", logCount() == 0)
+
+    -- ---- closing the mailbox / logging out flushes ------------------------------------------
+    fresh()
+    mail("MainA", "Donation", { item(1, "Test Sword", 2) })
+    takeItem(1, 1)
+    update()
+    check("Close: still inside the quiet window", logCount() == 0)
+    ns.CreditsInbox_FlushAll()
+    check("Close: MAIL_CLOSED / logout flush credits immediately", logCount() == 1)
+    fresh()
+    mail("MainA", "Donation", { item(1, "Test Sword", 2) })
+    takeItem(1, 1)
+    update()
+    ns.CreditsInbox_OnMailShow()
+    check("Reopen: a new mailbox visit flushes what was confirmed before it", logCount() == 1)
+
+    -- ---- Wall 4: the hook is only ever installed by an armed receiver ------------------------
+    ns.CreditsInbox_ResetForTests()
+    cm4.setup()
+    ns.creditsArmedInbox = false
+    local hooks = {}
+    _G.hooksecurefunc = function(name, fn) hooks[name] = fn end
+    _G.TakeInboxItem = function() end
+    _G.TakeInboxMoney = function() end
+    _G.AutoLootMailItem = function() end
+    ns.creditsDb.masterToggle = false
+    ns.creditsDb.creditTestReceivers = { "Officer1" }
+    ns.Credits_EvaluateArming()
+    check("Wall 4: master toggle OFF installs nothing", next(hooks) == nil and ns.creditsInboxFrame == nil)
+    ns.creditsDb.masterToggle = true
+    ns.creditsDb.creditTestReceivers = { "SomeoneElse" }
+    ns.Credits_EvaluateArming()
+    check("Wall 4: toggle ON but this character not on the receiver list installs nothing",
+        next(hooks) == nil and ns.creditsInboxFrame == nil and ns.creditsArmedInbox == false)
+    ns.creditsDb.creditTestReceivers = { "Officer1" }
+    ns.Credits_EvaluateArming()
+    check("Wall 4: toggle ON + on the receiver list installs the three take hooks",
+        hooks.TakeInboxItem and hooks.TakeInboxMoney and hooks.AutoLootMailItem and ns.creditsArmedInbox == true)
+    check("Wall 4: the event frame exists and listens for the mail events",
+        ns.creditsInboxFrame and ns.creditsInboxFrame:IsEventRegistered("MAIL_INBOX_UPDATE")
+        and ns.creditsInboxFrame:IsEventRegistered("MAIL_SHOW") and ns.creditsInboxFrame:IsEventRegistered("MAIL_CLOSED")
+        and ns.creditsInboxFrame:IsEventRegistered("MAIL_FAILED"))
+    -- end to end through the installed hook + event frame
+    inbox, timers = {}, {}
+    ns.creditsInboxFrame:Fire("MAIL_SHOW")
+    mail("MainA", "Donation", { item(1, "Test Sword", 2) })
+    hooks.TakeInboxItem(1, 1)
+    inbox[1].items[1] = nil
+    ns.creditsInboxFrame:Fire("MAIL_INBOX_UPDATE")
+    ns.creditsInboxFrame:Fire("MAIL_CLOSED")
+    check("Wall 4: end to end - the installed hook + events credit a real take", logCount() == 1)
+    ns.creditsInboxFrame:Fire("MAIL_FAILED", 1) -- must not error with nothing pending
+    -- a second EvaluateArming does not double-install
+    local before = hooks.TakeInboxItem
+    ns.Credits_EvaluateArming()
+    check("Wall 4: arming twice does not reinstall", hooks.TakeInboxItem == before)
+
+    -- cleanup
+    _G.hooksecurefunc, _G.TakeInboxItem, _G.TakeInboxMoney, _G.AutoLootMailItem = nil, nil, nil, nil
+    _G.GetInboxNumItems, _G.GetInboxHeaderInfo, _G.GetInboxItem = nil, nil, nil
+    _G.C_Timer = nil
+    _G.GetTime = savedGetTime
+    ns.CreditsInbox_ResetForTests()
+    ns.ITEM_POINTS = cm4.origItemPoints
+    _G.GRM = nil
 end
 
 --------------------------------------------------------------------------

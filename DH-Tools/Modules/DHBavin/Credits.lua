@@ -120,6 +120,22 @@ function ns.InitCreditsDB()
     if type(ns.creditsDb.transactionLog) ~= "table" then
         ns.creditsDb.transactionLog = {}
     end
+    -- CM4 (CreditsDonations.lua). pendingCredits[senderLower] = { entry, ... }:
+    -- computed donation entries for a sender who resolves to no account yet
+    -- (held, never dropped); entries are applied automatically on the mail
+    -- recipient's client once the sender resolves. pendingReleased[id] =
+    -- { ts } is the replicated "released" tombstone so a late copy of a
+    -- released entry can't resurrect it. ledgerTombstones[discordName] =
+    -- { ts } marks an account deleted by a merge (CM3 sync carries it).
+    if type(ns.creditsDb.pendingCredits) ~= "table" then
+        ns.creditsDb.pendingCredits = {}
+    end
+    if type(ns.creditsDb.pendingReleased) ~= "table" then
+        ns.creditsDb.pendingReleased = {}
+    end
+    if type(ns.creditsDb.ledgerTombstones) ~= "table" then
+        ns.creditsDb.ledgerTombstones = {}
+    end
 
     -- Wall 3: master toggle, OFF by default. Ships inert.
     if ns.creditsDb.masterToggle == nil then
@@ -359,6 +375,8 @@ function ns.Credits_LinkAlt(altName, mainToonName)
     if ns.CreditsSync_Changed then
         ns.CreditsSync_Changed({ discordName, previousAccount }, { { name = altBare, present = false } })
     end
+    -- CM4: a link may be exactly what a held donation was waiting for.
+    if ns.Credits_ReleasePending then ns.Credits_ReleasePending() end
     return true
 end
 
@@ -558,7 +576,10 @@ end
 -- Main" on a reopened entry seeds a 0 lifetime total until the next
 -- real Step 0 pass recomputes it.
 --------------------------------------------------------------------------
-function ns.Credits_AddToReviewQueue(altName)
+-- issue defaults to "removed_alt" (the only caller until CM4); CM4 adds
+-- "unresolved_donor" for a sender whose donation is being held. details is
+-- optional and replaces the default text.
+function ns.Credits_AddToReviewQueue(altName, issue, details, latestOverride)
     if not ns.creditsDb then return end
     ns.creditsDb.dynamicReviewQueue = ns.creditsDb.dynamicReviewQueue or {}
     -- Keep whatever donation info we already know for this name (2026-09-29,
@@ -590,10 +611,12 @@ function ns.Credits_AddToReviewQueue(altName)
     ns.Credits_RemoveFromReviewQueue(altName) -- no duplicate entries
     table.insert(ns.creditsDb.dynamicReviewQueue, {
         name = altName,
-        issue = "removed_alt",
-        latestDonation = latest or "",
+        issue = issue or "removed_alt",
+        latestDonation = latestOverride or latest or "",
         rawGoldAmount = tonumber(rawGold) or 0,
-        details = "removed from an account by an officer - no historical gold figure available at runtime",
+        details = details or ((issue == "unresolved_donor")
+            and "held donation - waiting for an officer to link this name"
+            or "removed from an account by an officer - no historical gold figure available at runtime"),
     })
 end
 
@@ -908,11 +931,18 @@ local function NameOnList(list, name)
     return false
 end
 
--- CM4/CM5 own the real hook bodies. Deliberately no-ops for now (design
--- doc: "two no-op hook-installation sites... so both gates can be
--- verified before any mail code exists behind them").
+-- Two hook-installation sites (design doc: Wall 4). The outgoing one is
+-- still a no-op until CM5.
+-- CM4: the real inbox hook lives in CreditsInbox.lua and is created ONLY
+-- from here (Wall 4) - a character that isn't on creditTestReceivers with
+-- the master toggle on never runs a line of it.
 local function InstallInboxHook()
-    ns.CreditsPrint("[TEST] Inbox credit hook armed for " .. UnitName("player") .. " (no-op until CM4).")
+    if ns.CreditsInbox_Install then
+        ns.CreditsInbox_Install()
+        ns.CreditsPrint("[TEST] Inbox credit hook armed for " .. UnitName("player") .. ".")
+    else
+        ns.CreditsPrint("[TEST] Inbox credit hook NOT installed - CreditsInbox.lua isn't loaded.")
+    end
 end
 
 local function InstallOutgoingHook()
@@ -955,7 +985,12 @@ function ns.Credits_ResetTestData()
     ns.creditsDb.transactionLog = {}
     ns.creditsDb.rqStamps = {}    -- CM3 review-queue sync stamps (local reset, like the rest)
     ns.creditsDb.lastSyncAt = 0
-    ns.CreditsPrint("Test credit data wiped (ledger, toon index, dynamic review queue, transaction log).")
+    -- CM4: held (pending) credits and the merge/release tombstones are test
+    -- data too.
+    ns.creditsDb.pendingCredits = {}
+    ns.creditsDb.pendingReleased = {}
+    ns.creditsDb.ledgerTombstones = {}
+    ns.CreditsPrint("Test credit data wiped (ledger, toon index, dynamic review queue, held credits, transaction log).")
     return true
 end
 
@@ -975,10 +1010,17 @@ ns.creditsFrame:SetScript("OnEvent", function(_, event, ...)
         ns.Credits_Init()
         ns.Credits_EvaluateArming()
         if ns.CreditsSync_OnLogin then ns.CreditsSync_OnLogin() end
+        -- CM4: release held donations whose sender resolves by now. Delayed
+        -- so the guild roster (used to resolve guild members) has loaded.
+        if ns.Credits_ReleasePending and C_Timer and C_Timer.After then
+            C_Timer.After(12, function() ns.Credits_ReleasePending() end)
+        end
     elseif event == "CHAT_MSG_ADDON" then
         ns.Credits_OnAddonMessage(...)
     elseif event == "GUILD_ROSTER_UPDATE" then
         if ns.CreditsSync_OnRosterUpdate then ns.CreditsSync_OnRosterUpdate() end
+        -- Cheap no-op unless this is the recipient with something held.
+        if ns.Credits_ReleasePending then ns.Credits_ReleasePending() end
     end
 end)
 

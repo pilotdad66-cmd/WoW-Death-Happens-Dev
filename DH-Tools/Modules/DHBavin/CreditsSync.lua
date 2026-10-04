@@ -92,6 +92,10 @@ local function EnsureDb()
     local db = ns.creditsDb
     if not db then return nil end
     if type(db.rqStamps) ~= "table" then db.rqStamps = {} end
+    -- CM4 additions (CreditsDonations.lua); InitCreditsDB creates them too.
+    if type(db.ledgerTombstones) ~= "table" then db.ledgerTombstones = {} end
+    if type(db.pendingCredits) ~= "table" then db.pendingCredits = {} end
+    if type(db.pendingReleased) ~= "table" then db.pendingReleased = {} end
     return db
 end
 
@@ -106,6 +110,17 @@ local function NextStamp()
         end
         for _, q in pairs(db.rqStamps or {}) do
             if (q.ts or 0) > lastStamp then lastStamp = q.ts end
+        end
+        for _, t in pairs(db.ledgerTombstones or {}) do
+            if (t.ts or 0) > lastStamp then lastStamp = t.ts end
+        end
+        for _, t in pairs(db.pendingReleased or {}) do
+            if (t.ts or 0) > lastStamp then lastStamp = t.ts end
+        end
+        for _, list in pairs(db.pendingCredits or {}) do
+            for _, e in ipairs(list) do
+                if (e.syncedAt or 0) > lastStamp then lastStamp = e.syncedAt end
+            end
         end
     end
     local s = time()
@@ -220,6 +235,65 @@ ns.CreditsSync_EncodeRecord = EncodeRecord
 ns.CreditsSync_DecodeRecord = DecodeRecord
 
 --------------------------------------------------------------------------
+-- Held-donation (pending credit) entries - CM4 spec step 7
+--------------------------------------------------------------------------
+-- P:<id>|<sender>|<ts>|<receiver>|<gold>|<rep>|<credits>|<crx>|<cry>|
+--   <rgx>|<rgy>|<syncedAt>|<items>       items = "~"-joined, each
+--   itemID,name,count,rep,category (the Esc'd text never contains , ~ | ;).
+-- An entry never changes once created, so there is no last-writer-wins:
+-- it is stored if its id is unknown and not tombstoned, and an X: item
+-- (the release tombstone) removes it.
+local function EncodePending(e)
+    local items = {}
+    for i, it in ipairs(e.items or {}) do
+        items[i] = table.concat({
+            Esc(it.itemID), Esc(it.name), Num(it.count), Num(it.rep), Esc(it.category or "Uncategorized"),
+        }, ",")
+    end
+    local cpr, rpg = e.creditsPerRep or {}, e.repPerGold or {}
+    return table.concat({
+        Esc(e.id), Esc(e.sender), Num(e.ts), Esc(e.receiver), Num(e.gold), Num(e.rep), Num(e.credits),
+        Num(cpr.x), Num(cpr.y), Num(rpg.x), Num(rpg.y), Num(e.syncedAt),
+        table.concat(items, "~"),
+    }, "|")
+end
+
+local function DecodePending(text)
+    local f = Split(text, "|")
+    if #f ~= 13 then return nil end
+    local id, sender = Unesc(f[1]), Unesc(f[2])
+    if not id:match("^[%w%-]+$") or #id > 40 then return nil end
+    if sender == "" or #sender > 64 then return nil end
+    local ts, gold, rep, credits = tonumber(f[3]), tonumber(f[5]), tonumber(f[6]), tonumber(f[7])
+    local crx, cry, rgx, rgy, syncedAt = tonumber(f[8]), tonumber(f[9]), tonumber(f[10]), tonumber(f[11]), tonumber(f[12])
+    if not (ts and gold and rep and credits and crx and cry and rgx and rgy and syncedAt) then return nil end
+    if gold < 0 or rep < 0 or credits < 0 or crx < 0 or cry <= 0 or rgx < 0 or rgy <= 0 then return nil end
+    local items = {}
+    if f[13] ~= "" then
+        for _, part in ipairs(Split(f[13], "~")) do
+            local p = Split(part, ",")
+            if #p ~= 5 then return nil end
+            local count, irep = tonumber(p[3]), tonumber(p[4])
+            if not count or not irep or count < 0 or irep < 0 then return nil end
+            items[#items + 1] = {
+                itemID = tonumber(Unesc(p[1])) or Unesc(p[1]),
+                name = Unesc(p[2]), count = count, rep = irep, category = Unesc(p[5]),
+            }
+        end
+    end
+    if #items > 100 then return nil end
+    return {
+        id = id, sender = sender, ts = ts, receiver = Unesc(f[4]),
+        gold = gold, rep = rep, credits = credits, items = items,
+        creditsPerRep = { x = crx, y = cry }, repPerGold = { x = rgx, y = rgy },
+        syncedAt = syncedAt,
+    }
+end
+
+ns.CreditsSync_EncodePending = EncodePending
+ns.CreditsSync_DecodePending = DecodePending
+
+--------------------------------------------------------------------------
 -- Peers and transport
 --------------------------------------------------------------------------
 local function MyName()
@@ -282,7 +356,16 @@ local function SendItems(peer, items)
 end
 
 local function RecordItem(rec) return "R:" .. EncodeRecord(rec) end
-local function QueueItem(q) return "Q:" .. Esc(q.name) .. "|" .. (q.present and "1" or "0") .. "|" .. Num(q.ts) end
+-- Q:<name>|<1 add / 0 remove>|<stamp>|<issue>   (issue = the Review Queue
+-- row type for an add; CM4 added it - "removed_alt" is the old implicit one)
+local function QueueItem(q)
+    return "Q:" .. Esc(q.name) .. "|" .. (q.present and "1" or "0") .. "|" .. Num(q.ts) .. "|" .. Esc(q.issue or "removed_alt")
+end
+-- D:<discordName>|<stamp>   account deleted by a merge (tombstone)
+local function TombItem(name, t) return "D:" .. Esc(name) .. "|" .. Num(t.ts) end
+-- P:<held entry> (see EncodePending) / X:<id>|<stamp>  (released tombstone)
+local function PendingItem(e) return "P:" .. EncodePending(e) end
+local function ReleasedItem(id, t) return "X:" .. Esc(id) .. "|" .. Num(t.ts) end
 
 --------------------------------------------------------------------------
 -- Local mutation -> stamp + push
@@ -292,7 +375,11 @@ local function QueueItem(q) return "Q:" .. Esc(q.name) .. "|" .. (q.present and 
 -- { name, present } review-queue adds (true) / removes (false). Stamps
 -- everything, and if no officer peer is online marks it dirty so it is
 -- re-stamped (share time, not edit time) and pushed at the next contact.
-function ns.CreditsSync_Changed(discordNames, queueChanges)
+-- CM4: `extra` (optional) carries the things that aren't a plain record or
+-- queue edit: extra.deleted = { discordName, ... } (accounts removed by a
+-- merge -> tombstone), extra.pendingAdded = { entry, ... } (held donations),
+-- extra.pendingReleased = { id, ... } (held donations that were applied).
+function ns.CreditsSync_Changed(discordNames, queueChanges, extra)
     local db = EnsureDb()
     if not db then return end
     local peers = PeerList()
@@ -308,10 +395,27 @@ function ns.CreditsSync_Changed(discordNames, queueChanges)
     end
     for _, qc in ipairs(queueChanges or {}) do
         if qc.name and qc.name ~= "" then
-            local q = { name = qc.name, present = qc.present and true or false, ts = NextStamp() }
+            local q = { name = qc.name, present = qc.present and true or false, ts = NextStamp(), issue = qc.issue }
             q.dirty = (#peers == 0) or nil
             db.rqStamps[qc.name:lower()] = q
             items[#items + 1] = QueueItem(q)
+        end
+    end
+    if extra then
+        for _, name in ipairs(extra.deleted or {}) do
+            local t = { ts = NextStamp(), dirty = (#peers == 0) or nil }
+            db.ledgerTombstones[name] = t
+            items[#items + 1] = TombItem(name, t)
+        end
+        for _, e in ipairs(extra.pendingAdded or {}) do
+            e.syncedAt = NextStamp()
+            e.dirty = (#peers == 0) or nil
+            items[#items + 1] = PendingItem(e)
+        end
+        for _, id in ipairs(extra.pendingReleased or {}) do
+            local t = { ts = NextStamp(), dirty = (#peers == 0) or nil }
+            db.pendingReleased[id] = t
+            items[#items + 1] = ReleasedItem(id, t)
         end
     end
     for _, peer in ipairs(peers) do
@@ -329,6 +433,17 @@ local function CollectSince(since)
     end
     for _, q in pairs(db.rqStamps) do
         if (q.ts or 0) > since and not q.dirty then items[#items + 1] = QueueItem(q) end
+    end
+    for name, t in pairs(db.ledgerTombstones) do
+        if (t.ts or 0) > since and not t.dirty then items[#items + 1] = TombItem(name, t) end
+    end
+    for _, list in pairs(db.pendingCredits) do
+        for _, e in ipairs(list) do
+            if (e.syncedAt or 0) > since and not e.dirty then items[#items + 1] = PendingItem(e) end
+        end
+    end
+    for id, t in pairs(db.pendingReleased) do
+        if (t.ts or 0) > since and not t.dirty then items[#items + 1] = ReleasedItem(id, t) end
     end
     table.sort(items)
     return items
@@ -352,6 +467,29 @@ local function FlushDirty()
             q.ts = NextStamp()
             q.dirty = nil
             items[#items + 1] = QueueItem(q)
+        end
+    end
+    for name, t in pairs(db.ledgerTombstones) do
+        if t.dirty then
+            t.ts = NextStamp()
+            t.dirty = nil
+            items[#items + 1] = TombItem(name, t)
+        end
+    end
+    for _, list in pairs(db.pendingCredits) do
+        for _, e in ipairs(list) do
+            if e.dirty then
+                e.syncedAt = NextStamp()
+                e.dirty = nil
+                items[#items + 1] = PendingItem(e)
+            end
+        end
+    end
+    for id, t in pairs(db.pendingReleased) do
+        if t.dirty then
+            t.ts = NextStamp()
+            t.dirty = nil
+            items[#items + 1] = ReleasedItem(id, t)
         end
     end
     return items
@@ -427,20 +565,100 @@ local function PruneBuffers()
     end
 end
 
+-- CM4 (spec step 9): lifetimePoints and lifetimeCredits only ever rise, so
+-- a record that wins last-writer-wins on syncedAt still must not LOWER them
+-- (an officer who edited a link before a donation reached them would
+-- otherwise erase that donation's points), and a record that loses on
+-- stamp but carries higher lifetime values still raises ours. tier/
+-- prestige/points always derive from lifetimePoints, so they are
+-- recomputed when it rises. The credits BALANCE stays plain last-writer-
+-- wins (it can go down when spent). Returns true if `target` changed.
+local function RaiseLifetime(target, source)
+    local changed = false
+    local lp = tonumber(source.lifetimePoints) or 0
+    if lp > (tonumber(target.lifetimePoints) or 0) then
+        target.lifetimePoints = lp
+        target.tier, target.prestige, target.points = ns.Credits_TierStateForLifetime(lp)
+        changed = true
+    end
+    local lc = tonumber(source.lifetimeCredits) or 0
+    if lc > (tonumber(target.lifetimeCredits) or 0) then
+        target.lifetimeCredits = lc
+        changed = true
+    end
+    return changed
+end
+
 local function ApplyRecord(rec)
     local db = ns.creditsDb
-    local existing = db.ledger[rec.discordName]
     Observe(rec.syncedAt)
+    -- A merge deleted this account: an equal-or-older copy must not bring
+    -- it back (a newer one is a genuine re-creation and is allowed).
+    local tomb = db.ledgerTombstones[rec.discordName]
+    if tomb and (tomb.ts or 0) >= (rec.syncedAt or 0) then return false end
+    local existing = db.ledger[rec.discordName]
     if existing then
         local a, b = rec.syncedAt or 0, existing.syncedAt or 0
-        if a < b then return false end
-        if a == b and EncodeRecord(rec) <= EncodeRecord(existing) then return false end
+        local incomingWins = true
+        if a < b then incomingWins = false end
+        if a == b and EncodeRecord(rec) <= EncodeRecord(existing) then incomingWins = false end
+        if not incomingWins then
+            return RaiseLifetime(existing, rec)
+        end
+        RaiseLifetime(rec, existing)
     end
     db.ledger[rec.discordName] = rec
     return true
 end
 
-local function ApplyQueue(name, present, ts)
+local function ApplyTombstone(name, ts)
+    local db = ns.creditsDb
+    Observe(ts)
+    local cur = db.ledgerTombstones[name]
+    if cur and (cur.ts or 0) >= ts then return false end
+    db.ledgerTombstones[name] = { ts = ts }
+    local existing = db.ledger[name]
+    if existing and (existing.syncedAt or 0) <= ts then
+        db.ledger[name] = nil
+    end
+    return true
+end
+
+local function ApplyPending(e)
+    local db = ns.creditsDb
+    Observe(e.syncedAt)
+    if db.pendingReleased[e.id] then return false end -- already released
+    local key = e.sender:lower()
+    local list = db.pendingCredits[key]
+    if list then
+        for _, have in ipairs(list) do
+            if have.id == e.id then return false end
+        end
+    end
+    db.pendingCredits[key] = list or {}
+    table.insert(db.pendingCredits[key], e)
+    return true
+end
+
+local function ApplyReleased(id, ts)
+    local db = ns.creditsDb
+    Observe(ts)
+    local cur = db.pendingReleased[id]
+    if cur and (cur.ts or 0) >= ts then return false end
+    db.pendingReleased[id] = { ts = ts }
+    for key, list in pairs(db.pendingCredits) do
+        for i, e in ipairs(list) do
+            if e.id == id then
+                table.remove(list, i)
+                break
+            end
+        end
+        if #list == 0 then db.pendingCredits[key] = nil end
+    end
+    return true
+end
+
+local function ApplyQueue(name, present, ts, issue)
     local db = ns.creditsDb
     Observe(ts)
     local key = name:lower()
@@ -450,9 +668,9 @@ local function ApplyQueue(name, present, ts)
         if a < b then return false end
         if a == b and (present and 1 or 0) <= (cur.present and 1 or 0) then return false end
     end
-    db.rqStamps[key] = { name = name, present = present, ts = ts }
+    db.rqStamps[key] = { name = name, present = present, ts = ts, issue = issue }
     if present then
-        ns.Credits_AddToReviewQueue(name)
+        ns.Credits_AddToReviewQueue(name, issue)
     else
         ns.Credits_RemoveFromReviewQueue(name)
     end
@@ -481,10 +699,27 @@ local function ApplyPayload(payload, senderShort)
             local rec = DecodeRecord(body)
             if rec and ApplyRecord(rec) then changedRecords = changedRecords + 1 end
         elseif kind == "Q" then
-            local n, st, ts = body:match("^(.-)|([01])|(%d+)$")
+            -- Q:<name>|<1/0>|<stamp>[|<issue>]  (issue absent from older senders)
+            local n, st, ts, issue = body:match("^(.-)|([01])|(%d+)|?(.*)$")
             if n then
                 local name = Unesc(n)
-                if name ~= "" and ApplyQueue(name, st == "1", tonumber(ts)) then changedQueue = changedQueue + 1 end
+                issue = (issue and issue ~= "") and Unesc(issue) or nil
+                if name ~= "" and ApplyQueue(name, st == "1", tonumber(ts), issue) then changedQueue = changedQueue + 1 end
+            end
+        elseif kind == "D" then
+            local n, ts = body:match("^(.-)|(%d+)$")
+            if n then
+                local name = Unesc(n)
+                if name ~= "" and ApplyTombstone(name, tonumber(ts)) then changedRecords = changedRecords + 1 end
+            end
+        elseif kind == "P" then
+            local e = DecodePending(body)
+            if e and ApplyPending(e) then changedQueue = changedQueue + 1 end
+        elseif kind == "X" then
+            local id, ts = body:match("^(.-)|(%d+)$")
+            if id then
+                id = Unesc(id)
+                if id ~= "" and ApplyReleased(id, tonumber(ts)) then changedQueue = changedQueue + 1 end
             end
         end
     end
@@ -492,6 +727,9 @@ local function ApplyPayload(payload, senderShort)
     if changedRecords > 0 or changedQueue > 0 then
         if ns.CreditsConfig_Refresh then ns.CreditsConfig_Refresh() end
     end
+    -- CM4: a link/new account that just arrived may be what a held donation
+    -- was waiting for (a no-op anywhere but the armed mail recipient).
+    if changedRecords > 0 and ns.Credits_ReleasePending then ns.Credits_ReleasePending() end
 end
 
 -- Dispatched from Credits.lua's Credits_OnAddonMessage (own echo already dropped).

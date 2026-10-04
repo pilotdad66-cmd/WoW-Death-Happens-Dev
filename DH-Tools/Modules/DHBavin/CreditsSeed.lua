@@ -195,5 +195,7 @@ function ns.Credits_SetAsNewMain(altName, rawGoldAmount, latestDonation)
     if ns.CreditsSync_Changed then
         ns.CreditsSync_Changed({ bareName }, { { name = bareName, present = false } })
     end
+    -- CM4: a new account may be exactly what a held donation was waiting for.
+    if ns.Credits_ReleasePending then ns.Credits_ReleasePending() end
     return true
 end
