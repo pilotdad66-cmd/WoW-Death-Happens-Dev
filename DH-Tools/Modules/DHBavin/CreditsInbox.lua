@@ -332,6 +332,13 @@ local function BuildCheck()
     local label = cb:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
     label:SetPoint("LEFT", cb, "RIGHT", 0, 1)
     label:SetText("Credit this mail (DH-Bavin)")
+    -- Black and bold for readability on the parchment (Loopi, 2026-10-04).
+    -- The client has no bold face for this font, so a black outline thickens
+    -- the strokes; falls back to plain black if SetFont is refused.
+    if not pcall(label.SetFont, label, "Fonts\\FRIZQT__.TTF", 12, "OUTLINE") then
+        pcall(label.SetFont, label, STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", 12)
+    end
+    label:SetTextColor(0, 0, 0)
     cb.label = label
     -- Make the label part of the click target.
     if cb.SetHitRectInsets then cb:SetHitRectInsets(0, -150, 0, 0) end
