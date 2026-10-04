@@ -704,33 +704,133 @@ local function BuildRosterTab(content)
         end,
         timeout = 0, whileDead = 1, hideOnEscape = 1, preferredIndex = 3,
     }
-    StaticPopupDialogs["DHBAVIN_MERGE_PICK"] = {
-        text = "Merge %s into which account?\n\nType the main or any alt name of the account that should keep everything.",
-        button1 = "Next",
-        button2 = CANCEL or "Cancel",
-        hasEditBox = 1,
-        maxLetters = 24,
-        OnAccept = function(self, data)
-            local eb = self.editBox or self.EditBox
-            local key = ResolveAccountKey(eb and eb:GetText())
-            local ledger = ns.creditsDb and ns.creditsDb.ledger or {}
-            if not key then
-                ns.CreditsPrint("No account found for that name.")
-            elseif key == data.source then
-                ns.CreditsPrint("That is the same account.")
-            elseif ledger[data.source] and ledger[key] then
-                StaticPopup_Show("DHBAVIN_MERGE_CONFIRM", ledger[data.source].mainToon, ledger[key].mainToon,
-                    { source = data.source, target = key })
+    -- Picker window (2026-10-04, Loopi): type a name, matching accounts (any
+    -- main or alt, never the account being merged) list below like the
+    -- Editors box in the Bavin settings; click one (or Enter on the first)
+    -- to go on to the confirm popup.
+    local MERGE_SUGGEST_ROWS = 8
+    local mergePicker
+    local function MergeSuggestions(typed, sourceKey)
+        local t = (typed or ""):match("^%s*(.-)%s*$"):lower()
+        if t == "" then return {} end
+        local starts, contains = {}, {}
+        local ledger = ns.creditsDb and ns.creditsDb.ledger or {}
+        local function Consider(name, key, main)
+            if not name or name == "" then return end
+            local l = name:lower()
+            local item = { name = name, key = key, main = main }
+            if l:sub(1, #t) == t then starts[#starts + 1] = item
+            elseif l:find(t, 1, true) then contains[#contains + 1] = item end
+        end
+        for key, rec in pairs(ledger) do
+            if key ~= sourceKey then
+                Consider(rec.mainToon, key, rec.mainToon)
+                for _, a in ipairs(rec.alts or {}) do Consider(a, key, rec.mainToon) end
             end
-        end,
-        EditBoxOnEnterPressed = function(self)
-            local parent = self:GetParent()
-            local accept = parent.button1 or parent.Button1
-            if accept then accept:Click() end
-        end,
-        EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
-        timeout = 0, whileDead = 1, hideOnEscape = 1, preferredIndex = 3,
-    }
+        end
+        local function ByName(a, b) return a.name:lower() < b.name:lower() end
+        table.sort(starts, ByName)
+        table.sort(contains, ByName)
+        local out = {}
+        for _, list in ipairs({ starts, contains }) do
+            for _, item in ipairs(list) do
+                if #out < MERGE_SUGGEST_ROWS then out[#out + 1] = item end
+            end
+        end
+        return out
+    end
+    local function MergePick(picker, key)
+        local ledger = ns.creditsDb and ns.creditsDb.ledger or {}
+        local src = picker.sourceKey
+        if not key then
+            ns.CreditsPrint("No account found for that name.")
+        elseif key == src then
+            ns.CreditsPrint("That is the same account.")
+        elseif ledger[src] and ledger[key] then
+            picker:Hide()
+            StaticPopup_Show("DHBAVIN_MERGE_CONFIRM", ledger[src].mainToon, ledger[key].mainToon,
+                { source = src, target = key })
+        end
+    end
+    local function RefreshMergePicker()
+        local p = mergePicker
+        if not p then return end
+        local list = MergeSuggestions(p.edit:GetText(), p.sourceKey)
+        p.suggestions = list
+        for i, btn in ipairs(p.rows) do
+            local item = list[i]
+            if item then
+                local text = item.name
+                if item.name:lower() ~= (item.main or ""):lower() then
+                    text = text .. "  |cff888888alt of " .. tostring(item.main) .. "|r"
+                end
+                btn.label:SetText(text)
+                btn.key = item.key
+                btn:Show()
+            else
+                btn.key = nil
+                btn:Hide()
+            end
+        end
+        p.empty:SetShown(#list == 0)
+        p.empty:SetText((p.edit:GetText() or "") == "" and "Start typing a main or alt name." or "No matching account.")
+    end
+    local function ShowMergePicker(sourceName, sourceKey)
+        if not mergePicker then
+            local p = CreateFrame("Frame", "DHBavinMergePicker", UIParent, "BasicFrameTemplateWithInset")
+            p:SetSize(330, 292)
+            p:SetPoint("CENTER", 0, 80)
+            p:SetFrameStrata("DIALOG")
+            p:EnableMouse(true)
+            if p.TitleText then p.TitleText:SetText("Merge into...") end
+            if UISpecialFrames then table.insert(UISpecialFrames, "DHBavinMergePicker") end
+
+            p.msg = p:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            p.msg:SetPoint("TOPLEFT", 16, -34)
+            p.msg:SetPoint("RIGHT", -16, 0)
+            p.msg:SetJustifyH("LEFT")
+            p.msg:SetWordWrap(true)
+
+            local eb = CreateFrame("EditBox", nil, p, "InputBoxTemplate")
+            eb:SetSize(270, 22)
+            eb:SetPoint("TOPLEFT", p.msg, "BOTTOMLEFT", 6, -12)
+            eb:SetAutoFocus(false)
+            eb:SetMaxLetters(24)
+            eb:SetScript("OnTextChanged", function() RefreshMergePicker() end)
+            eb:SetScript("OnEscapePressed", function() p:Hide() end)
+            eb:SetScript("OnEnterPressed", function(self)
+                local first = p.suggestions and p.suggestions[1]
+                MergePick(p, (first and first.key) or ResolveAccountKey(self:GetText()))
+            end)
+            p.edit = eb
+
+            p.rows = {}
+            for i = 1, MERGE_SUGGEST_ROWS do
+                local btn = CreateFrame("Button", nil, p)
+                btn:SetSize(290, 20)
+                btn:SetPoint("TOPLEFT", eb, "BOTTOMLEFT", -6, -6 - (i - 1) * 20)
+                local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+                hl:SetAllPoints()
+                hl:SetColorTexture(1, 1, 1, 0.15)
+                btn.label = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                btn.label:SetPoint("LEFT", 6, 0)
+                btn.label:SetJustifyH("LEFT")
+                btn:SetScript("OnClick", function(self) MergePick(p, self.key) end)
+                p.rows[i] = btn
+            end
+            p.empty = p:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+            p.empty:SetPoint("TOPLEFT", eb, "BOTTOMLEFT", 0, -10)
+            mergePicker = p
+        end
+        local p = mergePicker
+        p.sourceKey = sourceKey
+        p.msg:SetText(("Merge %s into which account? Type the main or any alt name of the account that should keep everything."):format(sourceName or "?"))
+        p.edit:SetText("")
+        p:Show()
+        p.edit:SetFocus()
+        RefreshMergePicker()
+    end
+    ns.CreditsConfig_ShowMergePicker = ShowMergePicker
 
     -- "Discord" submenu (2026-09-29, Loopi): Add as Discord / Remove as
     -- Discord / Discord Only. An account has exactly one Discord name and
@@ -794,7 +894,7 @@ local function BuildRosterTab(content)
                 { text = "Discord", notCheckable = true, hasArrow = true,
                   menuList = DiscordSubmenu(row.mainName, account, "main", canManage) },
                 { text = "Merge into...", notCheckable = true, disabled = not canManage, func = function()
-                    StaticPopup_Show("DHBAVIN_MERGE_PICK", row.mainName, nil, { source = account })
+                    ns.CreditsConfig_ShowMergePicker(row.mainName, account)
                 end },
                 { text = "Show Account", notCheckable = true, func = function()
                     if ns.Account_ShowFor then ns.Account_ShowFor(account) end

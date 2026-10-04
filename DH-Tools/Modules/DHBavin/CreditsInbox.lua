@@ -37,6 +37,8 @@ local ns = DHTools.Bavin
 
 local EXPIRE = 10          -- seconds an unconfirmed take is remembered
 local QUIET = 2.5          -- seconds without a new confirmed take before a mail is credited
+                          -- (when it is emptied / gone / not the open mail)
+local LONG = 120           -- fallback for a mail left open and partly taken
 local CHECK_ANCHOR = "BOTTOMLEFT"   -- in-mail checkbox position on OpenMailFrame
 local CHECK_X, CHECK_Y = 24, 10      -- (unverified layout: tune after the in-game look)
 local MAX_ATTACH = ATTACHMENTS_MAX_RECEIVE or 16
@@ -183,11 +185,11 @@ local function HasPending(key)
     return false
 end
 
-local function Flush(key, force)
+local function Flush(key, force, minQuiet)
     local b = batches[key]
     if not b then return end
     if not force then
-        if Clock() - (b.lastAt or 0) < QUIET - 0.01 then return end
+        if Clock() - (b.lastAt or 0) < (minQuiet or QUIET) - 0.01 then return end
         if HasPending(key) then return end
     end
     batches[key] = nil
@@ -206,12 +208,21 @@ local function FlushAll()
 end
 ns.CreditsInbox_FlushAll = FlushAll
 
-local function ScheduleFlush(key)
+local function ScheduleFlush(key, quiet)
+    quiet = quiet or QUIET
     if C_Timer and C_Timer.After then
-        C_Timer.After(QUIET + 0.05, function() Safe(Flush, key) end)
+        C_Timer.After(quiet + 0.05, function() Safe(Flush, key, false, quiet) end)
     else
         Flush(key, true)
     end
+end
+
+-- The mail the player currently has open (nil if none): its key, or nil.
+local function OpenKey()
+    if OpenMailFrame and OpenMailFrame.IsShown and not OpenMailFrame:IsShown() then return nil end
+    local idx = InboxFrame and InboxFrame.openMailID
+    if not idx or not GetInboxNumItems or idx < 1 or idx > (GetInboxNumItems() or 0) then return nil end
+    return KeyOf(Header(idx))
 end
 
 -- MAIL_INBOX_UPDATE: confirm what disappeared, drop what expired.
@@ -244,7 +255,22 @@ function ns.CreditsInbox_OnInboxUpdate()
         end
     end
     pending = keep
-    for key in pairs(touched) do ScheduleFlush(key) end
+    -- One chat line / log entry per MAIL (2026-10-04, Loopi): while the mail
+    -- is still open and still holds something, keep gathering however slowly
+    -- the player takes things. It is credited once the mail is emptied or
+    -- gone, the player opens another mail or closes this one (see
+    -- FlushLeftMail), or the mailbox closes. The long fallback only covers
+    -- a window left open for minutes so a crash can't lose the credit.
+    local openKey = OpenKey()
+    for key in pairs(touched) do
+        local idx = byKey[key]
+        local emptied = (not idx) or (Header(idx).money == 0 and ItemsLeft(Header(idx)) == 0)
+        if emptied or key ~= openKey then
+            ScheduleFlush(key, QUIET)
+        else
+            ScheduleFlush(key, LONG)
+        end
+    end
 end
 
 function ns.CreditsInbox_OnMailFailed(itemID)
@@ -327,7 +353,7 @@ local function BuildCheck()
     openCheck = cb
 end
 
-local function RefreshCheck()
+local function RefreshCheckUI()
     local cb = openCheck
     if not cb then return end
     local idx = InboxFrame and InboxFrame.openMailID
@@ -350,10 +376,24 @@ local function RefreshCheck()
     cb:Show()
 end
 
+-- When the open mail changes (another mail opened, this one closed or gone)
+-- the mail that was open is done: credit what was taken from it as ONE entry.
+local lastOpenKey
+local function RefreshCheck()
+    local openKey = OpenKey()
+    if lastOpenKey and lastOpenKey ~= openKey then
+        Flush(lastOpenKey, false, 0) -- skipped while one of its takes is unconfirmed
+    end
+    lastOpenKey = openKey
+    RefreshCheckUI()
+end
+ns.CreditsInbox_RefreshOpenMail = RefreshCheck
+
 -- Test hook: forget all session state and allow Install to run again.
 function ns.CreditsInbox_ResetForTests()
     installed = false
     sticky = true
+    lastOpenKey = nil
     checked, codWarned, pending, batches = {}, {}, {}, {}
     ns.creditsInboxFrame = nil
 end
@@ -384,6 +424,7 @@ function ns.CreditsInbox_Install()
     end
     if OpenMailFrame and OpenMailFrame.HookScript then
         OpenMailFrame:HookScript("OnShow", function() Safe(RefreshCheck) end)
+        OpenMailFrame:HookScript("OnHide", function() Safe(RefreshCheck) end)
     end
 
     local f = CreateFrame("Frame")

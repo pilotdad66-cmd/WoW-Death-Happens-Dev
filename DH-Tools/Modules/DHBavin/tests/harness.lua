@@ -2502,6 +2502,49 @@ do
     fresh()
     mail("MainA", "Donation", { item(1, "Test Sword", 2) })
 
+    -- ---- one entry per mail, however slowly the items are taken ------------
+    fresh()
+    mail("MainA", "Big donation", { item(1, "Test Sword", 1), item(1, "Test Sword", 2), item(2, "Test Herb", 5) })
+    mail("MainB", "Other", { item(1, "Test Sword", 1) })
+    _G.InboxFrame = { openMailID = 1 }
+    ns.CreditsInbox_RefreshOpenMail()
+    takeItem(1, 1)
+    update()
+    advance(30)
+    check("One entry per mail: a slow first take is NOT credited while the mail is open", logCount() == 0)
+    takeItem(1, 2)
+    update()
+    advance(30)
+    check("One entry per mail: nor the second slow take", logCount() == 0)
+    _G.InboxFrame.openMailID = 2           -- the player opens a different mail
+    ns.CreditsInbox_RefreshOpenMail()
+    check("One entry per mail: opening another mail credits the first as ONE entry",
+        logCount() == 1 and #ns.creditsDb.transactionLog[1].items == 1 and ns.creditsDb.transactionLog[1].rep == 150)
+    fresh()
+    mail("MainA", "Big donation", { item(1, "Test Sword", 1), item(2, "Test Herb", 5) })
+    _G.InboxFrame = { openMailID = 1 }
+    ns.CreditsInbox_RefreshOpenMail()
+    takeItem(1, 1)
+    update()
+    advance(30)
+    _G.InboxFrame.openMailID = nil         -- the player closes the open mail
+    ns.CreditsInbox_RefreshOpenMail()
+    check("One entry per mail: closing the open mail credits it", logCount() == 1)
+    fresh()
+    mail("MainA", "Two things", { item(1, "Test Sword", 1), item(2, "Test Herb", 5) })
+    _G.InboxFrame = { openMailID = 1 }
+    ns.CreditsInbox_RefreshOpenMail()
+    takeItem(1, 1)
+    update()
+    advance(10)
+    takeItem(1, 2)                          -- slowly takes the last item: mail is emptied
+    update()
+    advance(3)
+    check("One entry per mail: emptying the open mail credits it once (both items)",
+        logCount() == 1 and #ns.creditsDb.transactionLog[1].items == 2)
+    _G.InboxFrame = nil
+    fresh()
+
     -- ---- one item taken, confirmed by the next update ----------------------
     fresh()
     mail("MainA", "Donation", { item(1, "Test Sword", 2), item(2, "Test Herb", 5) })
