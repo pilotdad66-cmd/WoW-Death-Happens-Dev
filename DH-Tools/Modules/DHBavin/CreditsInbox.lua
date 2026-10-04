@@ -43,7 +43,7 @@ local CHECK_ANCHOR = "BOTTOMLEFT"   -- in-mail checkbox position on OpenMailFram
 -- Moved up about 2.5 attachment icons (~37 px each) into the mail body
 -- (Loopi, 2026-10-04: there is no free space down by the buttons). Layout is
 -- still unverified, and Postal changes the open-mail frame.
-local CHECK_X, CHECK_Y = 24, 105
+local CHECK_X, CHECK_Y = 24, 135   -- +30 after the second in-game look (same spot with and without Postal)
 local MAX_ATTACH = ATTACHMENTS_MAX_RECEIVE or 16
 
 local installed = false
