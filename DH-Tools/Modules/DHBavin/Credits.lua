@@ -1165,6 +1165,14 @@ function ns.Credits_HandleSlash(rest)
         else
             ns.CreditsPrint("CreditsConfig.lua isn't loaded.")
         end
+    elseif sub == "log" or sub == "audit" then
+        -- 2026-10-04: opens the config window straight on the Audit Log tab.
+        if ns.CreditsConfig_Open and ns.CreditsConfig_SelectTab then
+            ns.CreditsConfig_Open()
+            ns.CreditsConfig_SelectTab("audit")
+        else
+            ns.CreditsPrint("CreditsConfig.lua isn't loaded.")
+        end
     elseif sub == "toggle" then
         if arg1 ~= "on" and arg1 ~= "off" then
             ns.CreditsPrint("Usage: /dhb credits toggle on|off")

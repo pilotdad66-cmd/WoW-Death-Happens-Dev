@@ -1771,21 +1771,377 @@ local function BuildReviewQueueTab(content)
 end
 
 --------------------------------------------------------------------------
--- Placeholder tab - Audit Log owns no real data yet (CM7). The shell
--- exists now so that milestone fills in a tab rather than
--- re-architecting the window later.
+-- Audit Log tab (CM7, processor view - 2026-10-04, Loopi: "code the audit
+-- log viewer next, with filters and sorting"). All the row/filter/sort/
+-- tooltip/export LOGIC is in CreditsLog.lua (harness-tested); this is only
+-- the widgets. It shows what THIS client's transaction log holds - on the
+-- mail recipient's client that is every donation, held-donation release and
+-- merge it processed; officers' copies come with a later replication step.
 --------------------------------------------------------------------------
-local function BuildPlaceholderTab(content, titleText, message)
+local AUDIT_ROWS_PER_PAGE = 25
+
+local AUDIT_COLUMNS = {
+    { key = "date",    label = "Date",    width = 92,  side = "left" },
+    { key = "kind",    label = "Kind",    width = 60,  side = "left" },
+    { key = "who",     label = "Who",     width = 150, side = "left" },
+    { key = "what",    label = "What",    flex = true },
+    { key = "rep",     label = "Rep",     width = 64,  side = "right", justify = "RIGHT" },
+    { key = "credits", label = "Credits", width = 64,  side = "right", justify = "RIGHT" },
+    { key = "tier",    label = "Tier",    width = 78,  side = "right" },
+    { key = "by",      label = "By",      width = 72,  side = "right" },
+}
+
+-- Columns that read best newest/biggest first the first time they are clicked.
+local AUDIT_DESC_FIRST = { date = true, rep = true, credits = true, tier = true }
+
+local AUDIT_RANGES = {
+    { label = "All time", days = nil },
+    { label = "Last 7 days", days = 7 },
+    { label = "Last 30 days", days = 30 },
+    { label = "Last 90 days", days = 90 },
+}
+
+local AUDIT_KIND_COLORS = {
+    released = "|cff66ccff", merge = "|cffffd100", spend = "|cffff9933",
+}
+
+-- Anchors one cell per column inside `parent` (left columns chain from the
+-- left edge, right columns from the right edge, the flexible one fills the
+-- gap) - `make(col)` creates the widget. Same layout for the header buttons
+-- and for every row, so they always line up.
+local function AuditPlaceCells(parent, make)
+    local cells = {}
+    local prevLeft, prevRight
+    for _, col in ipairs(AUDIT_COLUMNS) do
+        if col.side == "left" then
+            local c = make(col)
+            c:SetWidth(col.width)
+            if prevLeft then c:SetPoint("TOPLEFT", prevLeft, "TOPRIGHT", 4, 0)
+            else c:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, 0) end
+            prevLeft = c
+            cells[col.key] = c
+        end
+    end
+    for i = #AUDIT_COLUMNS, 1, -1 do
+        local col = AUDIT_COLUMNS[i]
+        if col.side == "right" then
+            local c = make(col)
+            c:SetWidth(col.width)
+            if prevRight then c:SetPoint("TOPRIGHT", prevRight, "TOPLEFT", -4, 0)
+            else c:SetPoint("TOPRIGHT", parent, "TOPRIGHT", 0, 0) end
+            prevRight = c
+            cells[col.key] = c
+        end
+    end
+    for _, col in ipairs(AUDIT_COLUMNS) do
+        if col.flex then
+            local c = make(col)
+            c:SetPoint("TOPLEFT", prevLeft, "TOPRIGHT", 4, 0)
+            c:SetPoint("TOPRIGHT", prevRight, "TOPLEFT", -4, 0)
+            cells[col.key] = c
+        end
+    end
+    return cells
+end
+
+-- One shared copy/paste box for the export (WoW can't write files).
+local auditExportFrame
+local function ShowAuditExport(text)
+    if not auditExportFrame then
+        local f = CreateFrame("Frame", "DHBavinAuditExportFrame", UIParent, "BasicFrameTemplateWithInset")
+        f:SetSize(640, 420)
+        f:SetPoint("CENTER")
+        f:SetFrameStrata("DIALOG")
+        f:SetMovable(true)
+        f:EnableMouse(true)
+        f:RegisterForDrag("LeftButton")
+        f:SetScript("OnDragStart", f.StartMoving)
+        f:SetScript("OnDragStop", f.StopMovingOrSizing)
+        if f.TitleText then f.TitleText:SetText("Audit Log export") end
+        tinsert(UISpecialFrames, "DHBavinAuditExportFrame")
+
+        local hint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        hint:SetPoint("TOPLEFT", 14, -32)
+        hint:SetPoint("RIGHT", -14, 0)
+        hint:SetJustifyH("LEFT")
+        hint:SetText("The rows currently shown (filtered and sorted), as CSV. Everything is selected - press Ctrl+C, then paste into a text file or spreadsheet.")
+
+        local sf = CreateFrame("ScrollFrame", "DHBavinAuditExportScroll", f, (DHTools and DHTools.SCROLL_TEMPLATE) or "UIPanelScrollFrameTemplate")
+        if DHTools and DHTools.SkinScrollBar then DHTools.SkinScrollBar(sf) end
+        sf:SetPoint("TOPLEFT", 14, -62)
+        sf:SetPoint("BOTTOMRIGHT", -34, 14)
+        local eb = CreateFrame("EditBox", nil, sf)
+        eb:SetMultiLine(true)
+        eb:SetAutoFocus(false)
+        eb:SetFontObject(ChatFontNormal or GameFontHighlightSmall)
+        eb:SetMaxLetters(0)
+        eb:SetScript("OnEscapePressed", function() f:Hide() end)
+        sf:SetScrollChild(eb)
+        f.scroll, f.edit = sf, eb
+        auditExportFrame = f
+    end
+    local f = auditExportFrame
+    f:Show()
+    f:Raise()
+    f.edit:SetWidth(math.max(100, f.scroll:GetWidth() - 6))
+    f.edit:SetText(text)
+    local lines = 1
+    for _ in text:gmatch("\n") do lines = lines + 1 end
+    f.edit:SetHeight(math.max(f.scroll:GetHeight(), lines * 14 + 8))
+    f.scroll:SetVerticalScroll(0)
+    f.edit:SetFocus()
+    f.edit:HighlightText()
+end
+
+local function BuildAuditTab(content)
     local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 16, -16)
-    title:SetText(titleText)
+    title:SetText("Audit Log")
 
-    local msg = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    msg:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -10)
-    msg:SetPoint("RIGHT", -16, 0)
-    msg:SetJustifyH("LEFT")
-    msg:SetWordWrap(true)
-    msg:SetText(message)
+    local hint = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    hint:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
+    hint:SetPoint("RIGHT", -16, 0)
+    hint:SetJustifyH("LEFT")
+    hint:SetWordWrap(true)
+    hint:SetText("Every donation, held-donation release and account merge recorded by this character, newest first. Click a column title to sort, click it again to reverse. Hover a row for the item breakdown, the rates used and who processed it. This shows what THIS character recorded - officers' own copies come with a later update.")
+
+    local filterLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    filterLabel:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", -2, -12)
+    filterLabel:SetText("Filter:")
+
+    local filterEdit = CreateFrame("EditBox", nil, content, "InputBoxTemplate")
+    filterEdit:SetSize(150, 20)
+    filterEdit:SetPoint("LEFT", filterLabel, "RIGHT", 8, -2)
+    filterEdit:SetAutoFocus(false)
+    filterEdit:SetMaxLetters(30)
+    filterEdit:SetScript("OnEscapePressed", filterEdit.ClearFocus)
+
+    -- Cycle buttons: one click moves to the next value (simplest widget that
+    -- is robust across client versions; no dropdown frames to keep alive).
+    local kindValue, byValue, rangeIdx = "", "", 1
+    local tierUpOnly = false
+
+    local kindBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    kindBtn:SetSize(120, 20)
+    kindBtn:SetPoint("LEFT", filterEdit, "RIGHT", 10, 2)
+    local rangeBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    rangeBtn:SetSize(130, 20)
+    rangeBtn:SetPoint("LEFT", kindBtn, "RIGHT", 6, 0)
+    local byBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    byBtn:SetSize(140, 20)
+    byBtn:SetPoint("LEFT", rangeBtn, "RIGHT", 6, 0)
+
+    local tierCheck = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
+    tierCheck:SetSize(24, 24)
+    tierCheck:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", -2, -10)
+    tierCheck:SetChecked(false)
+    local tierLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    tierLabel:SetPoint("LEFT", tierCheck, "RIGHT", 2, 0)
+    tierLabel:SetText("Tier-ups only")
+
+    local exportBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    exportBtn:SetSize(130, 20)
+    exportBtn:SetPoint("LEFT", tierLabel, "RIGHT", 16, 0)
+    exportBtn:SetText("Export shown rows")
+
+    local prevPageBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    prevPageBtn:SetSize(60, 20)
+    prevPageBtn:SetPoint("LEFT", exportBtn, "RIGHT", 20, 0)
+    prevPageBtn:SetText("< Prev")
+    local pageLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    pageLabel:SetPoint("LEFT", prevPageBtn, "RIGHT", 8, 0)
+    local nextPageBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    nextPageBtn:SetSize(60, 20)
+    nextPageBtn:SetPoint("LEFT", pageLabel, "RIGHT", 8, 0)
+    nextPageBtn:SetText("Next >")
+
+    local sortState = { key = "date", ascending = false }
+    local pageState = { page = 1 }
+
+    local header = CreateFrame("Frame", nil, content)
+    header:SetHeight(22)
+    header:SetPoint("TOPLEFT", tierCheck, "BOTTOMLEFT", 2, -10)
+    header:SetPoint("RIGHT", content, "RIGHT", -16, 0)
+    local headerBtns = AuditPlaceCells(header, function(col)
+        local b = CreateFrame("Button", nil, header, "UIPanelButtonTemplate")
+        b:SetHeight(20)
+        b.sortKey = col.key
+        b.baseLabel = col.label
+        b:SetScript("OnClick", function()
+            if sortState.key == col.key then
+                sortState.ascending = not sortState.ascending
+            else
+                sortState.key = col.key
+                sortState.ascending = not AUDIT_DESC_FIRST[col.key]
+            end
+            pageState.page = 1
+            ns.CreditsConfig_Refresh()
+        end)
+        return b
+    end)
+
+    local emptyText = content:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+    emptyText:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 6, -10)
+    emptyText:Hide()
+
+    local rows = {}
+    local function EnsureRowCount(n)
+        for i = #rows + 1, n do
+            local row = CreateFrame("Button", nil, content)
+            row:SetHeight(18)
+            if i == 1 then row:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -2)
+            else row:SetPoint("TOPLEFT", rows[i - 1], "BOTTOMLEFT", 0, -2) end
+            row:SetPoint("RIGHT", content, "RIGHT", -16, 0)
+            local hl = row:CreateTexture(nil, "HIGHLIGHT")
+            hl:SetAllPoints()
+            hl:SetColorTexture(1, 1, 1, 0.12)
+            row.cells = AuditPlaceCells(row, function(col)
+                local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                fs:SetHeight(16)
+                fs:SetWordWrap(false)
+                fs:SetJustifyH(col.justify or "LEFT")
+                return fs
+            end)
+            row:SetScript("OnEnter", function(self)
+                if not self.logRow then return end
+                local lines = ns.CreditsLog_TooltipLines(self.logRow)
+                GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+                for li, l in ipairs(lines) do
+                    if li == 1 then
+                        GameTooltip:SetText(l[1], 1, 0.82, 0)
+                    elseif l[2] and l[2] ~= "" then
+                        GameTooltip:AddDoubleLine(l[1], l[2], 0.8, 0.8, 0.8, 1, 1, 1)
+                    else
+                        GameTooltip:AddLine(l[1], 1, 1, 1)
+                    end
+                end
+                GameTooltip:Show()
+            end)
+            row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+            row:Hide()
+            rows[i] = row
+        end
+    end
+
+    local function Now()
+        return (GetServerTime and GetServerTime()) or time()
+    end
+
+    -- Cycles `current` through { "" , ...options } and returns the next value.
+    local function NextOf(current, options)
+        local idx = 0
+        for i, v in ipairs(options) do if v == current then idx = i break end end
+        return options[(idx % #options) + 1]
+    end
+
+    local lastShown = {} -- the filtered+sorted rows, for the export button
+
+    local function Refresh()
+        local all = ns.CreditsLog_Rows()
+        local kindOptions = { "" }
+        for _, k in ipairs(ns.CreditsLog_KindsPresent(all)) do kindOptions[#kindOptions + 1] = k end
+        local byOptions = { "" }
+        for _, n in ipairs(ns.CreditsLog_Distinct(all, "by")) do byOptions[#byOptions + 1] = n end
+        -- A previously chosen value that no longer occurs falls back to "all".
+        local function Known(v, opts) for _, o in ipairs(opts) do if o == v then return true end end return false end
+        if not Known(kindValue, kindOptions) then kindValue = "" end
+        if not Known(byValue, byOptions) then byValue = "" end
+
+        kindBtn:SetText("Kind: " .. (kindValue == "" and "All" or (ns.CreditsLog_KindLabels[kindValue] or kindValue)))
+        rangeBtn:SetText(AUDIT_RANGES[rangeIdx].label)
+        byBtn:SetText("By: " .. (byValue == "" and "Anyone" or byValue))
+        kindBtn:SetScript("OnClick", function() kindValue = NextOf(kindValue, kindOptions); pageState.page = 1; ns.CreditsConfig_Refresh() end)
+        byBtn:SetScript("OnClick", function() byValue = NextOf(byValue, byOptions); pageState.page = 1; ns.CreditsConfig_Refresh() end)
+
+        local days = AUDIT_RANGES[rangeIdx].days
+        local list = ns.CreditsLog_Filter(all, {
+            kind = kindValue ~= "" and kindValue or nil,
+            by = byValue ~= "" and byValue or nil,
+            since = days and (Now() - days * 86400) or nil,
+            text = filterEdit:GetText() or "",
+            tierUpOnly = tierUpOnly,
+        })
+        ns.CreditsLog_Sort(list, sortState.key, sortState.ascending)
+        lastShown = list
+
+        for key, btn in pairs(headerBtns) do
+            local arrow = ""
+            if sortState.key == key then arrow = sortState.ascending and " v" or " ^" end
+            btn:SetText(btn.baseLabel .. arrow)
+        end
+
+        local totalPages = math.max(1, math.ceil(#list / AUDIT_ROWS_PER_PAGE))
+        if pageState.page > totalPages then pageState.page = totalPages end
+        if pageState.page < 1 then pageState.page = 1 end
+        local pageStart = (pageState.page - 1) * AUDIT_ROWS_PER_PAGE
+        local shown = math.min(AUDIT_ROWS_PER_PAGE, #list - pageStart)
+        pageLabel:SetText(("Page %d/%d  (%d of %d entries)"):format(pageState.page, totalPages, #list, #all))
+        if pageState.page <= 1 then prevPageBtn:Disable() else prevPageBtn:Enable() end
+        if pageState.page >= totalPages then nextPageBtn:Disable() else nextPageBtn:Enable() end
+        if #list == 0 then exportBtn:Disable() else exportBtn:Enable() end
+
+        EnsureRowCount(math.max(shown, 0))
+        for i, row in ipairs(rows) do
+            local r = (i <= shown) and list[pageStart + i] or nil
+            if not r then
+                row.logRow = nil
+                row:Hide()
+            else
+                row.logRow = r
+                local c = row.cells
+                c.date:SetText(ns.CreditsLog_FormatDate(r.ts))
+                c.kind:SetText((AUDIT_KIND_COLORS[r.kind] or "") .. r.kindLabel .. (AUDIT_KIND_COLORS[r.kind] and "|r" or ""))
+                c.who:SetText(r.who)
+                c.what:SetText(r.what)
+                c.rep:SetText(ns.CreditsDon_Fmt(r.rep))
+                c.credits:SetText(ns.CreditsDon_Fmt(r.credits))
+                c.tier:SetText(r.tierUp and ("|cffffd100" .. r.tier .. " ^|r") or r.tier)
+                c.by:SetText(r.by or "")
+                row:Show()
+            end
+        end
+
+        if #all == 0 then
+            emptyText:SetText("Nothing recorded yet by this character.")
+            emptyText:Show()
+        elseif #list == 0 then
+            emptyText:SetText("No entries match the current filters.")
+            emptyText:Show()
+        else
+            emptyText:Hide()
+        end
+
+        local bottom = header
+        for i = #rows, 1, -1 do
+            if rows[i]:IsShown() then bottom = rows[i] break end
+        end
+        local top, bot = content:GetTop(), bottom:GetBottom()
+        if top and bot then
+            content:SetHeight(math.max(260, top - bot + 40))
+        end
+    end
+
+    filterEdit:SetScript("OnTextChanged", function()
+        pageState.page = 1
+        ns.CreditsConfig_Refresh()
+    end)
+    rangeBtn:SetScript("OnClick", function()
+        rangeIdx = (rangeIdx % #AUDIT_RANGES) + 1
+        pageState.page = 1
+        ns.CreditsConfig_Refresh()
+    end)
+    tierCheck:SetScript("OnClick", function(self)
+        tierUpOnly = self:GetChecked() and true or false
+        pageState.page = 1
+        ns.CreditsConfig_Refresh()
+    end)
+    prevPageBtn:SetScript("OnClick", function() pageState.page = pageState.page - 1; ns.CreditsConfig_Refresh() end)
+    nextPageBtn:SetScript("OnClick", function() pageState.page = pageState.page + 1; ns.CreditsConfig_Refresh() end)
+    exportBtn:SetScript("OnClick", function()
+        ShowAuditExport(ns.CreditsLog_ExportText(lastShown))
+    end)
+
+    return Refresh
 end
 
 --------------------------------------------------------------------------
@@ -1922,8 +2278,10 @@ local function CreateWindow()
 
     local auditContent = CreateFrame("Frame", nil, scrollFrame)
     auditContent:SetPoint("TOPLEFT", scrollFrame, "TOPLEFT", 0, 0)
-    auditContent:SetSize(1, 140)
-    BuildPlaceholderTab(auditContent, "Audit Log", "Available once CM7 lands: full transaction log (Processor view), a \"what I sent\" filter for Distribution Officers, and members' own last-50 view.")
+    -- Generous fixed pre-first-refresh estimate (title/hint/two filter lines/
+    -- header + a full 25-row page) - trimmed to the real height on refresh.
+    auditContent:SetSize(1, 700)
+    tabs.audit.refresh = BuildAuditTab(auditContent)
     tabs.audit.content = auditContent
 
     ns.CreditsConfig_SelectTab("settings")

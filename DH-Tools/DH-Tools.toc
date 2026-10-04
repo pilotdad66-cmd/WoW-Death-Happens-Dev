@@ -56,6 +56,9 @@ Modules\DHBavin\CreditsSync.lua
 # InstallInboxHook() on an armed receiver (Wall 4).
 Modules\DHBavin\CreditsDonations.lua
 Modules\DHBavin\CreditsInbox.lua
+# CM7 Audit Log tab logic (rows, filters, sorting, tooltip, export) - pure,
+# the tab UI itself lives in CreditsConfig.lua.
+Modules\DHBavin\CreditsLog.lua
 Modules\DHBavin\CreditsConfig.lua
 Modules\DHBavin\Account.lua
 Modules\DHBavin\ItemPoints.lua

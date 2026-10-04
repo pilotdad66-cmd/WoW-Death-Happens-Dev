@@ -169,7 +169,7 @@ _G.DHTools = {
 --------------------------------------------------------------------------
 
 local ADDON_ROOT = "C:\\AIProjects-NOSYNC\\WoW\\src\\DH-Tools\\Modules\\DHBavin\\"
-local FILES = { "Core.lua", "Sync.lua", "ItemPoints.lua", "ToonDonations.lua", "Credits.lua", "CreditsSeed.lua", "CreditsSync.lua", "CreditsDonations.lua", "CreditsInbox.lua" }
+local FILES = { "Core.lua", "Sync.lua", "ItemPoints.lua", "ToonDonations.lua", "Credits.lua", "CreditsSeed.lua", "CreditsSync.lua", "CreditsDonations.lua", "CreditsInbox.lua", "CreditsLog.lua" }
 
 for _, filename in ipairs(FILES) do
     local chunk, err = loadfile(ADDON_ROOT .. filename)
@@ -2895,6 +2895,104 @@ do
     ns.CreditsInbox_ResetForTests()
     ns.ITEM_POINTS = cm4.origItemPoints
     _G.GRM = nil
+end
+
+--------------------------------------------------------------------------
+-- CM7 Audit Log tab logic (CreditsLog.lua)
+--------------------------------------------------------------------------
+print("== Credits: Audit Log rows / filters / sorting / export ==")
+do
+    resetState()
+    ns.creditsDb.ledger = {
+        MainA = { discordName = "MainA", mainToon = "MainA", alts = { "AltA1" } },
+        MainB = { discordName = "MainB", mainToon = "MainB", alts = {} },
+    }
+    local DAY = 86400
+    local base = 1760000000
+    ns.creditsDb.transactionLog = {
+        { id = "d1", ts = base, sender = "AltA1", receiver = "Bavin", account = "MainA", gold = 2.5, rep = 250, credits = 2.5,
+          items = { { itemID = 1, name = "Test Sword", count = 3, rep = 150, category = "Weapon" }, { itemID = 9, name = "Odd Thing", count = 1, rep = 0, unpriced = true } },
+          creditsPerRep = { x = 1, y = 100 }, repPerGold = { x = 100, y = 1 },
+          tierBefore = "Neutral", prestigeBefore = 0, tierAfter = "Friendly", prestigeAfter = 0 },
+        { id = "d2", ts = base + 2 * DAY, sender = "MainB", receiver = "Officer1", account = "MainB", rep = 40, credits = 0.4,
+          items = { { itemID = 5, name = "Herb", count = 1, rep = 40, category = "Herb" } },
+          tierBefore = "Neutral", prestigeBefore = 0, tierAfter = "Neutral", prestigeAfter = 0 },
+        { id = "d3", ts = base + 5 * DAY, sender = "Rando", receiver = "Bavin", account = "MainA", rep = 100, credits = 1, released = true,
+          items = { { itemID = 1, name = "Test Sword", count = 2, rep = 100, category = "Weapon" } },
+          tierBefore = "Friendly", prestigeBefore = 0, tierAfter = "Friendly", prestigeAfter = 0 },
+        { id = "m1", ts = base + 9 * DAY, kind = "merge", account = "MainA", source = "MainC", sourceMain = "MainC", moved = { "MainC", "AltC" },
+          rep = 500, credits = 5, officer = "Officer1", tierBefore = "Friendly", prestigeBefore = 0, tierAfter = "Honored", prestigeAfter = 0 },
+        "garbage",
+    }
+    local rows = ns.CreditsLog_Rows()
+    check("Log: junk entries are skipped, the rest become rows", #rows == 4)
+    local byId = {}
+    for _, r in ipairs(rows) do byId[r.id] = r end
+    check("Log: a donation row names the character and its account's main", byId.d1.who == "AltA1 (MainA)" and byId.d1.kind == "donation")
+    check("Log: a main donating shows just the name", byId.d2.who == "MainB")
+    check("Log: what = gold first, then items with counts", byId.d1.what == "2.50 gold, Test Sword x3, Odd Thing")
+    check("Log: processed-by comes from the receiving officer", byId.d1.by == "Bavin" and byId.d2.by == "Officer1")
+    check("Log: a held donation applied later is kind 'released'", byId.d3.kind == "released" and byId.d3.kindLabel == "Released")
+    check("Log: merge rows describe what was merged and by whom",
+        byId.m1.kind == "merge" and byId.m1.what == "Merged in MainC [MainC, AltC]" and byId.m1.by == "Officer1" and byId.m1.who == "MainA")
+    check("Log: tier-up flag is set only when the tier changed", byId.d1.tierUp == true and byId.d2.tierUp == false and byId.m1.tierUp == true)
+    check("Log: tier text shows the tier reached", byId.d1.tier == "Friendly" and byId.m1.tier == "Honored")
+
+    check("Filter: no filter returns everything", #ns.CreditsLog_Filter(rows, {}) == 4)
+    check("Filter: by kind", #ns.CreditsLog_Filter(rows, { kind = "merge" }) == 1 and #ns.CreditsLog_Filter(rows, { kind = "released" }) == 1)
+    check("Filter: by processed-by is case-insensitive", #ns.CreditsLog_Filter(rows, { by = "bavin" }) == 2)
+    check("Filter: since a timestamp drops older rows", #ns.CreditsLog_Filter(rows, { since = base + 3 * DAY }) == 2)
+    check("Filter: tier-ups only", #ns.CreditsLog_Filter(rows, { tierUpOnly = true }) == 2)
+    check("Filter: text matches a character name", #ns.CreditsLog_Filter(rows, { text = "alta1" }) == 1)
+    check("Filter: text matches an item name", #ns.CreditsLog_Filter(rows, { text = "sword" }) == 2)
+    check("Filter: text matches the account (MainA rows incl. the merge)", #ns.CreditsLog_Filter(rows, { text = "maina" }) == 3)
+    check("Filters combine (AND)", #ns.CreditsLog_Filter(rows, { text = "sword", by = "Bavin", kind = "released" }) == 1)
+
+    local sorted = ns.CreditsLog_Sort(ns.CreditsLog_Filter(rows, {}), "date", false)
+    check("Sort: date descending puts the newest first", sorted[1].id == "m1" and sorted[4].id == "d1")
+    ns.CreditsLog_Sort(sorted, "date", true)
+    check("Sort: date ascending puts the oldest first", sorted[1].id == "d1" and sorted[4].id == "m1")
+    ns.CreditsLog_Sort(sorted, "rep", false)
+    check("Sort: rep descending is numeric, not text", sorted[1].id == "m1" and sorted[2].id == "d1" and sorted[4].id == "d2")
+    ns.CreditsLog_Sort(sorted, "tier", false)
+    check("Sort: tier orders by tier rank", sorted[1].id == "m1" and sorted[4].id == "d2")
+    ns.CreditsLog_Sort(sorted, "by", true)
+    check("Sort: by name ties fall back to newest first", sorted[1].by == "Bavin" and sorted[1].id == "d3" and sorted[2].id == "d1")
+    ns.CreditsLog_Sort(sorted, "who", true)
+    check("Sort: who is alphabetical", sorted[1].who == "AltA1 (MainA)")
+
+    local names = ns.CreditsLog_Distinct(rows, "by")
+    check("Distinct: processed-by names, unique and sorted", #names == 2 and names[1] == "Bavin" and names[2] == "Officer1")
+    local kinds = ns.CreditsLog_KindsPresent(rows)
+    check("Kinds present: fixed order, only what occurs", #kinds == 3 and kinds[1] == "donation" and kinds[2] == "released" and kinds[3] == "merge")
+
+    local tip = ns.CreditsLog_TooltipLines(byId.d1)
+    local flat = {}
+    for _, l in ipairs(tip) do flat[#flat + 1] = tostring(l[1]) .. "|" .. tostring(l[2] or "") end
+    local blob = table.concat(flat, "\n")
+    check("Tooltip: lists each item with its rep and category", blob:find("Test Sword x3|150.00 rep (Weapon)", 1, true) ~= nil)
+    check("Tooltip: flags an unpriced item", blob:find("Odd Thing x1|unpriced", 1, true) ~= nil)
+    check("Tooltip: shows totals, rates used, tier change and who processed it",
+        blob:find("Total rep|250.00", 1, true) and blob:find("Rates used|1 Credits = 100 Rep", 1, true)
+        and blob:find("Tier|Neutral -> Friendly", 1, true) and blob:find("Processed by|Bavin", 1, true))
+    local mtip = {}
+    for _, l in ipairs(ns.CreditsLog_TooltipLines(byId.m1)) do mtip[#mtip + 1] = tostring(l[1]) .. "|" .. tostring(l[2] or "") end
+    check("Tooltip: a merge lists the characters moved", table.concat(mtip, "\n"):find("Characters moved|MainC, AltC", 1, true) ~= nil)
+
+    -- A future spend row (CM5) is shown, not hidden.
+    ns.creditsDb.transactionLog[#ns.creditsDb.transactionLog + 1] =
+        { id = "s1", ts = base + 10 * DAY, kind = "spend", account = "MainB", what = "Sword x1 for 3.00 credits", rep = 0, credits = -3, processedBy = "Officer1" }
+    local all = ns.CreditsLog_Rows()
+    local spend
+    for _, r in ipairs(all) do if r.id == "s1" then spend = r end end
+    check("Unknown kinds (CM5 spend) still appear with their own label", spend and spend.kindLabel == "Spend" and spend.credits == -3 and spend.by == "Officer1")
+
+    local csv = ns.CreditsLog_ExportText(ns.CreditsLog_Sort(ns.CreditsLog_Filter(rows, { kind = "donation" }), "date", true))
+    local lines = {}
+    for line in (csv .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = line end
+    check("Export: header plus one line per filtered row", #lines == 3 and lines[1]:find("^Date,Kind,Account,Who,What,Rep,Credits,Tier,Processed by$"))
+    check("Export: fields with commas are quoted, numbers keep four decimals",
+        lines[2]:find('"2.50 gold, Test Sword x3, Odd Thing"', 1, true) and lines[2]:find(",250.0000,2.5000,", 1, true))
 end
 
 --------------------------------------------------------------------------

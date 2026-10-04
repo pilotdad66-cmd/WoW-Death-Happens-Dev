@@ -1982,3 +1982,13 @@ whether to pull in more officers or go straight to CM9 cutover.
 - Ongoing/recurring reputation-report re-import (this pass treats it
   as a one-time go-live seed only - the process that produces it is
   being retired by this feature, not kept alongside it).
+
+
+### CM7 as built, step 1 - processor Audit Log viewer (2026-10-04, Loopi: "code the audit log viewer next, with filters and sorting")
+
+Built into the existing **Audit Log tab** of the Rep & Credit Config window (it was a placeholder), also reachable with `/dhb credits log`. Logic in `CreditsLog.lua` (pure, harness-tested: 575 checks total), widgets in `CreditsConfig.lua` (`BuildAuditTab`) - NOT yet seen in game.
+- **Source:** this client's own `ns.creditsDb.transactionLog`: donations, `released` held donations, and `merge` rows. Unknown kinds (the CM5 `spend` rows) are shown rather than hidden, with `what`/`processedBy` taken from the row if present. The log is NOT replicated yet, so only the mail recipient's client has it; replicating it to officers is CM7 view (b) and comes after the viewer.
+- **Columns:** Date, Kind, Who ("Alt (Main)"), What (gold first, then items with counts), Rep, Credits, Tier (gold + "^" when the row was a tier/prestige change), By (the receiving officer for donations, the merging officer for merges). Hover a row for the item breakdown (rep + category per item, "unpriced"), totals, rates used, tier before -> after, processed by.
+- **Filters** (AND-combined): text (who/account/item/by/kind), Kind cycle button, Range cycle button (all time / 7 / 30 / 90 days), By cycle button (distinct officers present), "Tier-ups only". **Sorting:** click a column title, click again to reverse (date, rep, credits, tier open newest/biggest first); ties fall back to newest first. 25 rows per page.
+- **Export:** "Export shown rows" opens a copy/paste box with the filtered+sorted rows as CSV (WoW cannot write files). Export-and-purge and the 6-8 week bound are still CM7 proper.
+- **Design note for CM5/CM6 (Loopi, same day):** if two officers spend on the same buyer around the same time BOTH spends must apply, so a spend is its own row (an event) and the balance is derived from rows - never a last-writer-wins overwrite of the balance. A spend that takes the balance below zero is flagged to the officer, not dropped.
