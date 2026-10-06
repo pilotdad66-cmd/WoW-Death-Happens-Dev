@@ -2,7 +2,7 @@
 -- GENERATED FILE - DO NOT HAND-EDIT.
 -- Source: claude\DH-Danger\curation\DH-Danger-Curation.csv
 -- Regenerate: powershell -ExecutionPolicy Bypass -File claude\DH-Danger\import-curation.ps1
--- Generated: 2026-09-10 22:04
+-- Generated: 2026-10-06 18:07
 --
 -- HUMAN JUDGEMENT ONLY. Facts live in DangerData.lua, which is
 -- regenerated from the import files and the in-game dump. Keeping
@@ -17,7 +17,7 @@
 local _, ns = ...
 
 ns.Curation = ns.Curation or {}
-ns.Curation.generated = "2026-09-10 22:04"
+ns.Curation.generated = "2026-10-06 18:07"
 
 -- [npcID or name] = { name, zone|zones, level, type, creatureType, surprise,
 --             severity, yells, stealth, roams, soloable, include, why }
@@ -220,7 +220,7 @@ ns.Curation.npcs = {
 	[2779]={name="Prince Nazjak",zone="Arathi Highlands",level=41,type="rare",creatureType="Humanoid"},  -- Prince Nazjak
 	[2783]={name="Marez Cowl",zone="Arathi Highlands",level=40,type="elite",creatureType="Humanoid"},  -- Marez Cowl
 	[2850]={name="Broken Tooth",zone="Badlands",level=37,type="rare",creatureType="Beast"},  -- Broken Tooth
-	[2858]={name="Gringer",zone="Stranglethorn Vale",level=55,type="elite",creatureType="Humanoid"},  -- Gringer
+	[2858]={name="Gringer",zone="Stranglethorn Vale",level=55,type="elite",creatureType="Humanoid",include=false},  -- Gringer
 	[2861]={name="Gorrik",zone="Badlands",level=55,type="elite",creatureType="Humanoid"},  -- Gorrik
 	[2931]={name="Zaricotl",zone="Badlands",level=55,type="rareelite",creatureType="Beast"},  -- Zaricotl
 	[2937]={name="Dagun the Ravenous",zone="Dustwallow Marsh",level=43,type="elite",creatureType="Humanoid"},  -- Dagun the Ravenous
