@@ -3368,7 +3368,7 @@ ns.ITEM_POINTS = {
     ["Knitted Sandals"] = { points = 0.5, itemId = 792, detail = "Knitted Sandals: 0.5 pts to Bavin; 5s in #market", goldValue = 0.05, category = "Misc." },
     ["Kodo Hide Bag"] = { points = 1, itemId = 5081, detail = "Kodo Hide Bag: 1 pts to Bavin; 22s crafted by a @Leatherworker", goldValue = 0.22, category = "Leatherworking" },
     ["Laced Mail Shoulderpads"] = { points = 6, itemId = 1744, detail = "Laced Mail Shoulderpads: 6 pts to Bavin; 60s (est. AH value)", goldValue = 0.6, category = "Gear" },
-    ["Lady Alizabeth's Pendant"] = { points = 250, itemId = 13002, detail = "Lady Alizabeth's Pendant: 250 pts to Bavin; 25g (est. AH value)", goldValue = 25, category = "Gear" },
+    ["Lady Alizabeth's Pendant"] = { points = 200, itemId = 13002, detail = "Lady Alizabeth's Pendant: 200 pts to Bavin; 20g (est. AH value)", goldValue = 20, category = "Gear" },
     ["Lambent Scale Boots"] = { points = 5, itemId = 3045, detail = "Lambent Scale Boots: 5 pts to Bavin; 50s (est. AH value)", goldValue = 0.5, category = "Gear" },
     ["Lambent Scale Bracers"] = { points = 9, itemId = 3212, detail = "Lambent Scale Bracers: 9 pts to Bavin; 90s (est. AH value)", goldValue = 0.9, category = "Gear" },
     ["Lambent Scale Breastplate"] = { points = 6, itemId = 3049, detail = "Lambent Scale Breastplate: 6 pts to Bavin; 60s (est. AH value)", goldValue = 0.6, category = "Gear" },
