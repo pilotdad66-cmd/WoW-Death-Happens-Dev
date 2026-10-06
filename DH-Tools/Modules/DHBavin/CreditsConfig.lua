@@ -1388,6 +1388,40 @@ local function BuildReviewQueueTab(content)
     resolvedLabel:SetPoint("LEFT", resolvedCheck, "RIGHT", 2, 0)
     resolvedLabel:SetText("Show resolved")
 
+    -- 2026-10-06 (Loopi): post the unclaimed names to /guild so members can
+    -- claim them. Only the author, guild leader and donation recipient see
+    -- the button (Credits.lua's Credits_CanPostReviewQueueLocal); it asks
+    -- first, since it speaks in guild chat.
+    StaticPopupDialogs["DHBAVIN_QUEUEPOST_CONFIRM"] = {
+        text = "Post %s unclaimed donor names to guild chat in %s message(s)?",
+        button1 = "Post",
+        button2 = CANCEL or "Cancel",
+        OnAccept = function()
+            local ok, a, b = ns.Credits_PostReviewQueueToGuild()
+            if ok then
+                ns.CreditsPrint(("Posted %d names to /guild in %d message(s)."):format(b, a))
+            elseif a == "empty" then
+                ns.CreditsPrint("Nothing to post - no unclaimed names in the Review Queue.")
+            else
+                ns.CreditsPrint("Refused - only the author, guild leader or donation recipient can post, from a Death Happens character.")
+            end
+        end,
+        timeout = 0, whileDead = 1, hideOnEscape = 1, preferredIndex = 3,
+    }
+    local postBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    postBtn:SetSize(130, 20)
+    postBtn:SetPoint("TOPRIGHT", content, "TOPRIGHT", -16, -16)
+    postBtn:SetText("Post to guild chat")
+    postBtn:SetScript("OnClick", function()
+        local names = ns.Credits_UnclaimedQueueNames()
+        if #names == 0 then
+            ns.CreditsPrint("Nothing to post - no unclaimed names in the Review Queue.")
+            return
+        end
+        StaticPopup_Show("DHBAVIN_QUEUEPOST_CONFIRM", tostring(#names), tostring(#ns.Credits_BuildQueuePosts(names)))
+    end)
+    postBtn:Hide()
+
     local sortState = { key = "name", ascending = true }
 
     local sortNameBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
@@ -1654,6 +1688,7 @@ local function BuildReviewQueueTab(content)
         sortDateBtn:SetText(sortState.key == "latestDonation" and (sortState.ascending and "Latest Donation v" or "Latest Donation ^") or "Latest Donation")
 
         local canManage = ns.CanManageCreditsConfigLocal and ns.CanManageCreditsConfigLocal() or false
+        if ns.Credits_CanPostReviewQueueLocal and ns.Credits_CanPostReviewQueueLocal() then postBtn:Show() else postBtn:Hide() end
         local list, hiddenResolved = FilteredSortedRows()
         if showResolved then
             resolvedLabel:SetText("Show resolved")

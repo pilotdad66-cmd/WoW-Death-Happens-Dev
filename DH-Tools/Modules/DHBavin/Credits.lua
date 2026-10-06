@@ -1231,6 +1231,85 @@ ns.creditsFrame:SetScript("OnEvent", function(_, event, ...)
 end)
 
 --------------------------------------------------------------------------
+-- Post the unclaimed Review Queue names to /guild (2026-10-06, Loopi: "a
+-- way to post the Review queue list into /guild chat so people can claim
+-- them ... might need to be split into multiple messages and just the
+-- list of names is fine"). Sender gate = the same three people who may
+-- edit the rates: author account, guild leader, donation recipient. No
+-- cooldown (Loopi: the authorised list is two real people). "Unclaimed"
+-- is exactly what the Review Queue tab shows by default: names that don't
+-- yet belong to any account, so a name drops off the post as soon as an
+-- officer links it or makes it a new main.
+--------------------------------------------------------------------------
+local QUEUE_POST_MAX_LEN = 240   -- Blizzard's chat cap is 255; keep a margin
+local QUEUE_POST_GAP = 2         -- seconds between messages (chat throttle)
+local QUEUE_POST_HEADER = "DH Bavin - unclaimed donor names (%d/%d):"
+
+function ns.Credits_CanPostReviewQueueLocal()
+    return (ns.CanManageCreditsRatesLocal and ns.CanManageCreditsRatesLocal()) and true or false
+end
+
+-- Sorted, display-cased list of Review Queue names with no account yet.
+function ns.Credits_UnclaimedQueueNames()
+    local out, seen = {}, {}
+    local toonIndex = ns.creditsDb and ns.creditsDb.toonIndex or {}
+    for _, rec in ipairs(ns.Credits_ReviewQueueRows and ns.Credits_ReviewQueueRows() or {}) do
+        local name = rec.name
+        if type(name) == "string" and name ~= "" then
+            local key = name:lower()
+            if not seen[key] and not toonIndex[key] then
+                seen[key] = true
+                out[#out + 1] = (name:gsub("^%l", string.upper))
+            end
+        end
+    end
+    table.sort(out, function(a, b) return a:lower() < b:lower() end)
+    return out
+end
+
+-- Pure: pack names into as few messages as fit under maxLen, each with a
+-- "(i/N)" header. Returns an array of ready-to-send strings.
+function ns.Credits_BuildQueuePosts(names, maxLen)
+    maxLen = maxLen or QUEUE_POST_MAX_LEN
+    local room = maxLen - #QUEUE_POST_HEADER:format(99, 99) - 1 -- header + one space
+    local chunks, cur = {}, ""
+    for _, name in ipairs(names or {}) do
+        local candidate = (cur == "") and name or (cur .. ", " .. name)
+        if #candidate > room and cur ~= "" then
+            chunks[#chunks + 1] = cur
+            cur = name
+        else
+            cur = candidate
+        end
+    end
+    if cur ~= "" then chunks[#chunks + 1] = cur end
+    local posts = {}
+    for i, body in ipairs(chunks) do
+        posts[i] = QUEUE_POST_HEADER:format(i, #chunks) .. " " .. body
+    end
+    return posts
+end
+
+-- Returns true, messageCount, nameCount on success; false, reason otherwise
+-- ("refused", "not_in_guild" or "empty").
+function ns.Credits_PostReviewQueueToGuild()
+    if not ns.Credits_CanPostReviewQueueLocal() then return false, "refused" end
+    if not ns.IsInTargetGuild() then return false, "not_in_guild" end
+    local names = ns.Credits_UnclaimedQueueNames()
+    if #names == 0 then return false, "empty" end
+    local posts = ns.Credits_BuildQueuePosts(names)
+    for i, text in ipairs(posts) do
+        local function send() SendChatMessage(text, "GUILD") end
+        if i == 1 or not (C_Timer and C_Timer.After) then
+            send()
+        else
+            C_Timer.After((i - 1) * QUEUE_POST_GAP, send)
+        end
+    end
+    return true, #posts, #names
+end
+
+--------------------------------------------------------------------------
 -- Slash command surface (dispatched from Core.lua's /dhb, "credits" cmd)
 --------------------------------------------------------------------------
 -- 2026-09-25 update: the real UI now exists - CreditsConfig.lua's
@@ -1324,6 +1403,26 @@ function ns.Credits_HandleSlash(rest)
     -- the officer list is DH-Bavin's shared one now, managed on the
     -- Officer Settings page (there is no slash command for it).
 
+    elseif sub == "queuepost" then
+        -- 2026-10-06: post the unclaimed Review Queue names to /guild.
+        if not ns.Credits_CanPostReviewQueueLocal() then
+            ns.CreditsPrint("Refused - only the author, guild leader or donation recipient can post the Review Queue to guild chat.")
+        elseif arg1 ~= "confirm" then
+            local names = ns.Credits_UnclaimedQueueNames()
+            ns.CreditsPrint(("%d unclaimed names would go to /guild in %d message(s). Run '/dhb credits queuepost confirm' to send."):format(
+                #names, #ns.Credits_BuildQueuePosts(names)))
+        else
+            local ok, a, b = ns.Credits_PostReviewQueueToGuild()
+            if ok then
+                ns.CreditsPrint(("Posted %d names to /guild in %d message(s)."):format(b, a))
+            elseif a == "empty" then
+                ns.CreditsPrint("Nothing to post - no unclaimed names in the Review Queue.")
+            elseif a == "not_in_guild" then
+                ns.CreditsPrint("Refused - this character isn't in the Death Happens guild.")
+            else
+                ns.CreditsPrint("Refused - only the author, guild leader or donation recipient can post the Review Queue to guild chat.")
+            end
+        end
     elseif sub == "receiver" then
         if arg1 == "add" and arg2 ~= "" then
             if ns.AddCreditTestReceiver(arg2) then
@@ -1358,6 +1457,6 @@ function ns.Credits_HandleSlash(rest)
         end
     else
         ns.CreditsPrint("Unknown: /dhb credits " .. rest)
-        ns.CreditsPrint("Commands: window (opens the config UI), status, toggle on|off, multiplier <n>, officer add|remove <name>, receiver add|remove <name>, sender add|remove <name>, reset confirm, startover confirm, log")
+        ns.CreditsPrint("Commands: window (opens the config UI), status, toggle on|off, multiplier <n>, officer add|remove <name>, receiver add|remove <name>, sender add|remove <name>, reset confirm, startover confirm, queuepost [confirm], log")
     end
 end

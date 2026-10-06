@@ -3366,6 +3366,114 @@ do
 end
 
 --------------------------------------------------------------------------
+-- Post the unclaimed Review Queue names to /guild (2026-10-06, Loopi):
+-- author / guild leader / donation recipient only, no cooldown, names
+-- only, split under the chat cap, paced with C_Timer.
+--------------------------------------------------------------------------
+print("== Credits: Review Queue guild post ==")
+do
+    resetState()
+    inGuild = true
+    guildRosterEntries = {
+        { name = "GLeader", rankIndex = 0 }, { name = "PlainMember", rankIndex = 5 },
+        { name = "Officer1", rankIndex = 3 }, { name = "Bavin", rankIndex = 4 },
+    }
+    ns.UpdateGuildRosterCache()
+    ns.db.editors = { "Officer1" }
+    ns.db.recipient = "Bavin"
+    authorAccountFlag = false
+
+    local savedStatic, savedDyn, savedIndex = ns.CreditsReviewQueue, ns.creditsDb.dynamicReviewQueue, ns.creditsDb.toonIndex
+    local savedSend, savedTimer = _G.SendChatMessage, _G.C_Timer
+    local sent, timers = {}, {}
+    _G.SendChatMessage = function(text, chan) sent[#sent + 1] = { text = text, chan = chan } end
+    _G.C_Timer = { After = function(d, fn) timers[#timers + 1] = { delay = d, fn = fn } end }
+    local function runTimers() local t = timers; timers = {}; for _, x in ipairs(t) do x.fn() end end
+
+    -- Unclaimed list: static + dynamic rows, minus names an account already owns.
+    ns.CreditsReviewQueue = { { name = "zed" }, { name = "alpha" }, { name = "linked" }, { name = "BETA" } }
+    ns.creditsDb.dynamicReviewQueue = { { name = "beta" }, { name = "carol" } }
+    ns.creditsDb.toonIndex = { linked = "Someone" }
+    local names = ns.Credits_UnclaimedQueueNames()
+    check("QueuePost: unclaimed list is sorted, capitalised, de-duplicated and skips linked names (Alpha, Beta, Carol, Zed)",
+        #names == 4 and names[1] == "Alpha" and names[2]:lower() == "beta" and names[3] == "Carol" and names[4] == "Zed")
+
+    -- Packing.
+    check("QueuePost: no names -> no messages", #ns.Credits_BuildQueuePosts({}) == 0)
+    local one = ns.Credits_BuildQueuePosts({ "Solo" })
+    check("QueuePost: one name -> one message with a (1/1) header",
+        #one == 1 and one[1] == "DH Bavin - unclaimed donor names (1/1): Solo")
+    local many = {}
+    for i = 1, 150 do many[i] = ("Name%03d%s"):format(i, ("x"):rep(i % 5)) end
+    local posts = ns.Credits_BuildQueuePosts(many)
+    local allFit, joined = true, {}
+    for i, p in ipairs(posts) do
+        if #p > 255 then allFit = false end
+        if not p:find("^DH Bavin %- unclaimed donor names %(" .. i .. "/" .. #posts .. "%): ") then allFit = false end
+        joined[#joined + 1] = p:match("%): (.*)$")
+    end
+    check("QueuePost: 150 names split into several messages, each under the 255-char chat cap with (i/N) headers",
+        #posts > 1 and allFit)
+    check("QueuePost: every name appears exactly once, in order",
+        table.concat(joined, ", ") == table.concat(many, ", "))
+
+    -- Permission gate.
+    local function tryPost(player)
+        sent, timers = {}, {}
+        currentPlayerName = player
+        return ns.Credits_PostReviewQueueToGuild()
+    end
+    check("QueuePost: a plain member is refused and sends nothing", tryPost("PlainMember") == false and #sent == 0)
+    check("QueuePost: a shared-list officer is refused", tryPost("Officer1") == false and #sent == 0)
+    local ok, nMsgs, nNames = tryPost("Bavin")
+    check("QueuePost: the donation recipient can post", ok == true and nNames == 4 and nMsgs == 1)
+    check("QueuePost: it goes to GUILD chat, names only",
+        #sent == 1 and sent[1].chan == "GUILD" and sent[1].text == "DH Bavin - unclaimed donor names (1/1): Alpha, Beta, Carol, Zed")
+    check("QueuePost: the guild leader can post", tryPost("GLeader") == true)
+    authorAccountFlag = true
+    check("QueuePost: the author account (any character) can post", tryPost("PlainMember") == true)
+    authorAccountFlag = false
+    inGuild = false
+    check("QueuePost: not in the guild -> refused", tryPost("Bavin") == false and #sent == 0)
+    inGuild = true
+    check("QueuePost: no cooldown - posting twice in a row both go out",
+        tryPost("Bavin") == true and tryPost("Bavin") == true and #sent == 1)
+
+    -- Multi-message pacing.
+    local queue = {}
+    for i = 1, 150 do queue[i] = { name = ("donor%03dxx"):format(i) } end
+    ns.CreditsReviewQueue = queue
+    ns.creditsDb.dynamicReviewQueue = {}
+    local ok2, n2 = tryPost("Bavin")
+    check("QueuePost: a long list sends the first message at once and paces the rest",
+        ok2 == true and n2 > 1 and #sent == 1 and #timers == n2 - 1)
+    check("QueuePost: later messages are spaced apart", timers[1].delay > 0 and (#timers < 2 or timers[2].delay > timers[1].delay))
+    runTimers()
+    check("QueuePost: after the timers fire every message has gone to GUILD", #sent == n2 and sent[#sent].chan == "GUILD")
+
+    -- Empty list.
+    ns.CreditsReviewQueue = { { name = "linked" } }
+    local okE, whyE = tryPost("Bavin")
+    check("QueuePost: nothing unclaimed -> refuses with 'empty', sends nothing", okE == false and whyE == "empty" and #sent == 0)
+
+    -- Slash command: preview first, send only on confirm.
+    ns.CreditsReviewQueue = { { name = "alpha" }, { name = "beta" } }
+    sent, timers = {}, {}
+    currentPlayerName = "Bavin"
+    ns.Credits_HandleSlash("queuepost")
+    check("QueuePost slash: without 'confirm' it only previews", #sent == 0)
+    ns.Credits_HandleSlash("queuepost confirm")
+    check("QueuePost slash: 'confirm' sends", #sent == 1 and sent[1].text:find("Alpha, Beta", 1, true) ~= nil)
+    sent = {}
+    currentPlayerName = "PlainMember"
+    ns.Credits_HandleSlash("queuepost confirm")
+    check("QueuePost slash: a non-authorised player is refused", #sent == 0)
+
+    ns.CreditsReviewQueue, ns.creditsDb.dynamicReviewQueue, ns.creditsDb.toonIndex = savedStatic, savedDyn, savedIndex
+    _G.SendChatMessage, _G.C_Timer = savedSend, savedTimer
+end
+
+--------------------------------------------------------------------------
 -- Summary
 --------------------------------------------------------------------------
 print("")
