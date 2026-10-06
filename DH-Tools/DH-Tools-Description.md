@@ -1,6 +1,6 @@
 # DH-Tools
 
-**Version 2.1.4** | Author: **Loopi** | For: *Death Happens* Hardcore guild
+**Version 2.2.0** | Author: **Loopi** | For: *Death Happens* Hardcore guild
 
 ---
 
@@ -57,6 +57,13 @@ you actually want running, all managed from one place.
 ---
 
 ## Changelog
+
+### 2.2.0
+- **New: a Credit, Reputation Point and Guild Store module is being staged for in-game testing.**
+- **Updated: Bavin Points item values** refreshed from the latest guild items data.
+- **Changed: Settings window scrollbars** now use Blizzard's framed look, with arrows and thumb in a bordered track. The Quests and Macros pages gain a scrollbar, and the bar no longer hangs past the window edge.
+- **Changed: DH-Danger no longer lists Gringer** in Stranglethorn Vale. He's the Booty Bay Horde flight master and never attacks.
+- **Fixed: DH windows now open in front the very first time** they are opened, instead of behind whatever was already up.
 
 ### 2.1.4
 - **Fixed: DH windows stayed on top of everything.** 2.1.3 made DH-Tools
