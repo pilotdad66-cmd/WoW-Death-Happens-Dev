@@ -368,6 +368,12 @@ Open: should the item default ratio be the existing officer Rep/Gold setting
   phrase (Gear, Misc., Vendor, Quest, Meat, Cloth) use "(est. AH value)".
 - Text pattern seen in the data: "<name>: <pts> pts to Bavin; <gold>[ ea or
   <stack gold> for x<stack>] <phrase>". The "ea or ... for xN" part needs the
-  sheet's Stack value, which ItemPoints.lua does not carry yet -> the editor
-  and ItemPoints.lua need a stack-size field too (open: confirm).
+  sheet's Stack value, which ItemPoints.lua does not carry yet.
+  DECIDED 2026-10-07 18:41 (Loopi): add `stackSize` to the item schema
+  (ItemPoints.lua, override record, ITEM sync, export) and carry it in the NEXT
+  item import. Sources: the raw sheet's Stack column (filled for 1,618 of 7,784
+  rows: 20 x218, 5 x125, 10 x75; 0 and 1 mean "no stack text" -> stored blank);
+  in game, GetItemInfo's max-stack return fills it for new/Items-tab entries when
+  the item is cached. Blank if neither knows - Bavin fills it in. Blank, 0 or 1
+  = no "ea or ... for xN" part in the built text.
 - Gold display: "1.5g", "75s", "n/a" for 0 gold - match the sheet's style.
