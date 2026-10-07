@@ -220,7 +220,17 @@ spends), Kudos rows convert for free and any officer could apply.
   export tool ships), so history and in-game Kudos share one category. The
   historical Rep is already in the seed - nothing extra to import.
 
-## 10. Right-click menu
+## 10. Right-click menu - SUPERSEDED 2026-10-07 18:44 (Loopi)
+"Give Kudos" is a LEFT-click menu entry - the minimap button's existing
+left-click quick-actions menu, built the current way. NO player/unit
+right-click menu entry, so no Menu.ModifyMenu work or check is needed. The
+rest of this section is kept only as history.
+Server clock (Loopi): the realm runs on US Pacific time, 3 h behind his
+Eastern. "Server midnight" = Pacific midnight. Implement from the realm clock
+(GetGameTime hour/min vs GetServerTime) rather than a fixed -3/-7/-8 offset, so
+the PST/PDT switch needs no code change.
+
+### 10 (history). Right-click menu
 "Give Kudos" goes on the player unit menus (chat name, party, raid, target) via
 Blizzard's Menu.ModifyMenu (MENU_UNIT_PLAYER, _PARTY, _RAID_PLAYER, _TARGET,
 _FRIEND). Other Classic clients (TBC Anniversary 2.5.x) expose both that API
