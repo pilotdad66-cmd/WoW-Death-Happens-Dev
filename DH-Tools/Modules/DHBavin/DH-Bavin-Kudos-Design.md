@@ -387,3 +387,31 @@ Open: should the item default ratio be the existing officer Rep/Gold setting
   the item is cached. Blank if neither knows - Bavin fills it in. Blank, 0 or 1
   = no "ea or ... for xN" part in the built text.
 - Gold display: "1.5g", "75s", "n/a" for 0 gold - match the sheet's style.
+
+### 15e. Points Editor update - AS BUILT 2026-10-07 (Loopi)
+Decisions from Loopi: (1) the officer Rep/Gold setting (default 100) is what a
+straight GOLD DONATION is worth; items get their OWN items-only ratio, 10 points
+per gold (`ns.GetItemPointsPerGold`, constant 10, optional `ns.db.itemPointsPerGold`).
+(2) The sync prefix is bumped to **DHBavinV5** (old clients are partitioned off).
+- New item fields: `goldValue`, `category` (drop-down, `ns.ITEM_CATEGORIES`),
+  `stackSize`, `phrase` (source phrase; blank = the category's default from
+  `ns.ITEM_CATEGORY_PHRASES`, else "(est. AH value)"), `auto`.
+- Item text is BUILT (`ns.BuildItemDetail`) as
+  `<name>: <pts> pts to Bavin; <gold>[ ea or <stack gold> for x<N>] <phrase>`.
+  `auto=true` stores no text (every client rebuilds it); `auto=false` = hand-edited
+  text kept verbatim (the editor has an "Auto" reset). Baseline items whose shipped
+  text does not equal the built one open as hand-edited. Stack and phrase are
+  recovered from the shipped text (`ns.ParseItemDetail`) so a points-only edit
+  keeps "for x5" / "in #market".
+- Typing a gold value fills points at the items-only ratio until points are typed.
+- `ns.ResolveItemFields(name)` = one merged view for the editor.
+  `ns.GetItemGoldValue` now honours a live override (DH-Store follows edits).
+- Wire (V5): `name|points|itemId|editedAt|goldValue|category|stackSize|phrase|auto|detail`
+  for PTSSET and each PTSSYNCDATA entry; auto sends an EMPTY detail. PTSSET is
+  size-guarded at 250 chars: an over-long entry is saved locally and reaches the
+  rest via the PTSSYNCREQ catch-up.
+- Check run against the shipped data: the builder reproduces 6678 of 6732 shipped
+  texts (99.2%). The ~54 others are sheet rounding (e.g. "160g" vs the 161 the gold
+  value gives), or data quirks ("Boar Intestines" has no gold value; "Green Hills
+  ... Page 20" shows "1." points). They open as hand-edited and keep their text.
+- Harness: 776/776 (48 new checks in section 10b).

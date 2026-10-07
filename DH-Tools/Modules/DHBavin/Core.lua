@@ -375,7 +375,9 @@ end
 -- small deltas (Sync.lua's PTSSET/PTSSYNCREQ/PTSSYNCDATA) instead of the
 -- whole table. Lookup order: override first, baseline second.
 --
--- ns.db.itemPointsOverrides[name] = { points=, itemId=, editedBy=, editedAt= }
+-- ns.db.itemPointsOverrides[name] = { points=, itemId=, detail=, editedAt=,
+--   goldValue=, category=, stackSize=, phrase=, auto= }   (the last five added
+--   2026-10-07; all optional - see ApplyItemPointsLocal and GetItemPoints)
 -- `points == nil` is a REVERT TOMBSTONE (see RevertItemPoints below) -
 -- the entry stays in the table (rather than being deleted outright) so
 -- its editedAt keeps counting toward this client's version and toward
@@ -386,6 +388,111 @@ end
 -- the PTSSYNCREQ catch-up handshake and per-name conflict resolution
 -- (same soft, social-trust versioning as the rest of this addon's sync -
 -- not cryptographic, not immune to a wildly wrong system clock).
+
+--------------------------------------------------------------------------
+-- Item categories, source phrases and the item text builder (2026-10-07, Loopi)
+--------------------------------------------------------------------------
+-- The "? " answer / tooltip text of an item used to be free prose, so it went
+-- stale the moment its points changed. It is now BUILT from the item's fields
+-- in the sheet's own pattern
+--     <name>: <pts> pts to Bavin; <gold>[ ea or <stack gold> for x<stack>] <phrase>
+-- and only a hand-edited text is stored verbatim (override.auto == false).
+-- The phrase comes from the category (Bavin's sheet has the table; checked
+-- 2026-10-07 against items-2026-10-06.csv); categories without one use
+-- "(est. AH value)". A single item may carry its own phrase (e.g. "in #market").
+ns.ITEM_CATEGORIES = {
+    "Alchemy", "Blacksmithing", "Cloth", "Cooking", "Enchanting", "Engineering",
+    "First Aid", "Fishing", "Gear", "Herbalism", "Leatherworking", "Meat",
+    "Mining", "Misc.", "Quest", "Skinning", "Tailoring", "Vendor",
+}
+ns.ITEM_CATEGORY_PHRASES = {
+    ["Alchemy"] = "crafted by an @Alchemist",
+    ["Blacksmithing"] = "crafted by a @Blacksmith",
+    ["Cooking"] = "from a @Cook",
+    ["Enchanting"] = "crafted by an @Enchanter",
+    ["Engineering"] = "crafted by an @Engineer",
+    ["First Aid"] = "from @First Aid",
+    ["Fishing"] = "from a @Fisher",
+    ["Herbalism"] = "from an @Herbalist",
+    ["Leatherworking"] = "crafted by a @Leatherworker",
+    ["Mining"] = "from a @Miner",
+    ["Skinning"] = "from a @Skinner",
+    ["Tailoring"] = "from a @Tailor",
+}
+local DEFAULT_ITEM_PHRASE = "(est. AH value)"
+
+function ns.DefaultItemPhrase(category)
+    return ns.ITEM_CATEGORY_PHRASES[category or ""] or DEFAULT_ITEM_PHRASE
+end
+
+-- Items-only points-per-gold ratio (Loopi 2026-10-07: the item ratio is 10:1;
+-- the officer "Rep/Gold" setting is a different thing - what a straight gold
+-- DONATION is worth). Typing a gold value in the Points Editor fills points
+-- at this ratio until points are typed by hand. A constant for now; an
+-- optional per-client override lives in ns.db.itemPointsPerGold.
+local DEFAULT_ITEM_POINTS_PER_GOLD = 10
+function ns.GetItemPointsPerGold()
+    local v = ns.db and tonumber(ns.db.itemPointsPerGold)
+    if v and v > 0 then return v end
+    return DEFAULT_ITEM_POINTS_PER_GOLD
+end
+
+-- 1234.5 -> "1234.5", 40 -> "40" (at most `decimals` places, trailing zeros cut).
+local function TrimNum(n, decimals)
+    local s = string.format("%." .. (decimals or 2) .. "f", tonumber(n) or 0)
+    if s:find(".", 1, true) then
+        s = s:gsub("0+$", "")
+        s = s:gsub("%.$", "")
+    end
+    return s
+end
+
+-- Gold in the sheet's style: >= 10g whole ("24g"), 1-10g one decimal ("1.6g",
+-- "8g"), under 1g in silver ("35s"), nothing/0 "n/a".
+function ns.FormatItemGold(g)
+    g = tonumber(g)
+    if not g or g <= 0 then return "n/a" end
+    local e = 1e-9
+    if g >= 10 then
+        return TrimNum(math.floor(g + 0.5 + e), 0) .. "g"
+    elseif g >= 1 then
+        return TrimNum(math.floor((g + e) * 10 + 0.5) / 10, 1) .. "g"
+    end
+    local silver = math.floor(g * 100 + 0.5 + e)
+    if silver >= 100 then return "1g" end
+    if silver < 1 then silver = 1 end
+    return silver .. "s"
+end
+
+-- The automatic item text. stackSize blank/0/1 = no "ea or ... for xN" part.
+function ns.BuildItemDetail(name, points, goldValue, stackSize, category, phrase)
+    local price = ns.FormatItemGold(goldValue)
+    local stack = tonumber(stackSize)
+    local gold = tonumber(goldValue)
+    if stack and stack > 1 and gold and gold > 0 then
+        price = price .. " ea or " .. ns.FormatItemGold(gold * stack) .. " for x" .. TrimNum(stack, 0)
+    end
+    if not phrase or phrase == "" then phrase = ns.DefaultItemPhrase(category) end
+    return ("%s: %s pts to Bavin; %s %s"):format(name or "?", TrimNum(points, 4), price, phrase)
+end
+
+-- Pulls the stack size and the source phrase back out of a built/shipped text
+-- ("...; 4.8g ea or 24g for x5 crafted by an @Alchemist" -> 5, "crafted by an
+-- @Alchemist"). Returns stack (or nil), phrase; or nil if it isn't in the
+-- sheet's pattern. Lets the editor keep an existing "for xN" part and a
+-- hand-set phrase when only the points change.
+function ns.ParseItemDetail(detail)
+    if type(detail) ~= "string" then return nil end
+    local rest = detail:match("pts to Bavin; (.*)$")
+    if not rest then return nil end
+    local price, tail = rest:match("^(n/a)%s*(.*)$")
+    if not price then price, tail = rest:match("^([%d%.]+[gs])%s*(.*)$") end
+    if not price then return nil end
+    local stack
+    local s, afterStack = tail:match("^ea or [%d%.]+[gs] for x(%d+)%s*(.*)$")
+    if s then stack = tonumber(s); tail = afterStack end
+    return stack, tail
+end
 
 -- Returns { points=, itemId=, isOverride=, detail= } or nil if `name` is
 -- unknown both locally-overridden and in the shipped baseline.
@@ -404,18 +511,68 @@ end
 --     stale/wrong next to a different overridden value. Tooltip.lua falls
 --     back to the plain "Bavin Points: N" line whenever detail is nil.
 --   * No override at all                       -> the baseline's detail.
+--
+-- 2026-10-07 (Loopi): an override flagged `auto` has no stored text - its
+-- detail is BUILT here from its fields (BuildItemDetail above), so the text
+-- can never disagree with the points. goldValue / category / stackSize fall
+-- back to the baseline's when an older override (made before these fields
+-- existed) doesn't carry them. Also returned: goldValue, category,
+-- stackSize, phrase, auto (the raw stored flags, nil when not an override).
 function ns.GetItemPoints(name)
     if not name then return nil end
     local overrides = ns.db and ns.db.itemPointsOverrides
     local o = overrides and overrides[name]
-    if o and o.points ~= nil then
-        return { points = o.points, itemId = o.itemId, isOverride = true, detail = o.detail }
-    end
     local base = ns.ITEM_POINTS and ns.ITEM_POINTS[name]
+    if o and o.points ~= nil then
+        local goldValue, category, stackSize = o.goldValue, o.category, o.stackSize
+        if goldValue == nil and base then goldValue = base.goldValue end
+        if category == nil and base then category = base.category end
+        if stackSize == nil and base then stackSize = base.stackSize end
+        local detail = o.detail
+        if o.auto then
+            detail = ns.BuildItemDetail(name, o.points, goldValue, stackSize, category, o.phrase)
+        end
+        return { points = o.points, itemId = o.itemId, isOverride = true, detail = detail,
+                 goldValue = goldValue, category = category, stackSize = stackSize,
+                 phrase = o.phrase, auto = o.auto }
+    end
     if base then
-        return { points = base.points, itemId = base.itemId, isOverride = false, detail = base.detail }
+        return { points = base.points, itemId = base.itemId, isOverride = false, detail = base.detail,
+                 goldValue = base.goldValue, category = base.category, stackSize = base.stackSize }
     end
     return nil
+end
+
+-- Everything the Points Editor needs to show and rebuild one item, merged from
+-- the override and the shipped baseline:
+--   { points, itemId, isOverride, goldValue, category, stackSize,
+--     phrase (nil = the category's default), auto (true = the text follows
+--     the fields), detail (the text as it reads now) }
+-- stackSize / phrase that no field holds yet are recovered from the shipped
+-- text ("for x5", "in #market"); `auto` for an entry that never had the flag
+-- is true exactly when its text already equals the built one. Returns nil for
+-- an unknown name.
+function ns.ResolveItemFields(name)
+    local info = ns.GetItemPoints(name)
+    if not info then return nil end
+    local parsedStack, parsedPhrase = ns.ParseItemDetail(info.detail)
+    local out = {
+        points = info.points, itemId = info.itemId, isOverride = info.isOverride,
+        goldValue = info.goldValue, category = info.category,
+        stackSize = info.stackSize or parsedStack,
+        phrase = info.phrase,
+        detail = info.detail,
+    }
+    if out.phrase == nil and parsedPhrase and parsedPhrase ~= "" and parsedPhrase ~= ns.DefaultItemPhrase(out.category) then
+        out.phrase = parsedPhrase
+    end
+    if info.auto ~= nil then
+        out.auto = info.auto and true or false
+    else
+        local built = ns.BuildItemDetail(name, out.points, out.goldValue, out.stackSize, out.category, out.phrase)
+        out.auto = (info.detail == nil) or (info.detail == built)
+    end
+    return out
 end
 
 -- The shipped baseline entry only, ignoring any live override - lets the
@@ -431,8 +588,13 @@ end
 -- override mechanism here (unlike GetItemPoints) - DH-Store's own
 -- per-listing manual override, when an officer supplies one, lives
 -- entirely in DHStoreDB, not here.
+--
+-- 2026-10-07: a live override's goldValue (Points Editor) now wins over the
+-- baseline, so DH-Store prices follow in-game edits.
 function ns.GetItemGoldValue(name)
     if not name then return nil end
+    local o = ns.db and ns.db.itemPointsOverrides and ns.db.itemPointsOverrides[name]
+    if o and o.points ~= nil and o.goldValue ~= nil then return o.goldValue end
     local base = ns.ITEM_POINTS and ns.ITEM_POINTS[name]
     return base and base.goldValue or nil
 end
@@ -466,26 +628,40 @@ end
 -- forced a V3 -> V4 bump). An empty string is normalized to nil so
 -- "cleared the wording box" and "never had wording" are one state, not
 -- two that render differently.
-function ns.ApplyItemPointsLocal(name, points, itemId, editedAt, detail)
+--
+-- 2026-10-07 (Loopi): `extra` (optional table, appended after detail for the
+-- same reason) carries { goldValue, category, stackSize, phrase, auto }. When
+-- extra.auto is true there is no stored text (detail is dropped) - the text is
+-- built on read. Nothing in `extra` is kept for a revert tombstone.
+function ns.ApplyItemPointsLocal(name, points, itemId, editedAt, detail, extra)
     ns.db.itemPointsOverrides = ns.db.itemPointsOverrides or {}
     local existing = ns.db.itemPointsOverrides[name]
     if existing and (existing.editedAt or 0) >= editedAt then return end
     if detail == "" then detail = nil end
-    ns.db.itemPointsOverrides[name] = {
-        points = points, itemId = itemId, detail = detail, editedAt = editedAt,
-    }
+    local rec = { points = points, itemId = itemId, detail = detail, editedAt = editedAt }
+    if points ~= nil and type(extra) == "table" then
+        rec.goldValue = extra.goldValue
+        rec.category = (extra.category ~= "" and extra.category) or nil
+        rec.stackSize = extra.stackSize
+        rec.phrase = (extra.phrase ~= "" and extra.phrase) or nil
+        if extra.auto ~= nil then
+            rec.auto = extra.auto and true or false
+            if rec.auto then rec.detail = nil end
+        end
+    end
+    ns.db.itemPointsOverrides[name] = rec
 end
 
 -- Sets (or, if points is nil, reverts) a live override for `name`,
 -- gated by CanEditList exactly like AddItem/RemoveItem. Broadcasts the
 -- change so anyone online picks it up immediately.
-function ns.SetItemPoints(name, points, itemId, detail)
+function ns.SetItemPoints(name, points, itemId, detail, extra)
     if not name or name == "" then return false end
     if not ns.CanEditListLocal() then return false end
     local editedAt = time()
-    ns.ApplyItemPointsLocal(name, points, itemId, editedAt, detail)
+    ns.ApplyItemPointsLocal(name, points, itemId, editedAt, detail, extra)
     if ns.Sync_BroadcastItemPoints then
-        ns.Sync_BroadcastItemPoints(name, points, itemId, editedAt, detail)
+        ns.Sync_BroadcastItemPoints(name, points, itemId, editedAt, detail, extra)
     end
     return true
 end

@@ -34,7 +34,9 @@
 --                             the last field, may itself contain "|".
 --   ITEMGONE|name           - sender (same authorization) removed this
 --                             entry, by name
---   PTSSET|name|points|itemId|editedAt|detail
+--   PTSSET|name|points|itemId|editedAt|goldValue|category|stackSize|phrase|auto|detail
+--                           (V5 layout, 2026-10-07 - see EncodeItemEntry below; the
+--                           paragraph that follows describes the original fields)
 --                           - sender (must currently be the recipient or
 --                             an editor, same verification as ITEM) is
 --                             setting a live Bavin Points override for
@@ -65,9 +67,8 @@
 --   PTSSYNCDATA|i/total|chunk
 --                           - chunked reply to a PTSSYNCREQ, WHISPERed
 --                             directly back like SYNCDATA. Reassembled
---                             chunks decode to ";"-joined
---                             "name|points|itemId|editedAt|detail"
---                             entries - safe to use both "|" and ";" as
+--                             chunks decode to ";"-joined entries
+--                             (V5: the same 10-field layout as PTSSET) - safe to use both "|" and ";" as
 --                             delimiters here (unlike SYNCDATA's
 --                             itemLink-based payload) since plain item
 --                             display names never contain either
@@ -144,7 +145,14 @@ local ns = DHTools.Bavin
 -- misparse one - quieter than V2's failure mode but still a total
 -- exchange break, which is exactly what the standing rule above exists
 -- to partition cleanly.
-local PREFIX = "DHBavinV4"
+-- 2026-10-07 (Loopi): bumped V4 -> V5 - PTSSET and PTSSYNCDATA's entries grew
+-- from 5 to 10 fields (goldValue, category, stackSize, phrase, auto inserted
+-- before detail; detail is empty when the text is automatic). A V4 client's
+-- anchored 5-field pattern would read everything after the 4th "|" as the
+-- tooltip wording and show garbage, so V4 and V5 clients are partitioned
+-- instead: no Bavin message of any kind passes between them until both
+-- update (the Credits sync prefix is separate and unaffected).
+local PREFIX = "DHBavinV5"
 -- Assumes no single "name|itemId|itemLink" entry ever exceeds this length
 -- once chunked into a SYNCDATA reply - real item hyperlinks run roughly
 -- 60-160 characters, item names are short, comfortably under this. See
@@ -339,53 +347,112 @@ local function UnescapeDetail(s)
     return s
 end
 
+-- One item-points entry on the wire (PTSSET payload and each PTSSYNCDATA entry):
+--   name|points|itemId|editedAt|goldValue|category|stackSize|phrase|auto|detail
+-- (V5, 2026-10-07). goldValue / stackSize are plain numbers; category, phrase
+-- and detail are free text and escaped. auto is "1" (the text is built from the
+-- fields by every receiver - detail is then EMPTY, which keeps the message
+-- short), "0" (hand-edited text, sent verbatim in detail) or "" (an edit that
+-- doesn't say). A revert tombstone has an empty points and empty extras.
+local function EncodeItemEntry(name, points, itemId, editedAt, detail, extra)
+    extra = extra or {}
+    local auto = extra.auto
+    local sendDetail = (auto ~= true) and detail or nil
+    return table.concat({
+        name or "",
+        points ~= nil and tostring(points) or "",
+        itemId ~= nil and tostring(itemId) or "",
+        tostring(editedAt),
+        extra.goldValue ~= nil and tostring(extra.goldValue) or "",
+        EscapeDetail(extra.category),
+        extra.stackSize ~= nil and tostring(extra.stackSize) or "",
+        EscapeDetail(extra.phrase),
+        (auto == nil) and "" or (auto and "1" or "0"),
+        EscapeDetail(sendDetail),
+    }, "|")
+end
+
+local ENTRY_PATTERN = "^([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.*)$"
+
+-- Inverse of EncodeItemEntry: returns { name, points, itemId, editedAt, detail,
+-- extra = { goldValue, category, stackSize, phrase, auto } } or nil if the text
+-- isn't a well-formed entry.
+local function DecodeItemEntry(text)
+    local name, pointsStr, itemIdStr, editedAtStr, goldStr, categoryStr, stackStr, phraseStr, autoStr, detailStr =
+        text:match(ENTRY_PATTERN)
+    if not name or name == "" then return nil end
+    local auto
+    if autoStr == "1" then auto = true elseif autoStr == "0" then auto = false end
+    return {
+        name = name,
+        points = (pointsStr ~= "" and tonumber(pointsStr)) or nil,
+        itemId = (itemIdStr ~= "" and tonumber(itemIdStr)) or nil,
+        editedAt = tonumber(editedAtStr) or 0,
+        detail = UnescapeDetail(detailStr),
+        extra = {
+            goldValue = (goldStr ~= "" and tonumber(goldStr)) or nil,
+            category = UnescapeDetail(categoryStr),
+            stackSize = (stackStr ~= "" and tonumber(stackStr)) or nil,
+            phrase = UnescapeDetail(phraseStr),
+            auto = auto,
+        },
+    }
+end
+
+-- PTSSET must fit one addon message (255 bytes incl. the type and "|"). A
+-- hand-edited text is capped at 150 characters by the editor so this is only
+-- a backstop; returns false (nothing sent) if the entry is still too long -
+-- the edit is saved locally and reaches everyone else through the
+-- PTSSYNCREQ catch-up instead.
+--
 -- Called from Core.lua's SetItemPoints AFTER the CanEditList gate has
 -- already passed and local state is already updated - this just
 -- announces the change. points/itemId nil means "reverted to baseline".
--- detail (tooltip wording, may be nil) is escaped and goes LAST.
-function ns.Sync_BroadcastItemPoints(name, points, itemId, editedAt, detail)
-    local payload = (name or "") .. "|" .. (points ~= nil and tostring(points) or "")
-        .. "|" .. (itemId ~= nil and tostring(itemId) or "") .. "|" .. tostring(editedAt)
-        .. "|" .. EscapeDetail(detail)
+local MAX_PTSSET_CHARS = 250
+function ns.Sync_BroadcastItemPoints(name, points, itemId, editedAt, detail, extra)
+    local payload = EncodeItemEntry(name, points, itemId, editedAt, detail, extra)
+    if #payload + #"PTSSET|" > MAX_PTSSET_CHARS then
+        if ns.Print then
+            ns.Print(("%s saved here, but its entry is too long to send live - guildmates get it when they next log in."):format(name or "?"))
+        end
+        return false
+    end
     ns.Sync_Send("PTSSET", payload)
+    return true
 end
 
 -- Encodes every local override with editedAt > sinceVersion as
--- ";"-joined "name|points|itemId|editedAt|detail" entries. Item display
--- names and numbers can't contain "|" or ";", so they go raw; detail CAN
--- and is escaped (see EscapeDetail above), which is what keeps both
+-- ";"-joined entries (see EncodeItemEntry). Item display names and numbers
+-- can't contain "|" or ";", so they go raw; category, phrase and detail CAN
+-- and are escaped (see EscapeDetail above), which is what keeps both
 -- delimiters usable here at all.
 local function EncodeItemPointsSince(sinceVersion)
     local parts = {}
     for name, o in pairs(ns.db.itemPointsOverrides or {}) do
         if (o.editedAt or 0) > sinceVersion then
-            table.insert(parts, name .. "|" .. (o.points ~= nil and tostring(o.points) or "")
-                .. "|" .. (o.itemId ~= nil and tostring(o.itemId) or "") .. "|" .. tostring(o.editedAt)
-                .. "|" .. EscapeDetail(o.detail))
+            table.insert(parts, EncodeItemEntry(name, o.points, o.itemId, o.editedAt, o.detail, {
+                goldValue = o.goldValue, category = o.category, stackSize = o.stackSize,
+                phrase = o.phrase, auto = o.auto,
+            }))
         end
     end
     return table.concat(parts, ";")
 end
 
 -- Splits a reassembled points-delta string back into
--- { {name=, points=, itemId=, editedAt=, detail=}, ... }.
+-- { {name=, points=, itemId=, editedAt=, detail=, extra=}, ... } (see DecodeItemEntry).
 local function DecodeItemPointsEntries(data)
     local entries = {}
     for entry in data:gmatch("[^;]+") do
-        local name, pointsStr, itemIdStr, editedAtStr, detailStr =
-            entry:match("^([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.*)$")
-        if name and name ~= "" then
-            table.insert(entries, {
-                name = name,
-                points = (pointsStr ~= "" and tonumber(pointsStr)) or nil,
-                itemId = (itemIdStr ~= "" and tonumber(itemIdStr)) or nil,
-                editedAt = tonumber(editedAtStr) or 0,
-                detail = UnescapeDetail(detailStr),
-            })
-        end
+        local decoded = DecodeItemEntry(entry)
+        if decoded then table.insert(entries, decoded) end
     end
     return entries
 end
+
+-- Exposed for the headless harness (the real callers are local to this file).
+ns.Sync_EncodeItemEntry = EncodeItemEntry
+ns.Sync_DecodeItemEntry = DecodeItemEntry
 
 --------------------------------------------------------------------------
 -- Full-state encode/decode (for SYNCREQ/SYNCDATA)
@@ -565,13 +632,9 @@ function ns.Sync_OnAddonMessage(prefix, message, _channel, sender)
 
     elseif msgType == "PTSSET" then
         if not ns.CanEditList(senderShort) then return end
-        local name, pointsStr, itemIdStr, editedAtStr, detailStr =
-            rest:match("^([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.*)$")
-        if name and name ~= "" then
-            local points = (pointsStr ~= "" and tonumber(pointsStr)) or nil
-            local itemId = (itemIdStr ~= "" and tonumber(itemIdStr)) or nil
-            local editedAt = tonumber(editedAtStr) or 0
-            ns.ApplyItemPointsLocal(name, points, itemId, editedAt, UnescapeDetail(detailStr))
+        local entry = DecodeItemEntry(rest)
+        if entry then
+            ns.ApplyItemPointsLocal(entry.name, entry.points, entry.itemId, entry.editedAt, entry.detail, entry.extra)
         end
 
     elseif msgType == "PTSSYNCREQ" then
@@ -597,7 +660,7 @@ function ns.Sync_OnAddonMessage(prefix, message, _channel, sender)
             ns.ptsSyncBuffers[sender] = nil
 
             for _, entry in ipairs(DecodeItemPointsEntries(fullData)) do
-                ns.ApplyItemPointsLocal(entry.name, entry.points, entry.itemId, entry.editedAt, entry.detail)
+                ns.ApplyItemPointsLocal(entry.name, entry.points, entry.itemId, entry.editedAt, entry.detail, entry.extra)
             end
         end
 

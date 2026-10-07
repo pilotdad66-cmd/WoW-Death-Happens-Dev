@@ -503,24 +503,24 @@ guildRosterEntries = {
 }
 ns.UpdateGuildRosterCache()
 
-ns.Sync_OnAddonMessage("DHBavinV4", "RECIPIENT|Someone", "GUILD", "Grunt1")
+ns.Sync_OnAddonMessage("DHBavinV5", "RECIPIENT|Someone", "GUILD", "Grunt1")
 check("A RECIPIENT message from a rank>3 non-Bavin/Loopidot sender is ignored",
     ns.db.recipient == nil)
 
-ns.Sync_OnAddonMessage("DHBavinV4", "RECIPIENT|Someone", "GUILD", "RealLeader")
+ns.Sync_OnAddonMessage("DHBavinV5", "RECIPIENT|Someone", "GUILD", "RealLeader")
 check("A RECIPIENT message from a rank-0 leader who isn't Bavin/Loopidot is ALSO ignored now",
     ns.db.recipient == nil)
 
-ns.Sync_OnAddonMessage("DHBavinV4", "RECIPIENT|Someone", "GUILD", "Bavin")
+ns.Sync_OnAddonMessage("DHBavinV5", "RECIPIENT|Someone", "GUILD", "Bavin")
 check("A RECIPIENT message from the sender name 'Bavin' is accepted (name-based, not rank-based)",
     ns.db.recipient == "Someone")
 
 ns.db.recipient = nil
-ns.Sync_OnAddonMessage("DHBavinV4", "EDITORS|Officer1", "GUILD", "Officer1")
+ns.Sync_OnAddonMessage("DHBavinV5", "EDITORS|Officer1", "GUILD", "Officer1")
 check("An EDITORS message from a rank<=3 sender who isn't guild leader/recipient/Loopidot is now ignored (2026-09-28)",
     #ns.db.editors == 0)
 
-ns.Sync_OnAddonMessage("DHBavinV4", "EDITORS|Officer1", "GUILD", "RealLeader")
+ns.Sync_OnAddonMessage("DHBavinV5", "EDITORS|Officer1", "GUILD", "RealLeader")
 check("An EDITORS message from a verified guild leader is accepted",
     #ns.db.editors == 1 and ns.db.editors[1] == "Officer1")
 
@@ -631,14 +631,14 @@ guildRosterEntries = { { name = "Bavin", rankIndex = 3 }, { name = "BadActor", r
 ns.UpdateGuildRosterCache()
 ns.db.recipient = "Bavin"
 
-ns.Sync_OnAddonMessage("DHBavinV4", "ITEM|Some Item|999|somelink", "GUILD", "Bavin")
+ns.Sync_OnAddonMessage("DHBavinV5", "ITEM|Some Item|999|somelink", "GUILD", "Bavin")
 check("ITEM from an authorized sender is applied", ns.priorityList["Some Item"] ~= nil)
 check("addedBy reflects the verified sender", ns.priorityList["Some Item"].addedBy == "Bavin")
 
-ns.Sync_OnAddonMessage("DHBavinV4", "ITEM|Forged Item|1|link", "GUILD", "BadActor")
+ns.Sync_OnAddonMessage("DHBavinV5", "ITEM|Forged Item|1|link", "GUILD", "BadActor")
 check("ITEM from an unauthorized sender is ignored", ns.priorityList["Forged Item"] == nil)
 
-ns.Sync_OnAddonMessage("DHBavinV4", "ITEMGONE|Some Item", "GUILD", "Bavin")
+ns.Sync_OnAddonMessage("DHBavinV5", "ITEMGONE|Some Item", "GUILD", "Bavin")
 check("ITEMGONE from an authorized sender is applied", ns.priorityList["Some Item"] == nil)
 
 --------------------------------------------------------------------------
@@ -692,7 +692,7 @@ ns.db.priorityListUpdatedAt = 1234567890
 -- "not strictly newer" and leave recipient/editors unset.
 ns.db.recipientEditorsUpdatedAt = 1234567890
 
-ns.Sync_OnAddonMessage("DHBavinV4", "SYNCREQ", "GUILD", "Requester")
+ns.Sync_OnAddonMessage("DHBavinV5", "SYNCREQ", "GUILD", "Requester")
 local syncData = outboxOfType("SYNCDATA")
 check("SYNCREQ triggers at least one SYNCDATA reply", #syncData > 0)
 check("Payload genuinely required MORE than one chunk (real stress test, not a single-message shortcut)",
@@ -704,7 +704,7 @@ check("SYNCDATA is WHISPERed back, not broadcast", syncData[1] and syncData[1].c
 -- uses for its own comma-in-title stress test.
 resetState()
 for _, entry in ipairs(syncData) do
-    ns.Sync_OnAddonMessage("DHBavinV4", entry.text, "WHISPER", "PeerB")
+    ns.Sync_OnAddonMessage("DHBavinV5", entry.text, "WHISPER", "PeerB")
 end
 
 check("Recipient reassembled correctly across chunks", ns.db.recipient == "Bavin")
@@ -769,7 +769,7 @@ ns.db.recipient = "Bavin"
 -- and priorityListUpdatedAt fields between editorsStr and the items list
 -- - any value greater than the post-resetState() local default of 0 is
 -- accepted here for either.
-ns.Sync_OnAddonMessage("DHBavinV4", "SYNCDATA|1/1|Bavin||1|999|Fresh Item|1|link", "WHISPER", "PeerB")
+ns.Sync_OnAddonMessage("DHBavinV5", "SYNCDATA|1/1|Bavin||1|999|Fresh Item|1|link", "WHISPER", "PeerB")
 check("The stale local-only entry is gone after a full SYNCDATA replace",
     ns.priorityList["Stale Item From Before I Went Offline"] == nil)
 check("The fresh entry from the SYNCDATA payload is present",
@@ -797,17 +797,17 @@ ns.db.priorityListUpdatedAt = 100
 -- resetState()) in these three - deliberately not newer, so recipient/
 -- editors are untouched and these checks stay focused purely on the
 -- priority-list gate.
-ns.Sync_OnAddonMessage("DHBavinV4", "SYNCDATA|1/1|Bavin||0|50|Stale Peer Item|2|link2", "WHISPER", "PeerB")
+ns.Sync_OnAddonMessage("DHBavinV5", "SYNCDATA|1/1|Bavin||0|50|Stale Peer Item|2|link2", "WHISPER", "PeerB")
 check("An OLDER incoming snapshot does not touch the local list",
     ns.priorityList["My Current Item"] ~= nil and ns.priorityList["Stale Peer Item"] == nil)
 check("Local priorityListUpdatedAt is unchanged after rejecting an older snapshot",
     ns.db.priorityListUpdatedAt == 100)
 
-ns.Sync_OnAddonMessage("DHBavinV4", "SYNCDATA|1/1|Bavin||0|100|Equal Timestamp Item|3|link3", "WHISPER", "PeerB")
+ns.Sync_OnAddonMessage("DHBavinV5", "SYNCDATA|1/1|Bavin||0|100|Equal Timestamp Item|3|link3", "WHISPER", "PeerB")
 check("An EQUAL-timestamp incoming snapshot is also rejected (strictly newer required, not >=)",
     ns.priorityList["My Current Item"] ~= nil and ns.priorityList["Equal Timestamp Item"] == nil)
 
-ns.Sync_OnAddonMessage("DHBavinV4", "SYNCDATA|1/1|Bavin||0|150|Fresh Peer Item|4|link4", "WHISPER", "PeerB")
+ns.Sync_OnAddonMessage("DHBavinV5", "SYNCDATA|1/1|Bavin||0|150|Fresh Peer Item|4|link4", "WHISPER", "PeerB")
 check("A genuinely NEWER incoming snapshot replaces the local list",
     ns.priorityList["My Current Item"] == nil and ns.priorityList["Fresh Peer Item"] ~= nil)
 check("Local priorityListUpdatedAt is updated to match the accepted snapshot",
@@ -825,7 +825,7 @@ ns.UpdateGuildRosterCache()
 ns.db.recipient = "Bavin"
 ns.priorityList["Keep Me"] = { name = "Keep Me" }
 ns.db.priorityListUpdatedAt = 999999
-ns.Sync_OnAddonMessage("DHBavinV4", "SYNCDATA|1/1|SomeoneElse||1000|1|Ignored Item|9|link9", "WHISPER", "PeerB")
+ns.Sync_OnAddonMessage("DHBavinV5", "SYNCDATA|1/1|SomeoneElse||1000|1|Ignored Item|9|link9", "WHISPER", "PeerB")
 check("Recipient updates because THIS message's recipientEditorsUpdatedAt (1000) beats local (0)",
     ns.db.recipient == "SomeoneElse")
 check("...but the local priority list itself is untouched (its own gate rejected the older items)",
@@ -848,17 +848,17 @@ ns.db.recipient = "Bavin"
 ns.db.editors = { "OriginalEditor" }
 ns.db.recipientEditorsUpdatedAt = 100
 
-ns.Sync_OnAddonMessage("DHBavinV4", "SYNCDATA|1/1|StalePeerRecipient|StalePeerEditor|50|0|", "WHISPER", "PeerB")
+ns.Sync_OnAddonMessage("DHBavinV5", "SYNCDATA|1/1|StalePeerRecipient|StalePeerEditor|50|0|", "WHISPER", "PeerB")
 check("An OLDER incoming recipient/editors snapshot does not touch local state",
     ns.db.recipient == "Bavin" and #ns.db.editors == 1 and ns.db.editors[1] == "OriginalEditor")
 check("Local recipientEditorsUpdatedAt is unchanged after rejecting an older snapshot",
     ns.db.recipientEditorsUpdatedAt == 100)
 
-ns.Sync_OnAddonMessage("DHBavinV4", "SYNCDATA|1/1|EqualPeerRecipient|EqualPeerEditor|100|0|", "WHISPER", "PeerB")
+ns.Sync_OnAddonMessage("DHBavinV5", "SYNCDATA|1/1|EqualPeerRecipient|EqualPeerEditor|100|0|", "WHISPER", "PeerB")
 check("An EQUAL-timestamp incoming snapshot is also rejected (strictly newer required, not >=)",
     ns.db.recipient == "Bavin")
 
-ns.Sync_OnAddonMessage("DHBavinV4", "SYNCDATA|1/1|FreshPeerRecipient|FreshPeerEditor1,FreshPeerEditor2|150|0|", "WHISPER", "PeerB")
+ns.Sync_OnAddonMessage("DHBavinV5", "SYNCDATA|1/1|FreshPeerRecipient|FreshPeerEditor1,FreshPeerEditor2|150|0|", "WHISPER", "PeerB")
 check("A genuinely NEWER incoming snapshot replaces local recipient/editors",
     ns.db.recipient == "FreshPeerRecipient" and #ns.db.editors == 2 and ns.db.editors[2] == "FreshPeerEditor2")
 check("Local recipientEditorsUpdatedAt is updated to match the accepted snapshot",
@@ -891,12 +891,12 @@ check("A PTSSET broadcast was sent", #outboxOfType("PTSSET") == 1)
 
 -- Last-writer-wins: an incoming PTSSET with an OLDER editedAt must be ignored.
 local currentVersion = ns.GetItemPointsVersion()
-ns.Sync_OnAddonMessage("DHBavinV4", "PTSSET|Test Baseline Item|1|777|" .. (currentVersion - 100) .. "|", "GUILD", "OtherEditor")
+ns.Sync_OnAddonMessage("DHBavinV5", "PTSSET|Test Baseline Item|1|777|" .. (currentVersion - 100) .. "||||||", "GUILD", "OtherEditor")
 check("An older incoming edit is ignored (last-writer-wins)",
     ns.GetItemPoints("Test Baseline Item").points == 50)
 
 wallClock = wallClock + 10
-ns.Sync_OnAddonMessage("DHBavinV4", "PTSSET|Test Baseline Item|75|777|" .. wallClock .. "|", "GUILD", "OtherEditor")
+ns.Sync_OnAddonMessage("DHBavinV5", "PTSSET|Test Baseline Item|75|777|" .. wallClock .. "||||||", "GUILD", "OtherEditor")
 check("A genuinely newer incoming edit is applied",
     ns.GetItemPoints("Test Baseline Item").points == 75)
 
@@ -911,13 +911,13 @@ ns.db.itemPointsOverrides = {}
 ns.ApplyItemPointsLocal("Old Edit Item", 10, 1, 1000)
 ns.ApplyItemPointsLocal("New Edit Item", 20, 2, 2000)
 outboxLog = {}
-ns.Sync_OnAddonMessage("DHBavinV4", "PTSSYNCREQ|1500", "GUILD", "Requester")
+ns.Sync_OnAddonMessage("DHBavinV5", "PTSSYNCREQ|1500", "GUILD", "Requester")
 local ptsData = outboxOfType("PTSSYNCDATA")
 check("PTSSYNCREQ triggers a PTSSYNCDATA reply", #ptsData > 0)
 
 ns.db.itemPointsOverrides = {}
 for _, entry in ipairs(ptsData) do
-    ns.Sync_OnAddonMessage("DHBavinV4", entry.text, "WHISPER", "PeerC")
+    ns.Sync_OnAddonMessage("DHBavinV5", entry.text, "WHISPER", "PeerC")
 end
 check("Only the entry newer than the requested version (2000 > 1500) came through",
     ns.db.itemPointsOverrides["New Edit Item"] ~= nil and ns.db.itemPointsOverrides["Old Edit Item"] == nil)
@@ -967,13 +967,13 @@ ns.db.itemPointsOverrides = {}
 ns.ApplyItemPointsLocal("Nasty Detail Item", 42, 123, 5000, nastyDetail)
 ns.ApplyItemPointsLocal("Second Item", 7, 124, 5001, "Second Item: 7 pts to Bavin; vendor trash")
 outboxLog = {}
-ns.Sync_OnAddonMessage("DHBavinV4", "PTSSYNCREQ|0", "GUILD", "Requester")
+ns.Sync_OnAddonMessage("DHBavinV5", "PTSSYNCREQ|0", "GUILD", "Requester")
 local nastyData = outboxOfType("PTSSYNCDATA")
 check("PTSSYNCREQ replied with wording-bearing entries", #nastyData > 0)
 
 ns.db.itemPointsOverrides = {}
 for _, entry in ipairs(nastyData) do
-    ns.Sync_OnAddonMessage("DHBavinV4", entry.text, "WHISPER", "PeerD")
+    ns.Sync_OnAddonMessage("DHBavinV5", entry.text, "WHISPER", "PeerD")
 end
 check("Both entries survived a payload whose wording contains the entry delimiter",
     ns.db.itemPointsOverrides["Nasty Detail Item"] ~= nil and ns.db.itemPointsOverrides["Second Item"] ~= nil)
@@ -997,10 +997,205 @@ ns.SetItemPoints("Wire Test Item", 9, 55, nastyDetail)
 local ptsSet = outboxOfType("PTSSET")
 check("A PTSSET carrying wording was broadcast", #ptsSet == 1)
 ns.db.itemPointsOverrides = {}
-ns.Sync_OnAddonMessage("DHBavinV4", ptsSet[1].text, "GUILD", "OtherEditor")
+ns.Sync_OnAddonMessage("DHBavinV5", ptsSet[1].text, "GUILD", "OtherEditor")
 check("PTSSET wording survives the round trip intact",
     ns.db.itemPointsOverrides["Wire Test Item"]
     and ns.db.itemPointsOverrides["Wire Test Item"].detail == nastyDetail)
+
+--------------------------------------------------------------------------
+-- Section 10b: Points Editor update (2026-10-07, Loopi) - item fields
+-- (goldValue / category / stackSize / phrase), the BUILT item text, the
+-- items-only ratio and the V5 wire format.
+--------------------------------------------------------------------------
+print("== Points Editor: item text builder, fields, V5 wire ==")
+
+-- FormatItemGold: the sheet's style
+check("FormatItemGold 24 -> 24g", ns.FormatItemGold(24) == "24g")
+check("FormatItemGold 50.34 -> 50g (whole above 10g)", ns.FormatItemGold(50.34) == "50g")
+check("FormatItemGold 1.6 -> 1.6g", ns.FormatItemGold(1.6) == "1.6g")
+check("FormatItemGold 8 -> 8g (no trailing .0)", ns.FormatItemGold(8) == "8g")
+check("FormatItemGold 0.35 -> 35s", ns.FormatItemGold(0.35) == "35s")
+check("FormatItemGold 0 / nil -> n/a", ns.FormatItemGold(0) == "n/a" and ns.FormatItemGold(nil) == "n/a")
+
+-- BuildItemDetail
+check("Build: plain category phrase",
+    ns.BuildItemDetail("Foo", 240, 24, nil, "Alchemy") == "Foo: 240 pts to Bavin; 24g crafted by an @Alchemist")
+check("Build: stack part",
+    ns.BuildItemDetail("Foo", 48, 4.8, 5, "Alchemy") == "Foo: 48 pts to Bavin; 4.8g ea or 24g for x5 crafted by an @Alchemist")
+check("Build: category with no phrase uses (est. AH value)",
+    ns.BuildItemDetail("Foo", 10, 1, nil, "Cloth") == "Foo: 10 pts to Bavin; 1g (est. AH value)")
+check("Build: own phrase wins",
+    ns.BuildItemDetail("Foo", 10, 1, nil, "Cloth", "in #market") == "Foo: 10 pts to Bavin; 1g in #market")
+check("Build: stack of 1 is no stack",
+    ns.BuildItemDetail("Foo", 10, 1, 1, "Cloth") == "Foo: 10 pts to Bavin; 1g (est. AH value)")
+check("Build: no gold -> n/a",
+    ns.BuildItemDetail("Foo", 10, nil, nil, nil) == "Foo: 10 pts to Bavin; n/a (est. AH value)")
+
+-- ParseItemDetail
+do
+    local st, ph = ns.ParseItemDetail("Foo: 48 pts to Bavin; 4.8g ea or 24g for x5 crafted by an @Alchemist")
+    check("Parse: stack + phrase recovered", st == 5 and ph == "crafted by an @Alchemist")
+    st, ph = ns.ParseItemDetail("Foo: 10 pts to Bavin; 1g in #market")
+    check("Parse: phrase only", st == nil and ph == "in #market")
+    st, ph = ns.ParseItemDetail("Foo: 10 pts to Bavin; n/a (est. AH value)")
+    check("Parse: n/a price", st == nil and ph == "(est. AH value)")
+    check("Parse: non-pattern text -> nil", ns.ParseItemDetail("Some hand-written note") == nil and ns.ParseItemDetail(nil) == nil)
+end
+
+-- Items-only ratio
+resetState()
+inGuild = true
+guildRosterEntries = { { name = "Bavin", rankIndex = 3 }, { name = "OtherEditor", rankIndex = 5 } }
+ns.UpdateGuildRosterCache()
+ns.db.recipient = "Bavin"
+ns.db.editors = { "OtherEditor" }
+currentPlayerName = "Bavin"
+check("Items-only ratio defaults to 10 points per gold", ns.GetItemPointsPerGold() == 10)
+ns.db.itemPointsPerGold = 12
+check("Items-only ratio honours the per-client override", ns.GetItemPointsPerGold() == 12)
+ns.db.itemPointsPerGold = nil
+check("Items-only ratio is independent of the donation Rep/Gold setting",
+    (function() ns.db.credits = ns.db.credits or {}; ns.db.credits.repPerGold = 77; return ns.GetItemPointsPerGold() == 10 end)())
+
+-- Fields: baseline, ResolveItemFields, auto vs hand-edited
+ns.ITEM_POINTS["PE Stack Item"] = { points = 48, itemId = 9001, goldValue = 4.8, category = "Alchemy",
+    detail = "PE Stack Item: 48 pts to Bavin; 4.8g ea or 24g for x5 crafted by an @Alchemist" }
+ns.ITEM_POINTS["PE Market Item"] = { points = 10, itemId = 9002, goldValue = 1, category = "Cloth",
+    detail = "PE Market Item: 10 pts to Bavin; 1g in #market" }
+ns.ITEM_POINTS["PE Odd Item"] = { points = 10, itemId = 9003, goldValue = 1, category = "Cloth",
+    detail = "PE Odd Item: totally custom shipped text" }
+do
+    local f = ns.ResolveItemFields("PE Stack Item")
+    check("Resolve: baseline stack recovered from text, auto true (text matches builder)",
+        f and f.stackSize == 5 and f.auto == true and f.phrase == nil and f.category == "Alchemy" and f.goldValue == 4.8)
+    f = ns.ResolveItemFields("PE Market Item")
+    check("Resolve: baseline custom phrase recovered, auto true", f and f.phrase == "in #market" and f.auto == true)
+    f = ns.ResolveItemFields("PE Odd Item")
+    check("Resolve: shipped text not in the builder's pattern -> hand-edited (auto false)", f and f.auto == false)
+    check("Resolve: unknown name -> nil", ns.ResolveItemFields("No Such Item Anywhere") == nil)
+end
+
+-- Auto override: no stored text, text follows the points
+wallClock = wallClock + 10
+check("SetItemPoints (auto) succeeds",
+    ns.SetItemPoints("PE Stack Item", 60, 9001, nil, { goldValue = 6, category = "Alchemy", stackSize = 5, auto = true }) == true)
+do
+    local o = ns.db.itemPointsOverrides["PE Stack Item"]
+    check("Auto override stores no text", o and o.detail == nil and o.auto == true and o.goldValue == 6)
+    local info = ns.GetItemPoints("PE Stack Item")
+    check("Auto override's text is built from the new fields",
+        info.detail == "PE Stack Item: 60 pts to Bavin; 6g ea or 30g for x5 crafted by an @Alchemist")
+    check("GetItemGoldValue honours the override", ns.GetItemGoldValue("PE Stack Item") == 6)
+    check("GetItemGoldValue falls back to baseline", ns.GetItemGoldValue("PE Market Item") == 1)
+end
+
+-- Older override (no new fields) falls back to the baseline's fields
+ns.ApplyItemPointsLocal("PE Market Item", 20, 9002, wallClock + 1, nil, { auto = true })
+check("Override without fields inherits baseline gold/category for the built text",
+    ns.GetItemPoints("PE Market Item").detail == "PE Market Item: 20 pts to Bavin; 1g (est. AH value)")
+
+-- Hand-edited: text stored verbatim
+wallClock = wallClock + 10
+ns.SetItemPoints("PE Odd Item", 33, 9003, "My own words; keep them", { goldValue = 3.3, category = "Cloth", auto = false })
+check("Hand-edited text is kept verbatim",
+    ns.GetItemPoints("PE Odd Item").detail == "My own words; keep them" and ns.ResolveItemFields("PE Odd Item").auto == false)
+
+-- Revert tombstone ignores extras
+wallClock = wallClock + 10
+ns.SetItemPoints("PE Odd Item", nil, nil, nil, { goldValue = 9, auto = true })
+check("Revert tombstone keeps no extras",
+    (function() local o = ns.db.itemPointsOverrides["PE Odd Item"]; return o and o.points == nil and o.goldValue == nil and o.auto == nil end)())
+check("Reverted item shows the baseline again", ns.GetItemPoints("PE Odd Item").isOverride == false)
+
+-- Wire: automatic edit sends no text and rebuilds identically on the far side
+do
+    resetState()
+    inGuild = true
+    guildRosterEntries = { { name = "Bavin", rankIndex = 3 }, { name = "OtherEditor", rankIndex = 5 } }
+    ns.UpdateGuildRosterCache()
+    ns.db.recipient = "Bavin"
+    ns.db.editors = { "OtherEditor" }
+    currentPlayerName = "Bavin"
+    outboxLog = {}
+    wallClock = wallClock + 10
+    ns.SetItemPoints("PE Stack Item", 60, 9001, nil, { goldValue = 6, category = "Alchemy", stackSize = 5, auto = true })
+    local msgs = outboxOfType("PTSSET")
+    check("V5: automatic edit broadcast as one PTSSET", #msgs == 1)
+    local txt = msgs[1] and msgs[1].text or ""
+    check("V5: automatic edit carries no text field", txt:match("|1|$") ~= nil)
+    check("V5: message is short", #txt < 120)
+    local expected = ns.GetItemPoints("PE Stack Item").detail
+    ns.db.itemPointsOverrides = {}
+    ns.Sync_OnAddonMessage("DHBavinV5", txt, "GUILD", "OtherEditor")
+    local o = ns.db.itemPointsOverrides["PE Stack Item"]
+    check("V5: receiver gets every field",
+        o and o.points == 60 and o.goldValue == 6 and o.category == "Alchemy" and o.stackSize == 5 and o.auto == true)
+    check("V5: receiver builds the same text", ns.GetItemPoints("PE Stack Item").detail == expected)
+end
+
+-- Wire: hand-edited text + hostile phrase/category survive PTSSET and PTSSYNCDATA
+do
+    resetState()
+    inGuild = true
+    guildRosterEntries = { { name = "Bavin", rankIndex = 3 }, { name = "OtherEditor", rankIndex = 5 } }
+    ns.UpdateGuildRosterCache()
+    ns.db.recipient = "Bavin"
+    ns.db.editors = { "OtherEditor" }
+    currentPlayerName = "Bavin"
+    local nasty = "Pipe | semi ; back \\ and \\p"
+    wallClock = wallClock + 10
+    ns.SetItemPoints("PE Hand Item", 5, 9100, nasty, { goldValue = 0.5, category = "Misc.", stackSize = 20, phrase = "phr|ase;x", auto = false })
+    wallClock = wallClock + 10
+    ns.SetItemPoints("PE Auto Item", 7, 9101, nil, { goldValue = 0.7, category = "Cooking", auto = true })
+    outboxLog = {}
+    ns.Sync_OnAddonMessage("DHBavinV5", "PTSSYNCREQ|0", "GUILD", "Requester")
+    local data = outboxOfType("PTSSYNCDATA")
+    check("V5: sync reply produced", #data > 0)
+    ns.db.itemPointsOverrides = {}
+    for _, e in ipairs(data) do ns.Sync_OnAddonMessage("DHBavinV5", e.text, "WHISPER", "PeerE") end
+    local h = ns.db.itemPointsOverrides["PE Hand Item"]
+    check("V5 sync: hand-edited text byte-exact", h and h.detail == nasty and h.auto == false)
+    check("V5 sync: hostile phrase byte-exact", h and h.phrase == "phr|ase;x")
+    check("V5 sync: category / stack / gold intact", h and h.category == "Misc." and h.stackSize == 20 and h.goldValue == 0.5)
+    local a = ns.db.itemPointsOverrides["PE Auto Item"]
+    check("V5 sync: the next entry is unharmed", a and a.points == 7 and a.auto == true and a.detail == nil and a.category == "Cooking")
+
+    -- direct encode/decode of a tombstone
+    local enc = ns.Sync_EncodeItemEntry("Gone Item", nil, nil, 123, nil, nil)
+    local dec = ns.Sync_DecodeItemEntry(enc)
+    check("V5: tombstone round trip", dec and dec.name == "Gone Item" and dec.points == nil and dec.editedAt == 123 and dec.extra.auto == nil)
+    check("V5: malformed entry -> nil", ns.Sync_DecodeItemEntry("junk") == nil)
+
+    -- size guard: an over-long entry is saved locally but not sent
+    outboxLog = {}
+    wallClock = wallClock + 10
+    local long = string.rep("x", 300)
+    check("Size guard: SetItemPoints still succeeds locally",
+        ns.SetItemPoints("PE Long Item", 1, 9200, long, { auto = false }) == true)
+    check("Size guard: nothing was broadcast", #outboxOfType("PTSSET") == 0)
+    check("Size guard: the edit is saved locally", ns.db.itemPointsOverrides["PE Long Item"] and ns.db.itemPointsOverrides["PE Long Item"].detail == long)
+end
+
+-- Does the builder reproduce the SHIPPED item texts? (information + a loose floor)
+do
+    local total, same, shown = 0, 0, 0
+    for name, base in pairs(ns.ITEM_POINTS) do
+        if base.detail and base.category and base.points then
+            total = total + 1
+            local st, ph = ns.ParseItemDetail(base.detail)
+            local useP = (ph and ph ~= "" and ph ~= ns.DefaultItemPhrase(base.category)) and ph or nil
+            local built = ns.BuildItemDetail(name, base.points, base.goldValue, st, base.category, useP)
+            if built == base.detail then
+                same = same + 1
+            elseif shown < 12 then
+                shown = shown + 1
+                print("   builder mismatch: " .. base.detail .. "   <>   " .. built)
+            end
+        end
+    end
+    print(("   builder reproduces %d of %d shipped item texts (%.1f%%)"):format(same, total, total > 0 and same * 100 / total or 0))
+    check("Builder reproduces most shipped item texts", total > 0 and same / total >= 0.9)
+end
 
 --------------------------------------------------------------------------
 -- Credits (CM1/CM2, Identity model v2, 2026-09-25) - new coverage,

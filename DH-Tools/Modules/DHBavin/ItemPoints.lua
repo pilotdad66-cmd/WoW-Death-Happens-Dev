@@ -31,6 +31,12 @@
 -- row had no column P value. Tooltip.lua's USE_DETAIL_LINE toggle picks
 -- whether to show this or the plain points number - see that file.
 --
+-- stackSize (added 2026-10-07, Loopi) = the sheet's Stack column (the "for xN"
+-- part of the detail text); an optional field that is ABSENT until the next
+-- item import carries it (blank, 0 and 1 all mean "no stack text"). The Points
+-- Editor reads it, falls back to the "for xN" in an existing detail, and fills
+-- a blank one from GetItemInfo's max stack. No logic here, same as every field.
+--
 -- goldValue (added 2026-09-28, DH-Store question #5) = the sheet's own
 -- PurchaseVal column, the precise per-unit gold price as a plain decimal
 -- (e.g. 50.34 = 50g 34s) - NOT the rounded "Val" column, NOT copper. nil
