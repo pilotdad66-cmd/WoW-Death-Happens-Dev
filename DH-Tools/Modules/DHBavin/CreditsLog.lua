@@ -12,6 +12,8 @@
 --               tierBefore/prestigeBefore/tierAfter/prestigeAfter, released? }
 --   merge     { id, ts, kind = "merge", account (target), source, sourceMain,
 --               moved = {names}, rep, credits, officer, tier/prestige before+after }
+--   carryover { id = "carry-<lowername>", ts, kind = "carryover", account, sender, what,
+--               rep (old history added), credits = 0, officer, tier/prestige before+after }
 --   (CM5 will add kind = "spend" rows - see Unknown kinds below.)
 --
 -- A display row (ns.CreditsLog_Rows) is
@@ -28,9 +30,10 @@ local KIND_LABELS = {
     donation = "Donation",
     released = "Released",
     merge = "Merge",
+    carryover = "Carryover",
     spend = "Spend",
 }
-local KIND_ORDER = { "donation", "released", "merge", "spend" }
+local KIND_ORDER = { "donation", "released", "merge", "carryover", "spend" }
 ns.CreditsLog_KindLabels = KIND_LABELS
 
 local function FormatDate(ts)

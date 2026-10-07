@@ -790,6 +790,15 @@ function ns.Credits_AddToReviewQueue(altName, issue, details, latestOverride)
         local td = ns.CreditsToonDonations and ns.CreditsToonDonations[key]
         if td then latest, rawGold = td[1], td[2] end
     end
+    if latest == nil then
+        -- Archived donor (ArchivedDonors.lua): take the DATE only. The gold is
+        -- deliberately NOT copied into rawGoldAmount - "Set as New Main" seeds
+        -- the lifetime total from that figure, and the archived history is
+        -- added separately, once, by the carryover (CreditsDonations.lua); copying
+        -- it here would count it twice. The row text shows the figures instead.
+        local ad = ns.CreditsArchivedDonors and ns.CreditsArchivedDonors[key]
+        if ad then latest = ad[1] end
+    end
     ns.Credits_RemoveFromReviewQueue(altName) -- no duplicate entries
     table.insert(ns.creditsDb.dynamicReviewQueue, {
         name = altName,

@@ -44,6 +44,10 @@ Modules\DHBavin\SeedData.lua
 # note as SeedData.lua above - load order here is cosmetic grouping only.
 Modules\DHBavin\ReviewQueue.lua
 Modules\DHBavin\ToonDonations.lua
+# Archived donors' old donation history (GENERATED - claude\DH-Bavin\import-archived-donors.ps1,
+# source claude\DH-Bavin\intake\generated\archived-donors-history.csv). Read at call time by
+# CreditsDonations.lua (one-time carryover) and Credits.lua (Review Queue date).
+Modules\DHBavin\ArchivedDonors.lua
 # Roster tab per-main alt list (GENERATED - claude\DH-Bavin\import-alt-roster.ps1,
 # source claude\DH-Bavin\intake\alt-roster.csv). Same read-at-call-time
 # note as SeedData.lua above - load order here is cosmetic grouping only.

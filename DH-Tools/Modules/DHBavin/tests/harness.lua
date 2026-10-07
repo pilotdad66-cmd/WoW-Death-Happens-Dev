@@ -169,7 +169,7 @@ _G.DHTools = {
 --------------------------------------------------------------------------
 
 local ADDON_ROOT = "C:\\AIProjects-NOSYNC\\WoW\\src\\DH-Tools\\Modules\\DHBavin\\"
-local FILES = { "Core.lua", "Sync.lua", "ItemPoints.lua", "ToonDonations.lua", "Credits.lua", "CreditsSeed.lua", "CreditsSync.lua", "CreditsDonations.lua", "CreditsInbox.lua", "CreditsLog.lua" }
+local FILES = { "Core.lua", "Sync.lua", "ItemPoints.lua", "ToonDonations.lua", "ArchivedDonors.lua", "Credits.lua", "CreditsSeed.lua", "CreditsSync.lua", "CreditsDonations.lua", "CreditsInbox.lua", "CreditsLog.lua" }
 
 for _, filename in ipairs(FILES) do
     local chunk, err = loadfile(ADDON_ROOT .. filename)
@@ -2673,6 +2673,104 @@ do
     check("Reset: held credits and tombstones are wiped",
         next(ns.creditsDb.pendingCredits) == nil and next(ns.creditsDb.pendingReleased) == nil
         and next(ns.creditsDb.ledgerTombstones) == nil)
+end
+
+print("== Credits: archived-donor carryover ==")
+do
+    local origArchived = ns.CreditsArchivedDonors
+    local function carryRows(account)
+        local out = {}
+        for _, e in ipairs(ns.creditsDb.transactionLog) do
+            if e.kind == "carryover" and (account == nil or e.account == account) then out[#out + 1] = e end
+        end
+        return out
+    end
+    local function setupArchived()
+        cm4.setup()
+        ns.CreditsArchivedDonors = {
+            archiveman = { "2026-03-31", 561, 5612 },
+            donor1 = { "2026-01-01", 10, 100 },
+            nopoints = { "2026-01-01", 0, 0 },
+        }
+    end
+
+    -- Held, then linked: the Review Queue row shows the history, linking carries it over once.
+    setupArchived()
+    ns.CreditsDon_Credit({ sender = "ArchiveMan", items = { cm4.sword(2) } }) -- 100 rep, not in guild: held
+    local q = ns.creditsDb.dynamicReviewQueue[1]
+    check("Carryover: the held row says what was previously donated",
+        q and q.details:find("previously donated 561 gold (5,612 rep), last 2026-03-31", 1, true) ~= nil)
+    check("Carryover: ...but its rawGoldAmount stays 0 (New Main must not count the history twice)",
+        q and q.rawGoldAmount == 0)
+    local B = ns.creditsDb.ledger["MainB"]
+    local lifeBefore, creditsBefore = B.lifetimePoints, B.credits
+    printLog = {}
+    check("Carryover: linking the held name succeeds", ns.Credits_LinkAlt("ArchiveMan", "MainB") == true)
+    check("Carryover: the old history (5,612) plus the held donation (100) are on the account",
+        B.lifetimePoints == lifeBefore + 5612 + 100)
+    check("Carryover: the carryover adds 0 credits (only the donation's 1 credit)", B.credits == creditsBefore + 1)
+    local rows = carryRows("MainB")
+    check("Carryover: exactly one carryover row, fixed id, 0 credits",
+        #rows == 1 and rows[1].id == "carry-archiveman" and rows[1].credits == 0 and rows[1].rep == 5612
+        and rows[1].sender == "ArchiveMan")
+    check("Carryover: the carryover row comes before the released donation row",
+        ns.creditsDb.transactionLog[1].kind == "carryover" and ns.creditsDb.transactionLog[2].released == true)
+    check("Carryover: tier before/after recorded (Neutral -> Friendly)",
+        rows[1].tierBefore == "Neutral" and rows[1].tierAfter == "Friendly")
+    check("Carryover: a chat line and a tier-up line are printed",
+        cm4.said("carried over from earlier donations") and cm4.said("TIER UP"))
+
+    -- A second donation from the same name does not repeat it.
+    local logCount = #ns.creditsDb.transactionLog
+    lifeBefore = B.lifetimePoints
+    ns.CreditsDon_Credit({ sender = "ArchiveMan", items = { cm4.sword(2) } })
+    check("Carryover: a second donation adds only its own rep", B.lifetimePoints == lifeBefore + 100)
+    check("Carryover: ...and no second carryover row", #carryRows() == 1 and #ns.creditsDb.transactionLog == logCount + 1)
+
+    -- Audit Log display row.
+    local dr = ns.CreditsLog_Row(rows[1])
+    check("Carryover: the Audit Log labels the row 'Carryover'", dr.kind == "carryover" and dr.kindLabel == "Carryover")
+    check("Carryover: ...and shows its rep with 0 credits", dr.rep == 5612 and dr.credits == 0)
+
+    -- Direct credit (guild member, no account yet): carryover first, then the donation.
+    setupArchived()
+    local res = ns.CreditsDon_Credit({ sender = "Donor1", items = { cm4.sword(1) } })
+    local d1 = res.account
+    check("Carryover: a direct-credit archived donor gets 100 + 50 rep and only the donation's credits",
+        res.status == "credited" and d1.lifetimePoints == 150 and d1.credits == 0.5)
+    check("Carryover: ...with one carryover row on that account", #carryRows(d1.discordName) == 1)
+
+    -- Non-archived sender and a zero-value donation are unaffected.
+    setupArchived()
+    res = ns.CreditsDon_Credit({ sender = "Donor2", items = { cm4.sword(1) } })
+    check("Carryover: a non-archived sender gets no carryover", res.account.lifetimePoints == 50 and #carryRows() == 0)
+    res = ns.CreditsDon_Credit({ sender = "Donor1", items = { { itemID = 9, name = "Mystery", count = 1 } } })
+    check("Carryover: a donation worth nothing (only unpriced items) triggers no carryover",
+        res.status == "zero" and #carryRows() == 0)
+    ns.CreditsDon_Credit({ sender = "NoPoints", items = { cm4.sword(1) } }) -- not in guild, not archived with points
+    check("Carryover: an archived entry with 0 points is ignored", #carryRows() == 0)
+
+    -- A replicated carryover row (another officer applied it) blocks a second application.
+    setupArchived()
+    table.insert(ns.creditsDb.transactionLog, { id = "carry-donor1", ts = 1, kind = "carryover", account = "Donor1", rep = 100, credits = 0 })
+    res = ns.CreditsDon_Credit({ sender = "Donor1", items = { cm4.sword(1) } })
+    check("Carryover: a log row with the same id (replicated) prevents a repeat", res.account.lifetimePoints == 50)
+
+    -- "Start from scratch" clears the log, so the carryover can apply again.
+    setupArchived()
+    ns.CreditsDon_Credit({ sender = "Donor1", items = { cm4.sword(1) } })
+    check("Carryover: reset setup - applied once", #carryRows() == 1)
+    check("Carryover: Credits_ResetTestData succeeds", ns.Credits_ResetTestData() == true)
+    res = ns.CreditsDon_Credit({ sender = "Donor1", items = { cm4.sword(1) } })
+    check("Carryover: after a reset the history applies again to the rebuilt account",
+        res.account.lifetimePoints == 150 and #carryRows() == 1)
+
+    ns.CreditsArchivedDonors = origArchived
+    check("Carryover: the shipped ArchivedDonors table loads (real data present)", (function()
+        local n = 0
+        for _ in pairs(ns.CreditsArchivedDonors or {}) do n = n + 1 end
+        return n > 1000
+    end)())
 end
 
 print("== Credits: CM4 account merge ==")
