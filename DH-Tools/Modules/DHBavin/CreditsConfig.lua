@@ -505,7 +505,7 @@ local function BuildRosterTab(content)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
-    hint:SetText("Every main's seeded reputation/credit standing. Rank is always by Lifetime Points, regardless of the active sort. Click a column title (Name/Lifetime/Last Donation) to sort by it - click again to flip direction. Left-click a name marked [+] to show its alts; right-click any name for a menu (Show Account, Merge into... on a main - folds an account that was auto-created from a first donation into the account it really belongs to, a Discord submenu - Add as Discord / Remove as Discord / Discord Only - and on an alt also Unlink Alt / Promote to Main). Each name is tagged [Main], [Alt], [Discord], [Discord/Main] or [Discord/Alt]; an account has one Discord name and always a real main. Seeding is Distribution Officer only; re-running it overwrites the row for any name in the historical data (SeedData.lua) without touching rows for names outside that dataset.")
+    hint:SetText("Every main's seeded reputation/credit standing. Rank is always by Lifetime Points, regardless of the active sort. Click a column title (Name/Lifetime/Last Donation) to sort by it - click again to flip direction. Left-click a name marked [+] to show its alts; right-click any name for a menu (Show Account, Merge into... on a main - folds an account that was auto-created from a first donation into the account it really belongs to, a Discord submenu - Add as Discord / Remove as Discord / Discord Only - and on an alt also Unlink Alt / Promote to Main). Each name is tagged [Main], [Alt], [Discord], [Discord/Main] or [Discord/Alt]; an account has one Discord name and always a real main. Search finds any main, alt or Discord name across every page. \"Add name...\" (author, guild leader or mail recipient) puts a new main, an alt of an account or a Discord name on the Roster by hand - a name that is already on the Roster is refused; right-click a main for the \"Add alt...\" / \"Add Discord name...\" shortcuts. Seeding is Distribution Officer only; re-running it overwrites the row for any name in the historical data (SeedData.lua) without touching rows for names outside that dataset.")
 
     -- Seed button - two-click confirm, mirrors Settings tab's Reset Test Data.
     local seedBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
@@ -569,8 +569,33 @@ local function BuildRosterTab(content)
     local ROSTER_MAINS_PER_PAGE = 100
     local pageState = { page = 1 }
 
+    -- Search + "Add name..." row (2026-10-06, Loopi). The search matches any
+    -- name on an account (main, alt, Discord name or account key) across ALL
+    -- pages, not just the one on screen; an account that matched only through
+    -- an alt / Discord name opens itself so the hit is visible. Typing
+    -- resets to page 1. The script that reacts to typing is attached further
+    -- down (it needs Refresh); the Add name button's click handler too.
+    local filterState = { text = "" }
+
+    local filterLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    filterLabel:SetPoint("TOPLEFT", seedBtn, "BOTTOMLEFT", 2, -12)
+    filterLabel:SetText("Search:")
+
+    local filterEdit = CreateFrame("EditBox", nil, content, "InputBoxTemplate")
+    filterEdit:SetSize(150, 20)
+    filterEdit:SetPoint("LEFT", filterLabel, "RIGHT", 8, -2)
+    filterEdit:SetAutoFocus(false)
+    filterEdit:SetMaxLetters(32)
+    filterEdit:SetScript("OnEscapePressed", filterEdit.ClearFocus)
+    filterEdit:SetScript("OnEnterPressed", filterEdit.ClearFocus)
+
+    local addBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    addBtn:SetPoint("LEFT", filterEdit, "RIGHT", 12, 2)
+    addBtn:SetSize(110, 22)
+    addBtn:SetText("Add name...")
+
     local prevPageBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-    prevPageBtn:SetPoint("TOPLEFT", seedBtn, "BOTTOMLEFT", -2, -10)
+    prevPageBtn:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", -2, -12)
     prevPageBtn:SetSize(60, 20)
     prevPageBtn:SetText("< Prev")
 
@@ -941,9 +966,259 @@ local function BuildRosterTab(content)
         }
     end
 
+    ------------------------------------------------------------------
+    -- "Add name..." dialog (2026-10-06, Loopi). Puts a name on the Roster by
+    -- hand: a new main (new account), an alt of an existing account, or a
+    -- Discord name for an existing account. Duplicates are refused (the
+    -- logic is ns.Credits_AddRosterName in Credits.lua - same gate as the
+    -- rates: author / guild leader / mail recipient). The dialog stays open
+    -- after a successful add so several names can go in one sitting; the
+    -- account box keeps its text for the same reason.
+    ------------------------------------------------------------------
+    local ADD_SUGGEST_ROWS = 6
+    local ADD_KINDS = { "main", "alt", "discord" }
+    local ADD_KIND_TEXT = {
+        main = "New main (creates a new account)",
+        alt = "Alt of an existing account",
+        discord = "Discord name for an existing account",
+    }
+    local addDialog
+
+    local function AddDialogMessage(p, text, good)
+        p.status:SetText(text or "")
+        if good then p.status:SetTextColor(0.2, 1, 0.6) else p.status:SetTextColor(1, 0.3, 0.3) end
+    end
+
+    local function RefreshAddDialog()
+        local p = addDialog
+        if not p then return end
+        for _, k in ipairs(ADD_KINDS) do p.kindChecks[k]:SetChecked(p.kind == k) end
+        local needAccount = p.kind ~= "main"
+        p.accountLabel:SetShown(needAccount)
+        p.accountEdit:SetShown(needAccount)
+        p.mainNote:SetShown(not needAccount)
+        local list = needAccount and MergeSuggestions(p.accountEdit:GetText(), nil) or {}
+        for i, btn in ipairs(p.rows) do
+            local item = list[i]
+            if item then
+                local text = item.name
+                if item.name:lower() ~= (item.main or ""):lower() then
+                    text = text .. "  |cff888888alt of " .. tostring(item.main) .. "|r"
+                end
+                btn.label:SetText(text)
+                btn.item = item
+                btn:Show()
+            else
+                btn.item = nil
+                btn:Hide()
+            end
+        end
+        if p.kind == "alt" then
+            p.nameLabel:SetText("New alt name:")
+        elseif p.kind == "discord" then
+            p.nameLabel:SetText("Discord name:")
+        else
+            p.nameLabel:SetText("New main name:")
+        end
+        if ns.Credits_CanAddRosterNamesLocal and ns.Credits_CanAddRosterNamesLocal() then
+            p.addBtn:Enable()
+        else
+            p.addBtn:Disable()
+            AddDialogMessage(p, "Only the author, guild leader or mail recipient can add names.")
+        end
+    end
+
+    local function SubmitAddDialog()
+        local p = addDialog
+        if not p then return end
+        local name = (p.nameEdit:GetText() or ""):match("^%s*(.-)%s*$")
+        local account = (p.accountEdit:GetText() or ""):match("^%s*(.-)%s*$")
+        if name == "" then
+            AddDialogMessage(p, "Type the name to add.")
+            return
+        end
+        if p.kind ~= "main" and account == "" then
+            AddDialogMessage(p, "Type a name on the account it belongs to.")
+            return
+        end
+        local ok, a, displaced = ns.Credits_AddRosterName(p.kind, name, account)
+        if ok then
+            local rec = ns.creditsDb and ns.creditsDb.ledger and ns.creditsDb.ledger[a]
+            local owner = rec and rec.mainToon or "?"
+            local bare = (p.kind == "discord") and name or ns.NormalizeName(name)
+            local msg
+            if p.kind == "main" then
+                msg = ("%s added as a new main."):format(bare)
+            elseif p.kind == "alt" then
+                msg = ("%s added as an alt of %s."):format(bare, owner)
+            else
+                msg = ("%s is now the Discord name for %s."):format(bare, owner)
+            end
+            AddDialogMessage(p, msg, true)
+            ns.CreditsPrint(msg)
+            if displaced then
+                NotifyQueued(displaced .. " was only a Discord name - it has been sent to the Review Queue.")
+            end
+            p.nameEdit:SetText("")
+            p.nameEdit:SetFocus()
+            ns.CreditsConfig_Refresh()
+            return
+        end
+        local reason = a
+        if reason == "permission" then
+            AddDialogMessage(p, "Only the author, guild leader or mail recipient can add names.")
+        elseif reason == "name" then
+            if p.kind == "discord" then
+                AddDialogMessage(p, "Not a valid name (1-32 characters, no control characters).")
+            else
+                AddDialogMessage(p, "Not a valid character name (no spaces, up to 32 characters).")
+            end
+        elseif reason == "exists" then
+            local bare = (p.kind == "discord") and name or ns.NormalizeName(name)
+            local rec, how = ns.Credits_FindRosterName(bare)
+            local where = "on the Roster"
+            if rec and how == "main" then
+                where = "already a main"
+            elseif rec and how == "alt" then
+                where = "already an alt of " .. tostring(rec.mainToon)
+            elseif rec and how == "discord" then
+                where = "already the Discord name of " .. tostring(rec.mainToon)
+            elseif rec and how == "account" then
+                where = "already an account"
+            end
+            AddDialogMessage(p, ("%s is %s - not added."):format(bare, where))
+        elseif reason == "noaccount" then
+            AddDialogMessage(p, "No account has that name. Pick one from the list.")
+        else
+            AddDialogMessage(p, "Could not add that name (" .. tostring(reason) .. ").")
+        end
+    end
+
+    local function ShowAddDialog(kind, accountName)
+        if not addDialog then
+            local p = CreateFrame("Frame", "DHBavinAddNameDialog", UIParent, "BasicFrameTemplateWithInset")
+            p:SetSize(340, 392)
+            p:SetPoint("CENTER", 0, 60)
+            p:SetFrameStrata("DIALOG")
+            p:EnableMouse(true)
+            if p.TitleText then p.TitleText:SetText("Add name to Roster") end
+            if UISpecialFrames then table.insert(UISpecialFrames, "DHBavinAddNameDialog") end
+            p.kind = "alt"
+
+            p.kindChecks = {}
+            local prev
+            for _, k in ipairs(ADD_KINDS) do
+                local cb = CreateFrame("CheckButton", nil, p, "UICheckButtonTemplate")
+                cb:SetSize(24, 24)
+                if prev then
+                    cb:SetPoint("TOPLEFT", prev, "BOTTOMLEFT", 0, 0)
+                else
+                    cb:SetPoint("TOPLEFT", 14, -30)
+                end
+                local fs = p:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                fs:SetPoint("LEFT", cb, "RIGHT", 2, 0)
+                fs:SetText(ADD_KIND_TEXT[k])
+                cb:SetScript("OnClick", function()
+                    p.kind = k
+                    AddDialogMessage(p, "")
+                    RefreshAddDialog()
+                end)
+                p.kindChecks[k] = cb
+                prev = cb
+            end
+
+            p.nameLabel = p:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            p.nameLabel:SetPoint("TOPLEFT", prev, "BOTTOMLEFT", 2, -10)
+
+            local nameEdit = CreateFrame("EditBox", nil, p, "InputBoxTemplate")
+            nameEdit:SetSize(280, 22)
+            nameEdit:SetPoint("TOPLEFT", p.nameLabel, "BOTTOMLEFT", 6, -4)
+            nameEdit:SetAutoFocus(false)
+            nameEdit:SetMaxLetters(32)
+            nameEdit:SetScript("OnEscapePressed", function() p:Hide() end)
+            nameEdit:SetScript("OnEnterPressed", function() SubmitAddDialog() end)
+            p.nameEdit = nameEdit
+
+            p.accountLabel = p:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            p.accountLabel:SetPoint("TOPLEFT", nameEdit, "BOTTOMLEFT", -6, -10)
+            p.accountLabel:SetText("Add it to the account that has this name:")
+
+            p.mainNote = p:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+            p.mainNote:SetPoint("TOPLEFT", nameEdit, "BOTTOMLEFT", -6, -10)
+            p.mainNote:SetPoint("RIGHT", -16, 0)
+            p.mainNote:SetJustifyH("LEFT")
+            p.mainNote:SetWordWrap(true)
+            p.mainNote:SetText("A new main starts a new account at 0 points and 0 credits. If the name is waiting in the Review Queue, its history from the raw data is kept and it leaves the queue.")
+
+            local accountEdit = CreateFrame("EditBox", nil, p, "InputBoxTemplate")
+            accountEdit:SetSize(280, 22)
+            accountEdit:SetPoint("TOPLEFT", p.accountLabel, "BOTTOMLEFT", 6, -4)
+            accountEdit:SetAutoFocus(false)
+            accountEdit:SetMaxLetters(32)
+            accountEdit:SetScript("OnTextChanged", function() RefreshAddDialog() end)
+            accountEdit:SetScript("OnEscapePressed", function() p:Hide() end)
+            accountEdit:SetScript("OnEnterPressed", function(self)
+                local first = p.rows[1] and p.rows[1].item
+                if first and first.main then self:SetText(first.main) end
+                p.nameEdit:SetFocus()
+            end)
+            p.accountEdit = accountEdit
+
+            p.rows = {}
+            for i = 1, ADD_SUGGEST_ROWS do
+                local btn = CreateFrame("Button", nil, p)
+                btn:SetSize(300, 20)
+                btn:SetPoint("TOPLEFT", accountEdit, "BOTTOMLEFT", -6, -4 - (i - 1) * 20)
+                local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+                hl:SetAllPoints()
+                hl:SetColorTexture(1, 1, 1, 0.15)
+                btn.label = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                btn.label:SetPoint("LEFT", 6, 0)
+                btn.label:SetJustifyH("LEFT")
+                btn:SetScript("OnClick", function(self)
+                    if self.item and self.item.main then
+                        p.accountEdit:SetText(self.item.main)
+                        p.nameEdit:SetFocus()
+                    end
+                end)
+                p.rows[i] = btn
+            end
+
+            p.status = p:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            p.status:SetPoint("BOTTOMLEFT", 16, 46)
+            p.status:SetPoint("RIGHT", -16, 0)
+            p.status:SetJustifyH("LEFT")
+            p.status:SetWordWrap(true)
+
+            p.addBtn = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
+            p.addBtn:SetSize(100, 22)
+            p.addBtn:SetPoint("BOTTOMLEFT", 16, 16)
+            p.addBtn:SetText("Add")
+            p.addBtn:SetScript("OnClick", function() SubmitAddDialog() end)
+
+            local closeBtn = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
+            closeBtn:SetSize(100, 22)
+            closeBtn:SetPoint("LEFT", p.addBtn, "RIGHT", 8, 0)
+            closeBtn:SetText("Close")
+            closeBtn:SetScript("OnClick", function() p:Hide() end)
+
+            addDialog = p
+        end
+        local p = addDialog
+        if kind == "main" or kind == "alt" or kind == "discord" then p.kind = kind end
+        p.nameEdit:SetText("")
+        p.accountEdit:SetText(accountName or "")
+        AddDialogMessage(p, "")
+        p:Show()
+        RefreshAddDialog()
+        p.nameEdit:SetFocus()
+    end
+    ns.CreditsConfig_ShowAddDialog = ShowAddDialog
+
     local OpenRowMenu
     OpenRowMenu = function(row)
         local canManage = ns.CanManageCreditsConfigLocal and ns.CanManageCreditsConfigLocal() or false
+        local canAdd = ns.Credits_CanAddRosterNamesLocal and ns.Credits_CanAddRosterNamesLocal() or false
         if row.entryKind == "main" and row.currentAccount then
             local account = row.currentAccount
             pendingPromote = nil
@@ -951,6 +1226,12 @@ local function BuildRosterTab(content)
                 { text = row.mainName or "Account", isTitle = true, notCheckable = true },
                 { text = "Discord", notCheckable = true, hasArrow = true,
                   menuList = DiscordSubmenu(row.mainName, account, "main", canManage) },
+                { text = "Add alt...", notCheckable = true, disabled = not canAdd, func = function()
+                    ns.CreditsConfig_ShowAddDialog("alt", row.mainName)
+                end },
+                { text = "Add Discord name...", notCheckable = true, disabled = not canAdd, func = function()
+                    ns.CreditsConfig_ShowAddDialog("discord", row.mainName)
+                end },
                 { text = "Merge into...", notCheckable = true, disabled = not canManage, func = function()
                     ns.CreditsConfig_ShowMergePicker(row.mainName, account)
                 end },
@@ -1069,7 +1350,9 @@ local function BuildRosterTab(content)
                     OpenRowMenu(row)
                 elseif row.isExpandable and row.currentAccount then
                     HideMenu()
-                    expanded[row.currentAccount] = not expanded[row.currentAccount]
+                    -- Toggle what is ON SCREEN (a search can auto-open an
+                    -- account that was never explicitly expanded).
+                    expanded[row.currentAccount] = not row.showAlts
                     if Refresh then Refresh() end
                 end
             end)
@@ -1172,6 +1455,32 @@ local function BuildRosterTab(content)
     -- into a single flat list the row pool renders in order.
     local function BuildDisplayList()
         local allMains = SortedLedger()
+        -- Search filter (2026-10-06): applied BEFORE paging so it covers the
+        -- whole roster. `autoOpen` = accounts that matched only through an
+        -- alt / Discord name; they show their alts unless the user has
+        -- explicitly collapsed them.
+        local autoOpen
+        local needle = filterState.text
+        if needle ~= "" then
+            local kept = {}
+            autoOpen = {}
+            for _, rec in ipairs(allMains) do
+                local viaMain = (rec.mainToon or ""):lower():find(needle, 1, true) ~= nil
+                local viaOther = false
+                local d = ns.Credits_GetDiscord(rec)
+                if d ~= "" and d:lower():find(needle, 1, true) then viaOther = true end
+                if not viaOther then
+                    for _, a in ipairs(rec.alts or {}) do
+                        if a:lower():find(needle, 1, true) then viaOther = true break end
+                    end
+                end
+                if viaMain or viaOther or (rec.discordName or ""):lower():find(needle, 1, true) then
+                    kept[#kept + 1] = rec
+                    if viaOther and not viaMain then autoOpen[rec.discordName] = true end
+                end
+            end
+            allMains = kept
+        end
         local totalPages = math.max(1, math.ceil(#allMains / ROSTER_MAINS_PER_PAGE))
         if pageState.page > totalPages then pageState.page = totalPages end
         if pageState.page < 1 then pageState.page = 1 end
@@ -1185,8 +1494,11 @@ local function BuildRosterTab(content)
             local alts = rec.alts
             local dOnly = DiscordOnlyName(rec)
             local hasAlts = (alts ~= nil and #alts > 0) or dOnly ~= nil
-            table.insert(display, { kind = "main", rec = rec, hasAlts = hasAlts, discordOnly = dOnly })
-            if hasAlts and expanded[rec.discordName] then
+            local showAlts = expanded[rec.discordName]
+            if showAlts == nil and autoOpen then showAlts = autoOpen[rec.discordName] end
+            showAlts = (hasAlts and showAlts) and true or false
+            table.insert(display, { kind = "main", rec = rec, hasAlts = hasAlts, discordOnly = dOnly, showAlts = showAlts })
+            if showAlts then
                 -- A Discord-only name (not a character) leads the sub-rows.
                 if dOnly then
                     table.insert(display, { kind = "discord", name = dOnly, account = rec.discordName, rec = rec })
@@ -1221,7 +1533,13 @@ local function BuildRosterTab(content)
         end
 
         local display, totalMains, totalPages = BuildDisplayList()
-        pageLabel:SetText(("Page %d/%d (%d total)"):format(pageState.page, totalPages, totalMains))
+        pageLabel:SetText(("Page %d/%d (%d %s)"):format(pageState.page, totalPages, totalMains,
+            filterState.text ~= "" and "matching" or "total"))
+        if ns.Credits_CanAddRosterNamesLocal and ns.Credits_CanAddRosterNamesLocal() then
+            addBtn:Enable()
+        else
+            addBtn:Disable()
+        end
         if pageState.page <= 1 then prevPageBtn:Disable() else prevPageBtn:Enable() end
         if pageState.page >= totalPages then nextPageBtn:Disable() else nextPageBtn:Enable() end
         botPageLabel:SetText(pageLabel:GetText())
@@ -1238,12 +1556,13 @@ local function BuildRosterTab(content)
                 if entry.kind == "main" then
                     local rec = entry.rec
                     row.isExpandable = entry.hasAlts
+                    row.showAlts = entry.showAlts
                     row.entryKind, row.altName, row.altAccount = "main", nil, nil
                     row.discordName = nil
                     row.mainName = rec.mainToon
                     row.currentAccount = rec.discordName
                     row.rank:SetText(tostring(ranks[rec.discordName] or "?"))
-                    local marker = entry.hasAlts and (expanded[rec.discordName] and "[-] " or "[+] ") or "      "
+                    local marker = entry.hasAlts and (entry.showAlts and "[-] " or "[+] ") or "      "
                     row.nameBtn.label:SetText(marker .. (rec.mainToon or "?")
                         .. RoleTag(rec, rec.mainToon, "main")
                         .. (entry.discordOnly and (" |cff7289da(Discord: " .. entry.discordOnly .. ")|r") or ""))
@@ -1329,6 +1648,16 @@ local function BuildRosterTab(content)
     creditsHeader:SetScript("OnClick", function() SetSort("credits", false) end)
     lifetimeHeader:SetScript("OnClick", function() SetSort("lifetimePoints", false) end)
     lastDonationHeader:SetScript("OnClick", function() SetSort("lastDonationDate", false) end)
+
+    -- Search box + Add name button (2026-10-06, Loopi).
+    filterEdit:SetScript("OnTextChanged", function(self)
+        local t = (self:GetText() or ""):match("^%s*(.-)%s*$"):lower()
+        if t == filterState.text then return end
+        filterState.text = t
+        pageState.page = 1
+        Refresh()
+    end)
+    addBtn:SetScript("OnClick", function() ShowAddDialog() end)
 
     return Refresh
 end

@@ -3474,6 +3474,141 @@ do
 end
 
 --------------------------------------------------------------------------
+-- Roster "Add name..." (2026-10-06, Loopi): new main / alt of an account /
+-- Discord name for an account. Duplicates refused, non-guild names allowed,
+-- gated to author / guild leader / mail recipient.
+--------------------------------------------------------------------------
+print("== Credits: Roster Add name ==")
+do
+    cm4.setup()
+    authorAccountFlag = false
+    ns.db.recipient = nil
+    local savedStatic = ns.CreditsReviewQueue
+    local ledger = ns.creditsDb.ledger
+    local neutralTier = (ns.Credits_TierStateForLifetime(0))
+
+    -- Gate: a plain officer is NOT enough.
+    currentPlayerName = "Officer1"
+    local ok, why = ns.Credits_AddRosterName("main", "Fresh")
+    check("AddName: a plain officer is refused (gate is author / guild leader / recipient)",
+        ok == false and why == "permission" and ledger["Fresh"] == nil)
+    check("AddName: CanAddRosterNames is false for a plain officer", ns.Credits_CanAddRosterNamesLocal() == false)
+
+    -- Guild leader, recipient and author account are each allowed.
+    currentPlayerName = "GLeader"
+    check("AddName: the guild leader may add names", ns.Credits_CanAddRosterNamesLocal() == true)
+    currentPlayerName = "Donor1"
+    ns.db.recipient = "Donor1"
+    check("AddName: the mail recipient may add names", ns.Credits_CanAddRosterNamesLocal() == true)
+    ns.db.recipient = nil
+    check("AddName: ...and Donor1 stops being allowed when no longer the recipient", ns.Credits_CanAddRosterNamesLocal() == false)
+    currentPlayerName = "Donor2"
+    authorAccountFlag = true
+    check("AddName: the author account may add names (any character)", ns.Credits_CanAddRosterNamesLocal() == true)
+    authorAccountFlag = false
+
+    currentPlayerName = "GLeader"
+
+    -- New main (non-guild name is fine).
+    ok, why = ns.Credits_AddRosterName("main", "  Fresh  ")
+    local fresh = ledger["Fresh"]
+    check("AddName main: succeeds for a name that is not in the guild and returns the account key", ok == true and why == "Fresh")
+    check("AddName main: a new empty account (0 lifetime, 0 credits, base tier, Discord = the main)",
+        fresh and fresh.mainToon == "Fresh" and fresh.discord == "Fresh" and (fresh.alts and #fresh.alts == 0)
+        and fresh.lifetimePoints == 0 and fresh.credits == 0 and fresh.lifetimeCredits == 0 and fresh.tier == neutralTier)
+    check("AddName main: the name resolves to the new account", ns.Credits_ResolveMain("fresh") == "Fresh"
+        and ns.creditsDb.toonIndex["fresh"] == "Fresh")
+    check("AddName main: the new account is stamped for officer sync", fresh and type(fresh.syncedAt) == "number")
+
+    -- Duplicates are refused everywhere, case-insensitively, never moved.
+    check("AddName dup: the same main again (any case)", select(2, ns.Credits_AddRosterName("main", "FRESH")) == "exists")
+    check("AddName dup: with a realm suffix", select(2, ns.Credits_AddRosterName("main", "Fresh-SkullRock")) == "exists")
+    check("AddName dup: an existing main from the seed", select(2, ns.Credits_AddRosterName("main", "maina")) == "exists")
+    check("AddName dup: an existing alt as a new main", select(2, ns.Credits_AddRosterName("main", "AltA1")) == "exists")
+    check("AddName dup: an existing alt as an alt of another account",
+        select(2, ns.Credits_AddRosterName("alt", "AltA1", "MainB")) == "exists" and ledger["MainB"].alts[1] == nil)
+    check("AddName dup: an existing main as an alt", select(2, ns.Credits_AddRosterName("alt", "MainB", "MainA")) == "exists")
+    check("AddName dup: an account's Discord name can't be added as a character",
+        select(2, ns.Credits_AddRosterName("main", "Fresh")) == "exists")
+
+    -- Bad names.
+    check("AddName name: empty", select(2, ns.Credits_AddRosterName("main", "   ")) == "name")
+    check("AddName name: a character name with a space", select(2, ns.Credits_AddRosterName("main", "Two Words")) == "name")
+    check("AddName name: a control character", select(2, ns.Credits_AddRosterName("discord", "bad\nname", "MainA")) == "name")
+    check("AddName name: over 32 characters", select(2, ns.Credits_AddRosterName("main", ("x"):rep(33))) == "name")
+    check("AddName kind: an unknown kind", select(2, ns.Credits_AddRosterName("bogus", "Zzz")) == "kind")
+
+    -- Alt of an account: the account can be named by any name on it.
+    ok, why = ns.Credits_AddRosterName("alt", "NewAlt", "MainA")
+    check("AddName alt: attaches to the named account and returns its key", ok == true and why == "MainA")
+    check("AddName alt: the alt is on the account and resolves to its main",
+        ledger["MainA"].alts[#ledger["MainA"].alts] == "NewAlt" and ns.Credits_ResolveMain("newalt") == "MainA")
+    check("AddName alt: the changed account is stamped for sync", type(ledger["MainA"].syncedAt) == "number")
+    check("AddName alt: the account can be named by one of its ALTS and by any case of the key",
+        select(1, ns.Credits_AddRosterName("alt", "SecondAlt", "AltA1")) == true
+        and select(1, ns.Credits_AddRosterName("alt", "ThirdAlt", "maina")) == true
+        and ns.Credits_ResolveMain("SecondAlt") == "MainA" and ns.Credits_ResolveMain("ThirdAlt") == "MainA")
+    ok, why = ns.Credits_AddRosterName("alt", "Orphan", "NoSuchAccount")
+    check("AddName alt: an unknown account is refused and nothing is added", ok == false and why == "noaccount"
+        and ns.creditsDb.toonIndex["orphan"] == nil)
+    ok, why = ns.Credits_AddRosterName("alt", "Orphan", "")
+    check("AddName alt: a blank account is refused", ok == false and why == "noaccount")
+
+    -- Discord name.
+    ok, why = ns.Credits_AddRosterName("discord", "some.discord_name", "MainB")
+    check("AddName discord: sets the account's Discord name", ok == true and why == "MainB"
+        and ledger["MainB"].discord == "some.discord_name")
+    check("AddName discord: a Discord name is not a character (no toon resolves from it)",
+        ns.creditsDb.toonIndex["some.discord_name"] == nil)
+    check("AddName discord dup: the same Discord name again, any case",
+        select(2, ns.Credits_AddRosterName("discord", "SOME.discord_NAME", "MainA")) == "exists")
+    check("AddName discord dup: a character name already on the roster",
+        select(2, ns.Credits_AddRosterName("discord", "AltA1", "MainB")) == "exists")
+    local ok2, key2, displaced = ns.Credits_AddRosterName("discord", "other_tag", "MainB")
+    check("AddName discord: replacing a Discord-only name sends the old one to the Review Queue",
+        ok2 == true and displaced == "some.discord_name" and ledger["MainB"].discord == "other_tag")
+    local inQueue = false
+    for _, row in ipairs(ns.creditsDb.dynamicReviewQueue) do
+        if row.name == "some.discord_name" then inQueue = true end
+    end
+    check("AddName discord: ...and it is in the dynamic Review Queue", inQueue)
+
+    -- A name waiting in the Review Queue: a new main keeps its Step 0 history
+    -- and leaves the queue; an alt just leaves the queue.
+    ns.CreditsReviewQueue = { { name = "Queued", rawGoldAmount = 150, latestDonation = "2026-09-01" } }
+    ns.Credits_AddToReviewQueue("QueuedAlt")
+    ok = ns.Credits_AddRosterName("main", "Queued")
+    local q = ledger["Queued"]
+    check("AddName main from the queue: keeps the raw-data history (150 gold = 1500 points) and last donation",
+        ok == true and q and q.lifetimePoints == 1500 and q.lastDonationDate == "2026-09-01")
+    check("AddName main from the queue: tier follows the history",
+        q and q.tier == (ns.Credits_TierStateForLifetime(1500)))
+    ok = ns.Credits_AddRosterName("alt", "QueuedAlt", "MainA")
+    local stillQueued = false
+    for _, row in ipairs(ns.creditsDb.dynamicReviewQueue) do
+        if row.name == "QueuedAlt" then stillQueued = true end
+    end
+    check("AddName alt from the queue: the queue row is cleared", ok == true and not stillQueued)
+    ns.CreditsReviewQueue = savedStatic
+
+    -- A held donation waits for exactly this kind of name.
+    cm4.setup()
+    currentPlayerName = "GLeader"
+    ns.CreditsDon_Credit({ sender = "Rando", items = { cm4.sword(2) } })
+    local mainA = ns.creditsDb.ledger["MainA"]
+    local lifeBefore = mainA.lifetimePoints
+    check("AddName release: the donation is held while Rando is unknown", ns.creditsDb.pendingCredits["rando"] ~= nil)
+    ok = ns.Credits_AddRosterName("alt", "Rando", "MainA")
+    check("AddName release: adding Rando as an alt applies the held donation to that account",
+        ok == true and mainA.lifetimePoints == lifeBefore + 100 and ns.creditsDb.pendingCredits["rando"] == nil)
+    ns.CreditsDon_Credit({ sender = "Loner", items = { cm4.sword(4) } })
+    ok = ns.Credits_AddRosterName("main", "Loner")
+    check("AddName release: adding Loner as a new main releases onto the new account",
+        ok == true and ns.creditsDb.ledger["Loner"] and ns.creditsDb.ledger["Loner"].lifetimePoints == 200
+        and ns.creditsDb.pendingCredits["loner"] == nil)
+end
+
+--------------------------------------------------------------------------
 -- Summary
 --------------------------------------------------------------------------
 print("")

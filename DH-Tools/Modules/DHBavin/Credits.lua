@@ -621,6 +621,134 @@ function ns.Credits_GetAltMain(altName)
 end
 
 --------------------------------------------------------------------------
+-- Roster "Add name..." (2026-10-06, Loopi). An officer can put a name on the
+-- Roster by hand - a brand-new MAIN (new account), an ALT on an existing
+-- account, or a DISCORD name on an existing account - without waiting for a
+-- donation or for the name to appear in the Review Queue. Rules agreed with
+-- Loopi: a name that is already anywhere on the Roster (any account's main,
+-- alt, Discord name or account key, case-insensitive) is REFUSED, never
+-- duplicated or moved; non-guild names are allowed; gated to the author,
+-- the guild leader and the mail recipient (the same gate as the rates).
+-- A Discord name can't create an account on its own: an account always has
+-- a real main toon. Everything is local + replicated through CM3 exactly
+-- like Link / New Main (CreditsSync_Changed).
+--------------------------------------------------------------------------
+function ns.Credits_CanAddRosterNamesLocal()
+    return (ns.CanManageCreditsRatesLocal and ns.CanManageCreditsRatesLocal()) and true or false
+end
+
+-- Where does `name` already live? Returns the owning account record and how
+-- the name appears there ("main" / "alt" / "discord" / "account"), or nil
+-- when it is on no account.
+local function FindRosterName(name)
+    local db = ns.creditsDb
+    if not db or not db.ledger or type(name) ~= "string" or name == "" then return nil end
+    local key = name:lower()
+    if not db.toonIndex then ns.Credits_RebuildToonIndex() end
+    local acct = db.toonIndex[key]
+    local rec = acct and db.ledger[acct]
+    if rec then
+        if rec.mainToon and rec.mainToon:lower() == key then return rec, "main" end
+        return rec, "alt"
+    end
+    for k, r in pairs(db.ledger) do
+        if k:lower() == key then return r, "account" end
+        local d = ns.Credits_GetDiscord(r)
+        if d ~= "" and d:lower() == key then return r, "discord" end
+    end
+    return nil
+end
+ns.Credits_FindRosterName = FindRosterName
+
+local function TrimText(s)
+    return (tostring(s or ""):match("^%s*(.-)%s*$"))
+end
+
+-- kind = "main" | "alt" | "discord". accountName (alt/discord only) = any
+-- name already on the target account (main, alt, Discord name or key).
+-- Returns true, accountKey [, displacedDiscordName] on success, or
+-- false, reason with reason one of: permission nodata kind name exists
+-- noaccount.
+function ns.Credits_AddRosterName(kind, name, accountName)
+    if not ns.Credits_CanAddRosterNamesLocal() then return false, "permission" end
+    local db = ns.creditsDb
+    if not db or not db.ledger then return false, "nodata" end
+    if kind ~= "main" and kind ~= "alt" and kind ~= "discord" then return false, "kind" end
+
+    name = TrimText(name)
+    if name == "" or name:find("%c") or #name > 32 then return false, "name" end
+    if kind ~= "discord" then
+        -- Character names: no spaces, realm suffix stripped (same as Link).
+        if name:find("%s") then return false, "name" end
+        name = ns.NormalizeName(name)
+        if not name or name == "" then return false, "name" end
+    end
+    if not db.toonIndex then ns.Credits_RebuildToonIndex() end
+    if FindRosterName(name) then return false, "exists" end
+
+    local target
+    if kind ~= "main" then
+        target = FindRosterName(TrimText(accountName))
+        if not target then return false, "noaccount" end
+    end
+
+    local key
+    local displaced
+    if kind == "main" then
+        -- A name that is sitting in the Review Queue keeps the history Step 0
+        -- found for it (same convention as "New Main": raw gold x10).
+        local lifetime, latest = 0, ""
+        for _, row in ipairs(ns.Credits_ReviewQueueRows and ns.Credits_ReviewQueueRows() or {}) do
+            if (row.name or ""):lower() == name:lower() then
+                lifetime = (tonumber(row.rawGoldAmount) or 0) * 10
+                latest = row.latestDonation or ""
+                break
+            end
+        end
+        local tier, prestige, points = ns.Credits_TierStateForLifetime(lifetime)
+        db.ledger[name] = {
+            discordName = name,
+            discord = name,
+            mainToon = name,
+            alts = {},
+            points = points,
+            credits = 0,
+            lifetimeCredits = 0,
+            tier = tier,
+            prestige = prestige,
+            lifetimePoints = lifetime,
+            lastDonationDate = latest,
+            lastUpdated = time(),
+        }
+        db.toonIndex[name:lower()] = name
+        key = name
+    elseif kind == "alt" then
+        target.alts = target.alts or {}
+        table.insert(target.alts, name)
+        db.toonIndex[name:lower()] = target.discordName
+        key = target.discordName
+    else -- discord
+        displaced = DiscordOnlyName(target)
+        target.discord = name
+        key = target.discordName
+    end
+
+    -- Whatever the Review Queue held under this name is now resolved; a
+    -- Discord-only tag this one replaced goes back to the queue (same rule
+    -- as "Add as Discord").
+    ns.Credits_RemoveFromReviewQueue(name)
+    local rqChanges = { { name = name, present = false } }
+    if displaced then
+        ns.Credits_AddToReviewQueue(displaced)
+        rqChanges[#rqChanges + 1] = { name = displaced, present = true }
+    end
+    if ns.CreditsSync_Changed then ns.CreditsSync_Changed({ key }, rqChanges) end
+    -- A held donation may be exactly what this name was waiting for.
+    if ns.Credits_ReleasePending then ns.Credits_ReleasePending() end
+    return true, key, displaced
+end
+
+--------------------------------------------------------------------------
 -- Dynamic Review Queue (2026-09-25) - runtime additions layered on top
 -- of the static, GENERATED ns.CreditsReviewQueue (ReviewQueue.lua, Step
 -- 0's own unresolved-donor list). Only Credits_UnlinkAlt adds to this
