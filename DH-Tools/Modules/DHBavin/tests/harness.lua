@@ -169,7 +169,7 @@ _G.DHTools = {
 --------------------------------------------------------------------------
 
 local ADDON_ROOT = "C:\\AIProjects-NOSYNC\\WoW\\src\\DH-Tools\\Modules\\DHBavin\\"
-local FILES = { "Core.lua", "Sync.lua", "ItemPoints.lua", "ToonDonations.lua", "ArchivedDonors.lua", "Credits.lua", "CreditsSeed.lua", "CreditsSync.lua", "CreditsDonations.lua", "CreditsInbox.lua", "CreditsLog.lua" }
+local FILES = { "Core.lua", "Sync.lua", "ItemPoints.lua", "ToonDonations.lua", "ArchivedDonors.lua", "Credits.lua", "CreditsSeed.lua", "CreditsSync.lua", "CreditsMember.lua", "CreditsDonations.lua", "CreditsInbox.lua", "CreditsLog.lua" }
 
 for _, filename in ipairs(FILES) do
     local chunk, err = loadfile(ADDON_ROOT .. filename)
@@ -253,6 +253,8 @@ local function resetState()
         -- CM3 sync bookkeeping (CreditsSync.lua)
         ns.creditsDb.rqStamps = {}
         ns.creditsDb.lastSyncAt = nil
+        -- CM6 member-side balance cache (CreditsMember.lua)
+        ns.creditsDb.memberBal = {}
         -- CM4 (CreditsDonations.lua / CreditsSync.lua additions)
         ns.creditsDb.pendingCredits = {}
         ns.creditsDb.pendingReleased = {}
@@ -3899,6 +3901,227 @@ do
     check("AddName release: adding Loner as a new main releases onto the new account",
         ok == true and ns.creditsDb.ledger["Loner"] and ns.creditsDb.ledger["Loner"].lifetimePoints == 200
         and ns.creditsDb.pendingCredits["loner"] == nil)
+end
+
+--------------------------------------------------------------------------
+-- Credits: CM6 member balance pull/push (CreditsMember.lua)
+--------------------------------------------------------------------------
+print("== Credits: CM6 member balance ==")
+do
+    local PFX = "DHBavinCreditsV2"
+    local function deliver(from, text, channel)
+        ns.Credits_OnAddonMessage(PFX, text, channel or "WHISPER", from)
+    end
+    local function sentTo(target, msgType)
+        local out = {}
+        for _, e in ipairs(outboxLog) do
+            if e.target == target and e.channel == "WHISPER" and e.text:match("^" .. msgType .. "|") then
+                out[#out + 1] = e.text
+            end
+        end
+        return out
+    end
+    local function setup()
+        resetState()
+        wallClock = wallClock + 1000      -- clears every cooldown from earlier sections
+        inGuild = true
+        guildRosterEntries = {
+            { name = "GLeader", rankIndex = 0 },
+            { name = "Officer1", rankIndex = 3 },
+            { name = "Officer2", rankIndex = 3 },
+            { name = "Member1", rankIndex = 5 },
+            { name = "Member2", rankIndex = 5 },
+        }
+        ns.UpdateGuildRosterCache()
+        currentPlayerName = "Officer1"
+        ns.db.editors = { "Officer1", "Officer2" }
+        ns.CreditsSeedData = { MainA = { lifetimePoints = 100 }, MainB = { lifetimePoints = 200 } }
+        ns.CreditsAltRoster = { MainA = { "AltA1" } }
+        ns.CreditsSeed_Import()
+        outboxLog, printLog = {}, {}
+    end
+    local function bal(o)
+        o = o or {}
+        return table.concat({ "BALDATA", "1", o.epoch or 0, o.sentAt or wallClock, o.discord or "Disc", o.main or "MainA",
+            o.points or 10, o.credits or 5, o.tier or "Friendly", o.prestige or 0, o.lp or 3010, o.lc or 9,
+            o.ldd or "2026-09-20", o.lu or 123 }, "|")
+    end
+
+    -- ---- officer answers a pull ------------------------------------------------
+    setup()
+    check("Link Member1 as an alt of MainA (officer edit)", ns.Credits_LinkAlt("Member1", "MainA") == true)
+    outboxLog = {}
+    deliver("Member1", "MYBALREQ|1")
+    local answers = sentTo("Member1", "BALDATA")
+    check("An officer answers a member's pull with BALDATA", #answers == 1)
+    check("The answer fits the 255-byte addon message limit", answers[1] and #PFX + #answers[1] <= 255)
+    check("The answer carries the account's lifetime points", answers[1] and answers[1]:find("|100|", 1, true) ~= nil)
+    check("The answer names the account's main", answers[1] and answers[1]:find("|MainA|", 1, true) ~= nil)
+    local firstAnswer = answers[1]
+    outboxLog = {}
+    deliver("Member1", "MYBALREQ|1")
+    check("A repeat request inside the cooldown is not answered", #sentTo("Member1", "BALDATA") == 0)
+    wallClock = wallClock + 61
+    deliver("Member1", "MYBALREQ|1")
+    check("...but is answered once the cooldown has passed", #sentTo("Member1", "BALDATA") == 1)
+
+    setup()
+    deliver("Officer2", "MYBALREQ|1")
+    local none = sentTo("Officer2", "BALNONE")
+    check("A requester with no account gets BALNONE, never someone else's data",
+        #none == 1 and #sentTo("Officer2", "BALDATA") == 0)
+    outboxLog = {}
+    deliver("Stranger", "MYBALREQ|1")
+    check("A requester outside the guild gets no answer", #outboxLog == 0)
+    deliver("Member1", "MYBALREQ|1", "GUILD")
+    check("A request that did not arrive as a whisper is ignored", #outboxLog == 0)
+    ns.creditsDb.ledger = {}
+    deliver("Member2", "MYBALREQ|1")
+    check("An officer with an empty ledger stays silent (cannot claim 'no account')", #outboxLog == 0)
+    setup()
+    currentPlayerName = "Member1"
+    deliver("Member2", "MYBALREQ|1")
+    check("A non-officer never answers a pull", #outboxLog == 0)
+
+    -- ---- member accepts a reply -----------------------------------------------
+    setup()
+    currentPlayerName = "Member1"
+    check("Before any reply: no account record", ns.CreditsMember_GetCachedRecord() == nil and ns.CreditsMember_Status() == nil)
+    deliver("Officer2", bal())
+    local rec = ns.CreditsMember_GetCachedRecord()
+    check("A reply from an officer is cached and shows as the local account",
+        rec and rec.fromCache == true and rec.credits == 5 and rec.points == 10 and rec.lifetimePoints == 3010
+        and rec.tier == "Friendly")
+    check("Status reports cached", ns.CreditsMember_Status() == "cached")
+    check("The guild leader may also answer", (function()
+        setup(); currentPlayerName = "Member1"; deliver("GLeader", bal()); return ns.CreditsMember_GetCachedRecord() ~= nil end)())
+
+    setup()
+    currentPlayerName = "Member1"
+    deliver("Member2", bal())
+    check("A reply from a non-officer member is rejected", ns.CreditsMember_GetCachedRecord() == nil)
+    deliver("Stranger", bal())
+    check("A reply from outside the guild is rejected", ns.CreditsMember_GetCachedRecord() == nil)
+    deliver("Officer2", bal(), "GUILD")
+    check("A reply that did not arrive as a whisper is rejected", ns.CreditsMember_GetCachedRecord() == nil)
+    ns.db.editors = { "Officer1" }
+    deliver("Officer2", bal())
+    check("The sender is judged against OUR officer list, not the message", ns.CreditsMember_GetCachedRecord() == nil)
+    ns.db.editors = { "Officer1", "Officer2" }
+    deliver("Officer2", bal({ tier = "Godlike" }))
+    check("An unknown tier is rejected", ns.CreditsMember_GetCachedRecord() == nil)
+    deliver("Officer2", bal({ credits = -5 }))
+    check("A negative balance is rejected", ns.CreditsMember_GetCachedRecord() == nil)
+    deliver("Officer2", bal({ points = "abc" }))
+    check("A non-numeric balance is rejected", ns.CreditsMember_GetCachedRecord() == nil)
+    deliver("Officer2", (bal():gsub("|Disc|", "|Disc|extra|")))
+    check("A reply with the wrong field count is rejected", ns.CreditsMember_GetCachedRecord() == nil)
+    deliver("Officer2", (bal():gsub("^BALDATA|1|", "BALDATA|9|")))
+    check("An unknown protocol version is rejected", ns.CreditsMember_GetCachedRecord() == nil)
+
+    -- ---- merge rules -------------------------------------------------------------
+    setup()
+    currentPlayerName = "Member1"
+    deliver("Officer2", bal({ lp = 3010, credits = 5, lu = 100 }))
+    deliver("Officer2", bal({ lp = 2000, credits = 99, lu = 200 }))
+    check("Lower lifetime points (a stale officer) never replaces a newer balance", ns.CreditsMember_GetCachedRecord().credits == 5)
+    deliver("Officer2", bal({ lp = 3500, credits = 7, lu = 300 }))
+    check("Higher lifetime points replaces", ns.CreditsMember_GetCachedRecord().credits == 7)
+    deliver("Officer2", bal({ lp = 3500, credits = 2, lu = 400 }))
+    check("Equal lifetime points + newer lastUpdated replaces (credits spent)", ns.CreditsMember_GetCachedRecord().credits == 2)
+    deliver("Officer2", bal({ lp = 3500, credits = 50, lu = 350 }))
+    check("Equal lifetime points + older lastUpdated is ignored", ns.CreditsMember_GetCachedRecord().credits == 2)
+    deliver("Officer2", bal({ epoch = 1, lp = 10, credits = 0, lu = 10 }))
+    check("A higher data epoch (reset) replaces even with lower lifetime points",
+        ns.CreditsMember_GetCachedRecord().credits == 0 and ns.CreditsMember_GetCachedRecord().lifetimePoints == 10)
+    deliver("Officer2", bal({ epoch = 0, lp = 9999, credits = 77, lu = 9999 }))
+    check("A lower data epoch is rejected", ns.CreditsMember_GetCachedRecord().credits == 0)
+    deliver("Officer2", "BALNONE|1|" .. wallClock)
+    check("BALNONE never wipes a real balance", ns.CreditsMember_GetCachedRecord() ~= nil)
+
+    setup()
+    currentPlayerName = "Member1"
+    deliver("Officer2", "BALNONE|0|" .. wallClock)
+    check("BALNONE with no cache is remembered as 'none'",
+        ns.CreditsMember_Status() == "none" and ns.CreditsMember_GetCachedRecord() == nil)
+    deliver("Officer2", bal())
+    check("...and real data replaces it", ns.CreditsMember_Status() == "cached")
+    deliver("Officer2", "BALNONE|0|" .. wallClock)
+    check("...and a later BALNONE does not undo it", ns.CreditsMember_Status() == "cached")
+
+    setup()
+    currentPlayerName = "Officer1"
+    deliver("Officer2", bal())
+    check("An officer ignores balance replies (they hold the ledger)", next(ns.creditsDb.memberBal) == nil)
+
+    -- ---- cache is per character ---------------------------------------------------
+    setup()
+    currentPlayerName = "Member1"
+    deliver("Officer2", bal())
+    currentPlayerName = "Member2"
+    check("Another character does not see Member1's cached balance", ns.CreditsMember_GetCachedRecord() == nil)
+
+    -- ---- encode ------------------------------------------------------------------
+    setup()
+    local longRec = { discordName = "X", discord = string.rep("|", 60), mainToon = "MainA", points = 1, credits = 2,
+        tier = "Friendly", prestige = 0, lifetimePoints = 3, lifetimeCredits = 4, lastDonationDate = "2026-10-01", lastUpdated = 5 }
+    local encMsg = ns.CreditsMember_EncodeBal(longRec, 0, wallClock)
+    check("An over-long Discord name is dropped so the message still fits", encMsg and #PFX + #encMsg <= 255)
+
+    -- ---- officer push ---------------------------------------------------------------
+    setup()
+    ns.Credits_LinkAlt("Member1", "MainA")      -- officer edit -> push (timers run instantly in the harness)
+    check("An officer edit pushes the new balance to the account's online alt",
+        #sentTo("Member1", "BALDATA") >= 1)
+    check("...but never to other officers (they hold the ledger) or the guild leader",
+        #sentTo("Officer2", "BALDATA") == 0 and #sentTo("GLeader", "BALDATA") == 0)
+    check("...and never over the GUILD channel", (function()
+        for _, e in ipairs(outboxLog) do if e.channel == "GUILD" and e.text:match("^BAL") then return false end end
+        return true end)())
+    outboxLog = {}
+    ns.CreditsMember_Flush()
+    check("Nothing is pushed twice (pending is cleared after a flush)", #outboxLog == 0)
+
+    setup()
+    guildRosterEntries[4].online = false
+    ns.UpdateGuildRosterCache()
+    ns.Credits_LinkAlt("Member1", "MainA")
+    check("An offline member is skipped (they pull at next login)", #sentTo("Member1", "BALDATA") == 0)
+
+    setup()
+    currentPlayerName = "Member1"
+    ns.CreditsMember_NoteChanged({ "MainA" })
+    ns.CreditsMember_Flush()
+    check("A non-officer never pushes", #outboxLog == 0)
+
+    -- ---- Refresh button ----------------------------------------------------------------
+    setup()
+    currentPlayerName = "Member1"
+    local ok1, msg1 = ns.CreditsMember_Refresh()
+    check("Refresh asks officers", ok1 == true and msg1 ~= nil)
+    local asked = 0
+    for _, e in ipairs(outboxLog) do
+        if e.text == "MYBALREQ|1" and e.channel == "WHISPER" then asked = asked + 1 end
+    end
+    check("...at most 2 of them", asked == 2)
+    outboxLog = {}
+    local ok2 = ns.CreditsMember_Refresh()
+    check("A second Refresh inside 5 minutes is refused and sends nothing", ok2 == false and #outboxLog == 0)
+    wallClock = wallClock + 301
+    check("...allowed again after the cooldown", ns.CreditsMember_Refresh() == true)
+
+    setup()
+    currentPlayerName = "Officer1"
+    check("Officers are told there is nothing to refresh", ns.CreditsMember_Refresh() == false)
+
+    setup()
+    currentPlayerName = "Member1"
+    for _, e in ipairs(guildRosterEntries) do if e.rankIndex ~= 5 then e.online = false end end
+    ns.UpdateGuildRosterCache()
+    wallClock = wallClock + 301
+    local ok3, msg3 = ns.CreditsMember_Refresh()
+    check("With no officer online, Refresh says so and does not start the cooldown",
+        ok3 == false and msg3:find("No officer", 1, true) ~= nil)
 end
 
 --------------------------------------------------------------------------

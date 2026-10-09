@@ -838,12 +838,16 @@ local function UpdateBalances()
     frame.goldText:SetText("Gold: |cffffffff" .. ns.FormatMoney(GetMoney and GetMoney() or 0) .. "|r")
     local rec = DHTools.Bavin and DHTools.Bavin.GetLocalAccountRecord and DHTools.Bavin.GetLocalAccountRecord()
     if rec and rec.credits ~= nil then
-        frame.creditsText:SetText("Store Credits: |cffffffff" .. ns.FormatCreditBalance(rec.credits) .. "|r")
+        -- fromCache = the balance an officer sent us (CM6, still in testing).
+        frame.creditsText:SetText("Store Credits: |cffffffff" .. ns.FormatCreditBalance(rec.credits) .. "|r"
+            .. (rec.fromCache and " |cff888888(testing, may be old)|r" or ""))
     else
         frame.creditsText:SetText("Store Credits: |cff888888not synced yet|r")
     end
     UpdateDiscountBadge(frame.discountBadge)
 end
+-- Exposed so CreditsMember.lua can refresh the line when an officer's answer arrives.
+ns.UpdateBalances = UpdateBalances
 
 -- Officer-only "Add Listing" strip. Drag an item from your bags onto the
 -- slot (or click the slot while holding an item); the gold price is

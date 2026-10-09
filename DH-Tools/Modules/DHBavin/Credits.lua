@@ -1198,6 +1198,11 @@ function ns.Credits_OnAddonMessage(prefix, message, channel, sender)
         if ns.CreditsSync_OnMessage then
             ns.CreditsSync_OnMessage(msgType, rest, sender, senderShort)
         end
+    elseif msgType == "MYBALREQ" or msgType == "BALDATA" or msgType == "BALNONE" then
+        -- CM6 member balance pull/push (CreditsMember.lua). Additive again.
+        if ns.CreditsMember_OnMessage then
+            ns.CreditsMember_OnMessage(msgType, rest, sender, senderShort, channel)
+        end
     end
 end
 

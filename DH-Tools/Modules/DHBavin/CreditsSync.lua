@@ -687,6 +687,8 @@ function ns.CreditsSync_Changed(discordNames, queueChanges, extra)
     for _, peer in ipairs(peers) do
         SendItems(peer, items)
     end
+    -- CM6: tell the affected members their new balance (batched at mailbox close).
+    if ns.CreditsMember_NoteChanged then ns.CreditsMember_NoteChanged(discordNames) end
 end
 
 -- Items changed after `since`, for answering a request.

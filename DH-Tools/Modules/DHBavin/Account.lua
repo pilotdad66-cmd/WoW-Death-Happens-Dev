@@ -27,6 +27,9 @@ local COL_NAME_W, COL_LVL_W, COL_CLASS_W = 200, 34, 90 -- name column fits "(Mai
 
 local frame
 
+-- Shown whenever the balance comes from an officer's copy (CM6) or is missing.
+local TESTING_NOTE = "|cffffa500Module in Testing. Data may be old.|r"
+
 --------------------------------------------------------------------------
 -- Account-wide record of characters this WoW account has logged into
 --------------------------------------------------------------------------
@@ -67,12 +70,17 @@ end
 -- bottom bar calls this too.
 function ns.GetLocalAccountRecord()
     local db = ns.creditsDb
-    if not db or type(db.toonIndex) ~= "table" or type(db.ledger) ~= "table" then return nil end
+    if not db then return nil end
     local me = UnitName and UnitName("player")
     if not me then return nil end
-    local key = db.toonIndex[me:lower()]
-    local rec = key and db.ledger[key]
-    if rec then return rec, key end
+    if type(db.toonIndex) == "table" and type(db.ledger) == "table" then
+        local key = db.toonIndex[me:lower()]
+        local rec = key and db.ledger[key]
+        if rec then return rec, key end
+    end
+    -- CM6: members don't hold the ledger; fall back to the balance an officer
+    -- sent us (CreditsMember.lua). That record is flagged fromCache = true.
+    if ns.CreditsMember_GetCachedRecord then return ns.CreditsMember_GetCachedRecord() end
     return nil
 end
 
@@ -367,9 +375,21 @@ local function CreateAccountFrame()
     f.mainText:SetPoint("TOPLEFT", 16, -36)
     f.mainText:SetPoint("RIGHT", -16, 0)
 
+    -- CM6: ask an officer for the latest balance (5-minute cooldown, checked
+    -- in CreditsMember.lua). Hidden when viewing someone else's account.
+    f.refreshBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    f.refreshBtn:SetSize(80, 22)
+    f.refreshBtn:SetPoint("TOPRIGHT", -18, -58)
+    f.refreshBtn:SetText("Refresh")
+    f.refreshBtn:SetScript("OnClick", function()
+        if not ns.CreditsMember_Refresh then return end
+        local _, msg = ns.CreditsMember_Refresh()
+        if msg then print("|cff33ff99DH-Tools:|r " .. msg) end
+    end)
+
     f.repText = Fs(f)
     f.repText:SetPoint("TOPLEFT", f.mainText, "BOTTOMLEFT", 0, -10)
-    f.repText:SetPoint("RIGHT", -16, 0)
+    f.repText:SetPoint("RIGHT", -104, 0)
 
     f.repDetail = Fs(f, "GameFontHighlightSmall")
     f.repDetail:SetPoint("TOPLEFT", f.repText, "BOTTOMLEFT", 0, -3)
@@ -467,12 +487,32 @@ function ns.Account_Refresh()
         local lifeCredits = tonumber(rec.lifetimeCredits) or tonumber(rec.credits) or 0
         frame.creditsText:SetText("Credits Balance: |cffffd100" .. Num2(rec.credits) .. "|r"
             .. "   Lifetime Credits: |cffffd100" .. Num2(lifeCredits) .. "|r")
-        frame.noteText:SetText("")
+        if rec.fromCache then
+            -- CM6: officer-sent copy of the balance, not the ledger itself.
+            local stamp = tonumber(rec.receivedAt)
+            frame.noteText:SetText(TESTING_NOTE
+                .. (stamp and ("  Last received " .. date("%Y-%m-%d %H:%M", stamp) .. ".") or ""))
+        else
+            frame.noteText:SetText("")
+        end
     else
-        frame.repText:SetText("Reputation: |cff888888not synced yet|r")
-        frame.repDetail:SetText("")
-        frame.creditsText:SetText("Credits Balance: |cff888888not synced yet|r")
-        frame.noteText:SetText("Reputation and Store Credits come from the guild ledger, which isn't shared to your client yet. They'll show here once it is.")
+        local status = (not viewKey) and ns.CreditsMember_Status and ns.CreditsMember_Status() or nil
+        if status == "none" then
+            frame.repText:SetText("Reputation: |cff888888no account on file yet|r")
+            frame.repDetail:SetText("")
+            frame.creditsText:SetText("Credits Balance: |cff888888no account on file yet|r")
+            frame.noteText:SetText(TESTING_NOTE .. "  An officer has no account for your characters yet; it appears after your first donation is credited.")
+        else
+            frame.repText:SetText("Reputation: |cff888888not synced yet|r")
+            frame.repDetail:SetText("")
+            frame.creditsText:SetText("Credits Balance: |cff888888not synced yet|r")
+            frame.noteText:SetText(TESTING_NOTE .. "  Your balance comes from an officer; it shows here once one is online and answers. Use Refresh to ask again.")
+        end
+    end
+    if frame.refreshBtn then
+        -- Only your own window refreshes from an officer; an officer's
+        -- "Show Account" view reads the ledger directly.
+        if viewKey then frame.refreshBtn:Hide() else frame.refreshBtn:Show() end
     end
     -- Footer: the "appear once you've logged into them" line only makes
     -- sense in your OWN window (it explains the non-guild section, which an

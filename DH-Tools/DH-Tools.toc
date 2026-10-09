@@ -54,6 +54,7 @@ Modules\DHBavin\ArchivedDonors.lua
 Modules\DHBavin\AltRoster.lua
 Modules\DHBavin\CreditsSeed.lua
 Modules\DHBavin\CreditsSync.lua
+Modules\DHBavin\CreditsMember.lua
 # CM4 incoming-mail crediting. CreditsDonations.lua = pure logic (valuation,
 # donor resolution, crediting, held credits, merge), inert until called.
 # CreditsInbox.lua = the mail hook/checkboxes, created ONLY from Credits.lua's
