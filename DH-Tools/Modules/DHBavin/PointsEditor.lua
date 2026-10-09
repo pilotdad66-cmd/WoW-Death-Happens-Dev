@@ -256,6 +256,11 @@ local function WireEditor(ed)
         end
         local gold = ReadNumber(ed.gold)
         if gold == false then return nil, "Gold must be a number (e.g. 1.5 for 1g 50s)." end
+        -- 2026-10-08 (Loopi): gold is never negative; a negative-rep item is
+        -- 0 gold with negative points.
+        if gold and gold < 0 then
+            return nil, "Gold can't be negative - use 0 gold (and negative points) for a negative-rep item."
+        end
         local stack = ReadNumber(ed.stack)
         if stack == false then return nil, "Stack must be a number." end
         if stack ~= nil and stack <= 1 then stack = nil end -- 0 / 1 mean "no stack text"
@@ -604,7 +609,7 @@ local function CreateEditorFrame()
 
     frame.addLabel = frame.addSection:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     frame.addLabel:SetPoint("TOPLEFT", frame.addSection, "TOPLEFT", 0, 0)
-    frame.addLabel:SetText("Add a new item (name, itemID, gold, points; then category, stack, source; the text builds itself):")
+    frame.addLabel:SetText("Add a new item - required: name, itemID, gold, points, category (stack and source optional):")
 
     -- Bottom line: the text + Auto.
     frame.addTextLine = CreateFrame("Frame", nil, frame.addSection)
@@ -733,13 +738,26 @@ local function CreateEditorFrame()
             ns.Print("Enter an item name before adding.")
             return
         end
+        -- 2026-10-08 (Loopi): a NEW item needs item ID, category, gold and
+        -- points (stack and source stay optional). Gold 0 is fine; blank is
+        -- not. Existing rows are not held to this (some shipped items lack an
+        -- itemID/category), only the Add form.
+        local itemIdText = Trim(frame.addItemIdEdit:GetText())
+        local itemId = itemIdText ~= "" and tonumber(itemIdText) or nil
+        local missing = {}
+        if not itemId or itemId <= 0 then missing[#missing + 1] = "item ID" end
+        if not frame.addEd.state.category then missing[#missing + 1] = "category" end
+        if Trim(frame.addGoldEdit:GetText()) == "" then missing[#missing + 1] = "gold (0 is fine)" end
+        if Trim(frame.addPointsEdit:GetText()) == "" then missing[#missing + 1] = "points" end
+        if #missing > 0 then
+            ns.Print("Can't add " .. name .. " yet - missing: " .. table.concat(missing, ", ") .. ".")
+            return
+        end
         local fields, problem = frame.addEd.Read()
         if not fields then
             ns.Print(problem)
             return
         end
-        local itemIdText = Trim(frame.addItemIdEdit:GetText())
-        local itemId = itemIdText ~= "" and tonumber(itemIdText) or nil
         if ns.SetItemPoints(name, fields.points, itemId, fields.detail, fields.extra) then
             ns.Print(name .. " added at " .. NumText(fields.points) .. " points"
                 .. (itemId and (", itemID " .. itemId) or "") .. ".")
