@@ -2,7 +2,7 @@
 -- GENERATED FILE - DO NOT HAND-EDIT.
 -- Source: claude\DH-Macros\curation\DH-Macros-Library.csv
 -- Regenerate: powershell -ExecutionPolicy Bypass -File claude\DH-Macros\import-macros.ps1
--- Generated: 2026-10-09 09:35
+-- Generated: 2026-10-09 09:37
 --
 -- Macro catalog for the Macros module's Board (Class -> Spec -> Macro
 -- cascading picker). Edit the CSV, not this file - see that file's
@@ -33,10 +33,10 @@ ns.Library = {
                   body = "#showtooltip Your Mount Here\n/equipslot [nomounted] 14 Carrot on a Stick\n/equipslot [mounted] 14 Your Trinket Here\n/dismount [mounted]\n/stand\n/use Your Mount Here",
                   desc = "Macro mounts you and equips Carrot on a Stick, or dismounts you and equips your other trinket back (e.g. Nifty Stopwatch) in that slot. You must edit the mount name and the trinket name to match whatever you are using." },
                 { name = "Recruitment 1", macroName = "Recruitment 1", icon = "INV_Misc_QuestionMark",
-                  body = "#showtooltip guild tabard\n/1 <Death Happens> is one of the oldest and biggest guilds on the server. We're known for our friendly and supportive community and incredible guild services. Pst me for an invite!",
+                  body = "#showtooltip Guild Tabard\n/1 <Death Happens> is one of the oldest and biggest guilds on the server. We're known for our friendly and supportive community and incredible guild services. Pst me for an invite!",
                   desc = "Posts a guild recruitment message to the General channel (/1): oldest and biggest guild, friendly community, whisper for an invite." },
                 { name = "Recruitment 2", macroName = "Recruitment 2", icon = "INV_Misc_QuestionMark",
-                  body = "#showtooltip guild tabard\n/1 Looking for a guild? <Death Happens> offers leveling supplies to all guildies! Sign up to get bags, gear, quest items, consumables, and more!",
+                  body = "#showtooltip Guild Tabard\n/1 Looking for a guild? <Death Happens> offers leveling supplies to all guildies! Sign up to get bags, gear, quest items, consumables, and more!",
                   desc = "Posts a guild recruitment message to the General channel (/1): leveling supplies for all guildies (bags, gear, quest items, consumables)." },
             },
         },
