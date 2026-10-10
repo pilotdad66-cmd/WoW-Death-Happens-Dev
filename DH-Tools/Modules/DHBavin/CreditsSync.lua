@@ -1030,7 +1030,12 @@ local function ApplyPayload(payload, senderShort)
     end
     -- CM4: a link/new account that just arrived may be what a held donation
     -- was waiting for (a no-op anywhere but the armed mail recipient).
-    if changedRecords > 0 and ns.Credits_ReleasePending then ns.Credits_ReleasePending() end
+    -- 2026-10-09: also when only a Review Queue row or a log row changed - an
+    -- officer's Confirm / Not them on an archived donor clears a queue row (and
+    -- may add a log row) without touching any account record.
+    if (changedRecords > 0 or changedQueue > 0 or addedLog > 0) and ns.Credits_ReleasePending then
+        ns.Credits_ReleasePending()
+    end
 end
 
 -- Dispatched from Credits.lua's Credits_OnAddonMessage (own echo already dropped).

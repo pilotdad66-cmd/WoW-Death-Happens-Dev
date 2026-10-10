@@ -807,6 +807,8 @@ function ns.Credits_AddToReviewQueue(altName, issue, details, latestOverride)
         rawGoldAmount = tonumber(rawGold) or 0,
         details = details or ((issue == "unresolved_donor")
             and "held donation - waiting for an officer to link this name"
+            or (issue == "archived_donor")
+            and "held donation - waiting for an officer to confirm this is the archived donor"
             or "removed from an account by an officer - no historical gold figure available at runtime"),
     })
 end

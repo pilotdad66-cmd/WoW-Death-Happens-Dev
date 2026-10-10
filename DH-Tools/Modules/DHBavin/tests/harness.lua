@@ -2929,13 +2929,97 @@ do
     check("Carryover: the Audit Log labels the row 'Carryover'", dr.kind == "carryover" and dr.kindLabel == "Carryover")
     check("Carryover: ...and shows its rep with 0 credits", dr.rep == 5612 and dr.credits == 0)
 
-    -- Direct credit (guild member, no account yet): carryover first, then the donation.
+    -- Hold and confirm (2026-10-09): an archived donor is ALWAYS held, even a guild
+    -- member who would otherwise be credited directly, and the ledger is untouched
+    -- until an officer decides.
+    local function pendingCount(n)
+        local l = ns.creditsDb.pendingCredits[n:lower()]
+        return l and #l or 0
+    end
+    local function queueRow(n)
+        for _, r in ipairs(ns.creditsDb.dynamicReviewQueue or {}) do
+            if r.name:lower() == n:lower() then return r end
+        end
+    end
     setupArchived()
     local res = ns.CreditsDon_Credit({ sender = "Donor1", items = { cm4.sword(1) } })
-    local d1 = res.account
-    check("Carryover: a direct-credit archived donor gets 100 + 50 rep and only the donation's credits",
-        res.status == "credited" and d1.lifetimePoints == 150 and d1.credits == 0.5)
-    check("Carryover: ...with one carryover row on that account", #carryRows(d1.discordName) == 1)
+    check("Hold: an archived donor in the guild is held, not credited", res.status == "held")
+    check("Hold: ...no account was auto-created for them", ns.creditsDb.toonIndex["donor1"] == nil)
+    check("Hold: ...the donation is pending", pendingCount("Donor1") == 1)
+    check("Hold: ...flagged in the Review Queue as an archived donor",
+        queueRow("Donor1") and queueRow("Donor1").issue == "archived_donor"
+        and queueRow("Donor1").details:find("archived donor", 1, true) ~= nil)
+    check("Hold: ...with a chat line", cm4.said("archived donor"))
+    check("Hold: ...and no carryover row yet", #carryRows() == 0)
+    res = ns.CreditsDon_Credit({ sender = "Donor1", items = { cm4.sword(1) } })
+    check("Hold: a second donation is appended to the same hold, one queue row",
+        res.status == "held" and pendingCount("Donor1") == 2 and (function()
+            local n = 0
+            for _, r in ipairs(ns.creditsDb.dynamicReviewQueue) do if r.name == "Donor1" then n = n + 1 end end
+            return n == 1
+        end)())
+    check("Hold: ReleasePending leaves an unconfirmed archived donor alone",
+        ns.Credits_ReleasePending() == 0 and pendingCount("Donor1") == 2 and ns.creditsDb.toonIndex["donor1"] == nil)
+    check("Hold: the dispatch knows the name is placeable (guild member)", ns.CreditsDon_ArchivedPlaceable("Donor1") == true)
+    check("Hold: a non-officer cannot confirm or decline", (function()
+        currentPlayerName = "Donor2"
+        local a = ns.Credits_ConfirmArchived("Donor1")
+        local b = ns.Credits_DeclineArchived("Donor1")
+        currentPlayerName = "Officer1"
+        return a == false and b == false and pendingCount("Donor1") == 2 and queueRow("Donor1") ~= nil
+    end)())
+    check("Hold: Confirm is refused for a name with no hold", ns.Credits_ConfirmArchived("Nobody") == false)
+
+    -- Confirm: releases everything held, carryover once, before the donation rows.
+    check("Confirm: succeeds for an officer", ns.Credits_ConfirmArchived("Donor1") == true)
+    local d1 = ns.creditsDb.ledger[ns.creditsDb.toonIndex["donor1"]]
+    check("Confirm: the account gets 100 carried over + 2 x 50 rep and only the donations' credits",
+        d1 and d1.lifetimePoints == 200 and d1.credits == 1)
+    check("Confirm: exactly one carryover row, 100 rep, 0 credits",
+        #carryRows() == 1 and carryRows()[1].rep == 100 and carryRows()[1].credits == 0)
+    check("Confirm: the hold and the queue row are gone", pendingCount("Donor1") == 0 and queueRow("Donor1") == nil)
+    res = ns.CreditsDon_Credit({ sender = "Donor1", items = { cm4.sword(1) } })
+    check("Confirm: later donations credit directly, with no second carryover",
+        res.status == "credited" and #carryRows() == 1 and d1.lifetimePoints == 250)
+
+    -- Not them: released without history, and the carryover is blocked for good.
+    setupArchived()
+    ns.CreditsDon_Credit({ sender = "Donor1", items = { cm4.sword(1) } })
+    check("Decline: succeeds for an officer", ns.Credits_DeclineArchived("Donor1") == true)
+    d1 = ns.creditsDb.ledger[ns.creditsDb.toonIndex["donor1"]]
+    check("Decline: the donation is credited but NOT the old history",
+        d1 and d1.lifetimePoints == 50 and d1.credits == 0.5)
+    check("Decline: a zero-rep marker row with the carryover's id is logged",
+        #carryRows() == 1 and carryRows()[1].id == "carry-donor1" and carryRows()[1].rep == 0
+        and carryRows()[1].what:find("NOT carried over", 1, true) ~= nil)
+    check("Decline: the hold and the queue row are gone", pendingCount("Donor1") == 0 and queueRow("Donor1") == nil)
+    res = ns.CreditsDon_Credit({ sender = "Donor1", items = { cm4.sword(1) } })
+    check("Decline: a later donation credits directly with no carryover ever",
+        res.status == "credited" and d1.lifetimePoints == 100 and #carryRows() == 1)
+
+    -- Not in the guild and on no account: Confirm is refused; Not them turns it
+    -- into an ordinary held donation that Link releases without the history.
+    setupArchived()
+    ns.CreditsDon_Credit({ sender = "ArchiveMan", items = { cm4.sword(2) } })
+    check("Unplaceable: the name is not placeable", ns.CreditsDon_ArchivedPlaceable("ArchiveMan") == false)
+    check("Unplaceable: Confirm is refused", ns.Credits_ConfirmArchived("ArchiveMan") == false
+        and queueRow("ArchiveMan").issue == "archived_donor" and pendingCount("ArchiveMan") == 1)
+    check("Unplaceable: Not them succeeds", ns.Credits_DeclineArchived("ArchiveMan") == true)
+    check("Unplaceable: ...the row becomes an ordinary held donation, still held",
+        queueRow("ArchiveMan") and queueRow("ArchiveMan").issue == "unresolved_donor" and pendingCount("ArchiveMan") == 1)
+    local bLife = ns.creditsDb.ledger["MainB"].lifetimePoints
+    check("Unplaceable: linking releases the donation WITHOUT the history",
+        ns.Credits_LinkAlt("ArchiveMan", "MainB") == true
+        and ns.creditsDb.ledger["MainB"].lifetimePoints == bLife + 100
+        and #carryRows() == 1 and carryRows()[1].rep == 0)
+
+    -- Linking an unconfirmed archived donor counts as confirming it.
+    setupArchived()
+    ns.CreditsDon_Credit({ sender = "ArchiveMan", items = { cm4.sword(2) } })
+    bLife = ns.creditsDb.ledger["MainB"].lifetimePoints
+    check("Link confirms: linking an archived donor's row applies the history once",
+        ns.Credits_LinkAlt("ArchiveMan", "MainB") == true
+        and ns.creditsDb.ledger["MainB"].lifetimePoints == bLife + 5612 + 100 and #carryRows() == 1)
 
     -- Non-archived sender and a zero-value donation are unaffected.
     setupArchived()
@@ -2956,11 +3040,15 @@ do
     -- "Start from scratch" clears the log, so the carryover can apply again.
     setupArchived()
     ns.CreditsDon_Credit({ sender = "Donor1", items = { cm4.sword(1) } })
+    ns.Credits_ConfirmArchived("Donor1")
     check("Carryover: reset setup - applied once", #carryRows() == 1)
     check("Carryover: Credits_ResetTestData succeeds", ns.Credits_ResetTestData() == true)
     res = ns.CreditsDon_Credit({ sender = "Donor1", items = { cm4.sword(1) } })
-    check("Carryover: after a reset the history applies again to the rebuilt account",
-        res.account.lifetimePoints == 150 and #carryRows() == 1)
+    check("Carryover: after a reset the archived donor is held for confirmation again", res.status == "held")
+    ns.Credits_ConfirmArchived("Donor1")
+    d1 = ns.creditsDb.ledger[ns.creditsDb.toonIndex["donor1"]]
+    check("Carryover: ...and confirming applies the history again to the rebuilt account",
+        d1 and d1.lifetimePoints == 150 and #carryRows() == 1)
 
     ns.CreditsArchivedDonors = origArchived
     check("Carryover: the shipped ArchivedDonors table loads (real data present)", (function()
@@ -3149,6 +3237,24 @@ do
     deliver("Officer2", msgFor(recText(linked), "Q:Rando|0|5000|removed_alt"))
     check("Release (sync link): the recipient releases when a link for the held sender arrives",
         ns.creditsDb.pendingCredits["rando"] == nil and ns.creditsDb.ledger["MainA"].lifetimePoints == life0 + 100)
+
+    -- An officer's Confirm on an archived donor arrives as nothing but a Review
+    -- Queue removal; the armed recipient must still release (with the history).
+    cm4.setup()
+    local keepArch = ns.CreditsArchivedDonors
+    ns.CreditsArchivedDonors = { donor1 = { "2026-01-01", 10, 100 } }
+    outboxLog = {}
+    ns.CreditsDon_Credit({ sender = "Donor1", items = { cm4.sword(1) } })
+    pay = payloadTo("Officer2")
+    check("Archived sync: the hold replicates as a Review Queue add with its issue",
+        pay:find("Q:Donor1|1|", 1, true) ~= nil and pay:find("|archived_donor", 1, true) ~= nil)
+    check("Archived sync: still held on the recipient", ns.creditsDb.pendingCredits["donor1"] ~= nil
+        and ns.creditsDb.toonIndex["donor1"] == nil)
+    deliver("Officer2", msgFor("Q:Donor1|0|9999999999|archived_donor"))
+    local dd = ns.creditsDb.toonIndex["donor1"] and ns.creditsDb.ledger[ns.creditsDb.toonIndex["donor1"]]
+    check("Archived sync: the officer's confirmation (queue removal only) releases it with the history",
+        ns.creditsDb.pendingCredits["donor1"] == nil and dd and dd.lifetimePoints == 150)
+    ns.CreditsArchivedDonors = keepArch
 end
 
 --------------------------------------------------------------------------

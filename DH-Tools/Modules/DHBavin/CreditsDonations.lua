@@ -327,6 +327,26 @@ local function ArchivedNote(sender)
         Fmt0(arch[2]), Fmt0(arch[3]), last)
 end
 
+-- 2026-10-09 (Loopi): an archived donor's first donation is ALWAYS held for an
+-- officer to confirm it is the same person (a name can be reused by someone
+-- new), even when the guild roster would place them automatically. True while
+-- the carryover has neither been applied nor declined (both leave the same
+-- fixed-id log row, so either one ends the hold for good).
+local function ArchivedHoldNeeded(sender)
+    local arch = ArchivedDonorFor(sender)
+    if not arch or (tonumber(arch[3]) or 0) <= 0 then return false end
+    return not HasLogId(CarryoverId(sender))
+end
+
+-- True while `sender` has a Review Queue row still waiting for that confirmation.
+local function ArchivedRowPending(sender)
+    local key = sender:lower()
+    for _, q in ipairs(ns.creditsDb.dynamicReviewQueue or {}) do
+        if (q.name or ""):lower() == key and q.issue == "archived_donor" then return true end
+    end
+    return false
+end
+
 -- Adds the carryover to `rec` if `entry.sender` is an archived donor that has
 -- not had it yet. Logs, replicates the log row and says so in chat. The
 -- caller syncs the account record (SyncChanged) as it already does for the
@@ -382,6 +402,17 @@ local function Hold(entry)
         heldCredits = heldCredits + e.credits
     end
     local day = DateString(entry.ts)
+    if ArchivedHoldNeeded(entry.sender) then
+        ns.Credits_AddToReviewQueue(entry.sender, "archived_donor",
+            ("held donation - %s rep / %s credits waiting for an officer to confirm this is the archived donor"):format(Fmt(held), Fmt(heldCredits))
+                .. ArchivedNote(entry.sender),
+            day ~= "" and day or nil)
+        SyncChanged(nil, { { name = entry.sender, present = true, issue = "archived_donor" } },
+            { pendingAdded = { entry } })
+        Say(("Held %s rep / %s credits for %s: archived donor - an officer must confirm it is the same person (Review Queue)."):format(
+            Fmt(held), Fmt(heldCredits), entry.sender))
+        return
+    end
     ns.Credits_AddToReviewQueue(entry.sender, "unresolved_donor",
         ("held donation - %s rep / %s credits waiting for an officer to link this name"):format(Fmt(held), Fmt(heldCredits))
             .. ArchivedNote(entry.sender),
@@ -431,7 +462,12 @@ function ns.CreditsDon_Credit(donation)
     end
 
     local wasQueued = InDynamicQueue(entry.sender)
-    local rec, touched, mutated = ns.CreditsDon_ResolveAccount(entry.sender)
+    local rec, touched, mutated
+    -- An archived donor is held for an officer to confirm - the ledger is not
+    -- touched (no auto-placed account) until that happens.
+    if not ArchivedHoldNeeded(entry.sender) then
+        rec, touched, mutated = ns.CreditsDon_ResolveAccount(entry.sender)
+    end
     if not rec then
         Hold(entry)
         return { status = "held", entry = entry }
@@ -476,7 +512,7 @@ function ns.Credits_ReleasePending()
     for _, senderLower in ipairs(senders) do
         local list = db.pendingCredits[senderLower]
         local sender = list and list[1] and list[1].sender
-        if sender then
+        if sender and not ArchivedRowPending(sender) then
             local rec, touched = ns.CreditsDon_ResolveAccount(sender)
             if rec then
                 local keys, ids = {}, {}
@@ -499,6 +535,84 @@ function ns.Credits_ReleasePending()
     end
     if released > 0 and ns.CreditsConfig_Refresh then ns.CreditsConfig_Refresh() end
     return released
+end
+
+--------------------------------------------------------------------------
+-- Archived-donor confirmation (2026-10-09, Loopi)
+--------------------------------------------------------------------------
+-- An archived donor's donation sits in the Review Queue as "archived_donor"
+-- until an officer decides:
+--   Confirm  - yes, same person: the row clears, the held donation is released
+--              and the old history is carried over once (ApplyCarryover).
+--   Not them - a reused name: the held donation is released WITHOUT the
+--              history. A zero-rep log row with the carryover's own fixed id is
+--              written, which both blocks the carryover for good and
+--              replicates to the other officers like any log row.
+-- Both need the name to be placeable (already on an account, or a guild
+-- member). A name that is neither is resolved with the row's Link / New Main
+-- buttons as before. The row removal replicates through the ordinary Review
+-- Queue stamps; the armed recipient client releases when it sees it.
+local function ArchivedPlaceable(name)
+    local db = ns.creditsDb
+    local key = db.toonIndex and db.toonIndex[name:lower()]
+    if key and db.ledger[key] then return true end
+    return ns.IsGuildMember(ns.NormalizeName(name)) and true or false
+end
+ns.CreditsDon_ArchivedPlaceable = function(name) return ns.creditsDb and ArchivedPlaceable(name) or false end
+
+function ns.Credits_ConfirmArchived(name)
+    if not ns.CanManageCreditsConfigLocal() then return false, "not an officer" end
+    if not ns.creditsDb or not name or not ArchivedRowPending(name) then
+        return false, "that name isn't waiting for confirmation"
+    end
+    if not ArchivedPlaceable(name) then
+        return false, "that name is not in the guild or on an account yet - use Link or New Main"
+    end
+    ns.Credits_RemoveFromReviewQueue(name)
+    SyncChanged(nil, { { name = name, present = false } })
+    Say(("%s confirmed as the archived donor by %s."):format(name, UnitName and UnitName("player") or "an officer"))
+    ns.Credits_ReleasePending() -- only acts on the armed recipient client
+    if ns.CreditsConfig_Refresh then ns.CreditsConfig_Refresh() end
+    return true
+end
+
+function ns.Credits_DeclineArchived(name)
+    if not ns.CanManageCreditsConfigLocal() then return false, "not an officer" end
+    if not ns.creditsDb or not name or not ArchivedRowPending(name) then
+        return false, "that name isn't waiting for confirmation"
+    end
+    local id = CarryoverId(name)
+    if not HasLogId(id) then
+        LogEntry({
+            id = id,
+            ts = Now(),
+            kind = "carryover",
+            account = "",
+            sender = name,
+            what = "Earlier donations NOT carried over - an officer said this is a different person",
+            rep = 0,
+            credits = 0,
+            officer = UnitName and UnitName("player") or "",
+        })
+    end
+    if ArchivedPlaceable(name) then
+        ns.Credits_RemoveFromReviewQueue(name)
+        SyncChanged(nil, { { name = name, present = false } })
+        Say(("%s marked as NOT the archived donor by %s; no history will be carried over."):format(
+            name, UnitName and UnitName("player") or "an officer"))
+        ns.Credits_ReleasePending()
+    else
+        -- Cannot be placed yet: turn the row into an ordinary held donation so
+        -- Link / New Main apply as usual - the history is now blocked.
+        local rep, credits = ns.CreditsDon_HeldTotals(name)
+        ns.Credits_AddToReviewQueue(name, "unresolved_donor",
+            ("held donation - %s rep / %s credits waiting for an officer to link this name"):format(Fmt(rep), Fmt(credits)))
+        SyncChanged(nil, { { name = name, present = true, issue = "unresolved_donor" } })
+        Say(("%s marked as NOT the archived donor by %s; link them to an account to release the donation."):format(
+            name, UnitName and UnitName("player") or "an officer"))
+    end
+    if ns.CreditsConfig_Refresh then ns.CreditsConfig_Refresh() end
+    return true
 end
 
 --------------------------------------------------------------------------

@@ -1690,7 +1690,7 @@ local function BuildReviewQueueTab(content)
     hint:SetPoint("RIGHT", -16, 0)
     hint:SetJustifyH("LEFT")
     hint:SetWordWrap(true)
-    hint:SetText("Donor names that aren't tied to an account yet - either Step 0 couldn't map them as of its last run, or an officer removed them from an account's alt list. Linking or setting as a new main here is Distribution Officer only and takes effect immediately for live crediting. \"New Main\" seeds the row's real historical lifetime total (raw gold x10, same convention as everywhere else). A \"held donation\" row is someone who mailed a donation but isn't on any account or in the guild: their rep and credits are held and are applied automatically (on the mail recipient's client) as soon as you link them or make them a new main.")
+    hint:SetText("Donor names that aren't tied to an account yet - either Step 0 couldn't map them as of its last run, or an officer removed them from an account's alt list. Linking or setting as a new main here is Distribution Officer only and takes effect immediately for live crediting. \"New Main\" seeds the row's real historical lifetime total (raw gold x10, same convention as everywhere else). A \"held donation\" row is someone who mailed a donation but isn't on any account or in the guild: their rep and credits are held and are applied automatically (on the mail recipient's client) as soon as you link them or make them a new main. An \"archived donor\" row is a name that also appears in the pre-reseed archive: the new donation is held until you press Confirm (it is them - their earlier history is carried over once) or Not them (a different person - nothing is carried over); linking or New Main also counts as confirming.")
 
     local filterLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     filterLabel:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", -2, -12)
@@ -1966,6 +1966,26 @@ local function BuildReviewQueueTab(content)
             row.status = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
             row.status:SetPoint("LEFT", row.setMainBtn, "RIGHT", 6, 0)
 
+            -- Archived-donor rows (issue "archived_donor"): the donation is
+            -- held until an officer says whether this is the same person as
+            -- the archived (pre-reseed) donor. Confirm = yes, apply their
+            -- earlier history; Not them = no, never carry it over. Both
+            -- release the held donation.
+            row.confirmBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            row.confirmBtn:SetSize(70, 18)
+            row.confirmBtn:SetPoint("TOPLEFT", row.info, "BOTTOMLEFT", 0, -4)
+            row.confirmBtn:SetText("Confirm")
+
+            row.declineBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            row.declineBtn:SetSize(70, 18)
+            row.declineBtn:SetText("Not them")
+
+            row.archStatus = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            row.archStatus:SetPoint("LEFT", row.declineBtn, "RIGHT", 6, 0)
+
+            row.confirmBtn:Hide()
+            row.declineBtn:Hide()
+
             row:Hide()
             rows[i] = row
         end
@@ -1987,7 +2007,10 @@ local function BuildReviewQueueTab(content)
         for _, rec in ipairs(source) do
             if typed == "" or (rec.name or ""):lower():find(typed, 1, true) then
                 -- resolved = the name now belongs to an account (alt OR main)
-                if not showResolved and toonIndex[(rec.name or ""):lower()] then
+                -- An archived-donor row is pending work even once the name is
+                -- on an account (that is exactly when Confirm shows), so it is
+                -- never hidden as "resolved".
+                if not showResolved and rec.issue ~= "archived_donor" and toonIndex[(rec.name or ""):lower()] then
                     hiddenResolved = hiddenResolved + 1
                 else
                     table.insert(list, rec)
@@ -2063,12 +2086,16 @@ local function BuildReviewQueueTab(content)
                     -- CM4: a donation from this name is being HELD until an
                     -- officer links them (or makes them a new main).
                     tag = "|cffff9933held donation|r"
+                elseif rec.issue == "archived_donor" then
+                    -- Name matches a donor from before the reseed; their
+                    -- donation is held until an officer confirms it is them.
+                    tag = "|cffff66ccarchived donor|r"
                 else
                     tag = "|cff999999unmapped|r"
                 end
                 local dateText = (rec.latestDonation and rec.latestDonation ~= "") and rec.latestDonation or "no date"
                 local heldText = ""
-                if rec.issue == "unresolved_donor" and ns.CreditsDon_HeldTotals then
+                if (rec.issue == "unresolved_donor" or rec.issue == "archived_donor") and ns.CreditsDon_HeldTotals then
                     local heldRep, heldCredits = ns.CreditsDon_HeldTotals(rec.name)
                     heldText = (" - holding |cffffd100%s rep / %s credits|r"):format(
                         ns.CreditsDon_Fmt(heldRep), ns.CreditsDon_Fmt(heldCredits))
@@ -2086,7 +2113,45 @@ local function BuildReviewQueueTab(content)
                 if not linkedMain and ns.creditsDb and ns.creditsDb.toonIndex then
                     isOwnMain = ns.creditsDb.toonIndex[(rec.name or ""):lower()] ~= nil
                 end
-                if linkedMain then
+                -- Archived-donor rows: reset the extra controls, then show
+                -- Confirm / Not them (placeable) or Link / New Main plus
+                -- Not them (not placeable yet - linking or New Main also
+                -- settles it and releases the donation).
+                row.confirmBtn:Hide()
+                row.declineBtn:Hide()
+                row.archStatus:SetText("")
+                local isArchived = rec.issue == "archived_donor"
+                local archPlaceable = isArchived and ns.CreditsDon_ArchivedPlaceable
+                    and ns.CreditsDon_ArchivedPlaceable(rec.name) or false
+                local function ArchResult(ok, reason)
+                    if ok then
+                        ns.CreditsConfig_Refresh()
+                    else
+                        row.archStatus:SetText("|cffff3333" .. tostring(reason or "Refused") .. "|r")
+                        C_Timer.After(3, function() row.archStatus:SetText("") end)
+                    end
+                end
+                if isArchived and archPlaceable then
+                    row.linkedText:Hide()
+                    row.unlinkBtn:Hide()
+                    row.linkArrow:Hide()
+                    row.linkEdit:Hide()
+                    row.linkBtn:Hide()
+                    row.setMainBtn:Hide()
+                    row.status:Hide()
+                    row.declineBtn:ClearAllPoints()
+                    row.declineBtn:SetPoint("LEFT", row.confirmBtn, "RIGHT", 6, 0)
+                    row.confirmBtn:Show()
+                    row.declineBtn:Show()
+                    if canManage then row.confirmBtn:Enable() else row.confirmBtn:Disable() end
+                    if canManage then row.declineBtn:Enable() else row.declineBtn:Disable() end
+                    row.confirmBtn:SetScript("OnClick", function()
+                        ArchResult(ns.Credits_ConfirmArchived(rec.name))
+                    end)
+                    row.declineBtn:SetScript("OnClick", function()
+                        ArchResult(ns.Credits_DeclineArchived(rec.name))
+                    end)
+                elseif linkedMain then
                     row.linkedText:SetText("|cff33ff99-> " .. linkedMain .. "|r")
                     row.linkedText:Show()
                     row.unlinkBtn:Show()
@@ -2121,6 +2186,15 @@ local function BuildReviewQueueTab(content)
                     if canManage then row.linkEdit:Enable() else row.linkEdit:Disable() end
                     if canManage then row.linkBtn:Enable() else row.linkBtn:Disable() end
                     if canManage then row.setMainBtn:Enable() else row.setMainBtn:Disable() end
+                    if isArchived then
+                        row.declineBtn:ClearAllPoints()
+                        row.declineBtn:SetPoint("LEFT", row.setMainBtn, "RIGHT", 70, 0)
+                        row.declineBtn:Show()
+                        if canManage then row.declineBtn:Enable() else row.declineBtn:Disable() end
+                        row.declineBtn:SetScript("OnClick", function()
+                            ArchResult(ns.Credits_DeclineArchived(rec.name))
+                        end)
+                    end
                     row.linkBtn:SetScript("OnClick", function()
                         local typedMain = row.linkEdit:GetText()
                         row.linkEdit:ClearFocus()
