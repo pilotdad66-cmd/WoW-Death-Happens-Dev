@@ -1,6 +1,6 @@
 # DH-Tools
 
-**Version 2.2.0** | Author: **Loopi** | For: *Death Happens* Hardcore guild
+**Version 2.2.1** | Author: **Loopi** | For: *Death Happens* Hardcore guild
 
 ---
 
@@ -57,6 +57,41 @@ you actually want running, all managed from one place.
 ---
 
 ## Changelog
+
+### 2.2.1
+- **New (in testing): see your own reputation and credits.** View my Account
+  and the Store's credits line now show your balance, pulled from any
+  online officer and refreshed when it changes. A Refresh button on the
+  account window asks again (5-minute cooldown). It carries the note
+  "Module in Testing. Data may be old." because it is new.
+- **New: archived donors are confirmed by an officer.** If a donor's name
+  also appears in the old (pre-reseed) donor archive, their new donation
+  is held and flagged "archived donor" in the Review Queue. An officer
+  presses Confirm (it is them: held donations are released and the earlier
+  history is added once, worth 0 credits) or Not them (a different person
+  using the name: released with no history). Linking the name or making it
+  a new main also counts as confirming.
+- **New: carryover of earlier donations** for returning archived donors
+  (shown as "Carryover" in the Audit Log).
+- **New: Points Editor update** — items now carry gold value, category,
+  stack size and phrase fields, the item text is built from them (and can
+  still be hand-edited), and the Add-item form requires item ID, category,
+  gold (0 is fine, never negative) and points. The Bavin sync prefix moved
+  to V5, so officers should all update together.
+- **New: Roster search + Add name** so officers can fix the roster by hand
+  (new main, alt or Discord name).
+- **New: two General macros, Recruitment 1 and Recruitment 2**, for the
+  /1 guild recruitment posts (they show the Guild Tabard).
+- **Changed: DH-Air's "claimed first" message.** When two warlocks pick
+  the same person in the same moment, the loser is now told it was
+  "claimed first by" the other warlock instead of the misleading
+  "timed out".
+- **Known issues:** the archived-donor carryover and the member balance
+  view have not been exercised in game yet (they were verified with the
+  automated tests only) — please report anything odd. A report that
+  DH-Air's Confirm/Abort buttons sometimes do nothing for one warlock is
+  still being investigated; /reload and make sure everyone runs the same
+  version.
 
 ### 2.2.0
 - **New: a Credit, Reputation Point and Guild Store module is being staged for in-game testing.**
