@@ -737,6 +737,12 @@ function DHAir:Sync_OnAddonMessage(prefix, message, channel, sender)
     elseif msgType == "CLAIM" then
         local name, claimer = rest:match("^(.-)|(.+)$")
         if name and claimer then
+            -- 2026-10-09 (Loopi-reported): was our own pick's claim already past
+            -- CLAIM_TTL_SECONDS when theirs arrived? Decides which message the
+            -- abandon below prints - a lost same-instant tie-break (two auto-
+            -- summons picking the same new joiner) is not a timeout.
+            local before = self:GetClaim(name)
+            local wasStale = before ~= nil and self:IsClaimStale(before)
             self:StoreClaim(name, claimer)
             -- If we were mid-claim OR already sitting "ready" (picked and
             -- claimed, awaiting a Confirm click) on the same player and
@@ -749,7 +755,9 @@ function DHAir:Sync_OnAddonMessage(prefix, message, channel, sender)
             -- (Summon.lua) for the full story.
             local claim = self:GetClaim(name)
             if claim and claim.by ~= myName and self.AbandonPendingPick then
-                self:AbandonPendingPick(name, "timed out and was picked up by " .. self:NormalizeName(claimer))
+                self:AbandonPendingPick(name, wasStale
+                    and ("timed out and was picked up by " .. self:NormalizeName(claimer))
+                    or ("was claimed first by " .. self:NormalizeName(claimer) .. " (same-moment pick)"))
             end
         end
 
