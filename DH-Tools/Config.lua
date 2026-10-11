@@ -2048,6 +2048,120 @@ local function CreateOfficerSettingsPanel(parent)
     creditsLockedNote:SetText("|cffff3333Distribution Officers, guild leader and Donation Recipient only.|r")
     creditsLockedNote:Hide()
 
+    --------------------------------------------------------------------
+    -- Section 6: DH-Tools versions in the guild (2026-10-11, Loopi).
+    -- "Check versions" asks every online copy of DH-Tools for its version
+    -- (Core.lua's StartVersionCheck - no new message type, so old clients
+    -- answer too). Results are this session only, grouped by version,
+    -- plus online guild members who didn't answer.
+    --------------------------------------------------------------------
+    local verHeading = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    verHeading:SetPoint("TOPLEFT", creditsOpenBtn, "BOTTOMLEFT", -4, -22)
+    verHeading:SetText("DH-Tools Versions")
+
+    local verHint = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    verHint:SetPoint("TOPLEFT", verHeading, "BOTTOMLEFT", 4, -6)
+    verHint:SetPoint("RIGHT", -16, 0)
+    verHint:SetJustifyH("LEFT")
+    verHint:SetWordWrap(true)
+    verHint:SetText("Asks every online guild member running DH-Tools which version they have. Each copy reports its last published version. Online members who don't answer either don't have DH-Tools or are on a version older than 2.0.2.")
+
+    local verBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    verBtn:SetSize(140, 22)
+    verBtn:SetPoint("TOPLEFT", verHint, "BOTTOMLEFT", 0, -8)
+    verBtn:SetText("Check versions")
+
+    local verStatus = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    verStatus:SetPoint("LEFT", verBtn, "RIGHT", 10, 0)
+
+    local verList = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    verList:SetPoint("TOPLEFT", verBtn, "BOTTOMLEFT", 0, -10)
+    verList:SetPoint("RIGHT", -16, 0)
+    verList:SetJustifyH("LEFT")
+    verList:SetJustifyV("TOP")
+    verList:SetWordWrap(true)
+
+    -- Newest version first; numeric compare per segment.
+    local function VersionKey(v)
+        local a, b, c = (v or ""):match("^(%d+)%.(%d+)%.(%d+)$")
+        return (tonumber(a) or 0) * 1e6 + (tonumber(b) or 0) * 1e3 + (tonumber(c) or 0)
+    end
+
+    local function RefreshVersions()
+        local me = UnitName("player")
+        local byVersion, answered = {}, {}
+        local function Add(name, v)
+            byVersion[v] = byVersion[v] or {}
+            table.insert(byVersion[v], name)
+            answered[name] = true
+        end
+        if me then Add(me .. " (you)", DHTools.LAST_RELEASE_VERSION or "?") ; answered[me] = true end
+        for name, info in pairs(DHTools.peerVersions or {}) do
+            Add(name, info.version)
+        end
+        local versions = {}
+        for v in pairs(byVersion) do table.insert(versions, v) end
+        table.sort(versions, function(x, y) return VersionKey(x) > VersionKey(y) end)
+
+        local lines = {}
+        for _, v in ipairs(versions) do
+            local names = byVersion[v]
+            table.sort(names)
+            local color = (v == DHTools.LAST_RELEASE_VERSION) and "|cff33ff99" or "|cffffd100"
+            table.insert(lines, ("%sv%s|r (%d): %s"):format(color, v, #names, table.concat(names, ", ")))
+        end
+
+        if DHTools.versionCheckAt then
+            local silent = {}
+            for name, online in pairs(DHTools.rosterOnline or {}) do
+                if online and not answered[name] then table.insert(silent, name) end
+            end
+            table.sort(silent)
+            table.insert(lines, "")
+            table.insert(lines, ("|cff999999Online, no answer (%d): %s|r"):format(#silent,
+                #silent > 0 and table.concat(silent, ", ") or "none"))
+            local replies = 0
+            for _ in pairs(DHTools.peerVersions or {}) do replies = replies + 1 end
+            verStatus:SetText(("Checked at %s - %d answered"):format(
+                date("%H:%M", DHTools.versionCheckAt), replies))
+        else
+            table.insert(lines, "")
+            table.insert(lines, "|cff999999No check run this session - only versions announced at login are listed.|r")
+        end
+        verList:SetText(table.concat(lines, "\n"))
+
+        -- Grow the scroll content to fit the list (it can be long).
+        local top, bottom = content:GetTop(), verList:GetBottom()
+        if top and bottom then
+            content:SetHeight(math.max(1500, top - bottom + 40))
+        end
+    end
+
+    -- Replies arrive in a burst; redraw at most twice a second.
+    local verRefreshPending = false
+    DHTools.OnPeerVersionsChanged = function()
+        if verRefreshPending or not panel:IsVisible() then return end
+        verRefreshPending = true
+        C_Timer.After(0.5, function()
+            verRefreshPending = false
+            if panel:IsVisible() then RefreshVersions() end
+        end)
+    end
+
+    verBtn:SetScript("OnClick", function()
+        local ok, reason, left = DHTools.StartVersionCheck()
+        if not ok then
+            if reason == "cooldown" then
+                verStatus:SetText(("|cffff3333Wait %ds before checking again|r"):format(left or 0))
+            else
+                verStatus:SetText("|cffff3333Not in a guild|r")
+            end
+            return
+        end
+        RefreshVersions()
+    end)
+    panel.RefreshVersions = RefreshVersions
+
     local function RefreshRatioRow(row, xVal, yVal, canManage)
         row.xEdit:SetText(xVal and string.format("%.8g", xVal) or "")
         row.yEdit:SetText(yVal and string.format("%.8g", yVal) or "")
@@ -2060,6 +2174,10 @@ local function CreateOfficerSettingsPanel(parent)
         -- -24 (not -4) to leave room for the scrollbar, same reasoning as
         -- every other scrollable page here.
         content:SetWidth(math.max(1, scrollFrame:GetWidth() - 14))
+
+        -- Deferred one frame so the list's wrapped height is measured
+        -- after the new width has taken effect.
+        C_Timer.After(0, function() if panel:IsVisible() then RefreshVersions() end end)
 
         rankEdit:SetText(tostring(DHTools.GetOfficerMaxRank()))
         if DHTools.CanSetOfficerRankLocal() then

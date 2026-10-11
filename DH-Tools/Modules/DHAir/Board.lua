@@ -230,14 +230,16 @@ local function CreateRow(parent, index)
     -- k-0018's "isolate secure frames from the Board" rule doesn't apply.
     row.destBtn = CreateFrame("Button", nil, row)
     row.destBtn:SetAllPoints(row.destText)
+    -- DH-Tools' private tooltip (2026-10-11) - not an item tooltip.
     row.destBtn:SetScript("OnEnter", function(selfBtn)
         if not selfBtn.tooltipName then return end
-        GameTooltip:SetOwner(selfBtn, "ANCHOR_RIGHT")
-        GameTooltip:AddLine("Set destination for " .. selfBtn.tooltipName)
-        GameTooltip:AddLine("They don't need the addon - they'll get a whisper.", 0.7, 0.7, 0.7, true)
-        GameTooltip:Show()
+        local tip = (DHTools and DHTools.Tooltip) or GameTooltip
+        tip:SetOwner(selfBtn, "ANCHOR_RIGHT")
+        tip:AddLine("Set destination for " .. selfBtn.tooltipName)
+        tip:AddLine("They don't need the addon - they'll get a whisper.", 0.7, 0.7, 0.7, true)
+        tip:Show()
     end)
-    row.destBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    row.destBtn:SetScript("OnLeave", function() ((DHTools and DHTools.Tooltip) or GameTooltip):Hide() end)
     row.destBtn:Hide()
 
     row.nameText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")

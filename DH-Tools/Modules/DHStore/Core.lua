@@ -641,23 +641,25 @@ local function UpdateDiscountBadge(badge)
     -- take SetScript, which is what left the window half-built/blank).
     badge.text:SetText(label .. ": " .. pct .. "% off")
     badge:SetWidth(math.max(60, badge.text:GetStringWidth() + 6))
+    -- DH-Tools' private tooltip (2026-10-11) - not an item tooltip.
     badge:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
-        GameTooltip:SetText("DH-Store discount", 1, 1, 1)
-        GameTooltip:AddLine("Tier: " .. label, 1, 1, 1)
+        local tip = DHTools.Tooltip or GameTooltip
+        tip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+        tip:SetText("DH-Store discount", 1, 1, 1)
+        tip:AddLine("Tier: " .. label, 1, 1, 1)
         local bavin = DHTools.Bavin
         local bare = (UnitName("player") or ""):lower()
         local discordName = bavin and bavin.creditsDb and bavin.creditsDb.toonIndex and bavin.creditsDb.toonIndex[bare]
         local rec = discordName and bavin.creditsDb.ledger[discordName]
         if rec then
-            GameTooltip:AddLine("Points: " .. tostring(rec.points or 0), 0.8, 0.8, 0.8)
-            GameTooltip:AddLine("Lifetime points: " .. tostring(rec.lifetimePoints or 0), 0.8, 0.8, 0.8)
+            tip:AddLine("Points: " .. tostring(rec.points or 0), 0.8, 0.8, 0.8)
+            tip:AddLine("Lifetime points: " .. tostring(rec.lifetimePoints or 0), 0.8, 0.8, 0.8)
         else
-            GameTooltip:AddLine("No Credits ledger entry found locally yet.", 0.8, 0.8, 0.8)
+            tip:AddLine("No Credits ledger entry found locally yet.", 0.8, 0.8, 0.8)
         end
-        GameTooltip:Show()
+        tip:Show()
     end)
-    badge:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    badge:SetScript("OnLeave", function() (DHTools.Tooltip or GameTooltip):Hide() end)
 end
 
 --------------------------------------------------------------------------

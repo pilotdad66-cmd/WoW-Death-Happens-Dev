@@ -68,7 +68,10 @@ _G.GetNumGuildMembers = function() return #rosterEntries end
 _G.GetGuildRosterInfo = function(i)
     local e = rosterEntries[i]
     if not e then return nil end
-    return e.name, "Rank", e.rank
+    -- Optional fields (2026-10-11) for the roster-details/online tests;
+    -- older entries that only set name/rank behave exactly as before.
+    return e.name, e.rankName or "Rank", e.rank, e.level, e.className, e.zone,
+        e.note, e.officerNote, e.online, nil, e.classFile
 end
 _G.C_GuildInfo = { GuildRoster = function() rosterRequests = rosterRequests + 1 end }
 
@@ -346,13 +349,18 @@ DHToolsAccountDB = nil
 playerName = "TestChar"
 
 --------------------------------------------------------------------------
--- Group D: peer version-check broadcast (VER_PREFIX = "DHToolsVer",
--- LAST_RELEASE_VERSION hardcoded "2.1.4" in Core.lua - bump these fixture
--- values in lockstep whenever that literal changes, same as everywhere
--- else this constant appears; drifting out of sync is exactly what broke
--- all four checks in this group on 2026-09-25, when v2.1.1 shipped and
--- LAST_RELEASE_VERSION was bumped but these fixtures weren't)
+-- Group D: peer version-check broadcast (VER_PREFIX = "DHToolsVer").
+-- 2026-10-11: fixtures now DERIVE from Core's exposed
+-- ns.LAST_RELEASE_VERSION instead of hardcoding it. Hardcoded fixtures
+-- went stale on every release (broke all four checks on 2026-09-25 and
+-- again by v2.2.1); a release bump can no longer break this group.
 --------------------------------------------------------------------------
+
+local CUR_VER = ns.LAST_RELEASE_VERSION
+local cMaj, cMin, cPatch = CUR_VER:match("^(%d+)%.(%d+)%.(%d+)$")
+check("ns.LAST_RELEASE_VERSION is exposed and X.Y.Z-shaped", cMaj ~= nil)
+local NEWER_VER = ("%s.%s.%d"):format(cMaj, cMin, tonumber(cPatch) + 1)
+local OLDER_VER = "1.0.0"
 
 playerName = "TestChar"
 
@@ -361,22 +369,22 @@ playerName = "TestChar"
 -- isn't exposed for tests to reset, so this scenario must run FIRST,
 -- exactly once, before anything else in this group.
 local printCountBefore = #printLog
-ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsVer", "2.1.5", "GUILD", "Someone-Realm")
+ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsVer", NEWER_VER, "GUILD", "Someone-Realm")
 check("a peer announcing a newer version prints an update notice",
     #printLog == printCountBefore + 1 and printLog[#printLog]:find("newer version", 1, true) ~= nil)
 
-ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsVer", "2.1.5", "GUILD", "Someone-Realm")
+ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsVer", NEWER_VER, "GUILD", "Someone-Realm")
 check("a second identical newer-version announce does not re-print (shows once per session)",
     #printLog == printCountBefore + 1)
 
 outboxLog = {}
-ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsVer", "2.0.0", "GUILD", "Stale-Realm")
+ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsVer", OLDER_VER, "GUILD", "Stale-Realm")
 check("a peer on an older version gets a direct WHISPER reply with our version",
     #outboxLog == 1 and outboxLog[1].channel == "WHISPER"
-    and outboxLog[1].target == "Stale-Realm" and outboxLog[1].text == "2.1.4")
+    and outboxLog[1].target == "Stale-Realm" and outboxLog[1].text == CUR_VER)
 
 outboxLog, printLog = {}, {}
-ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsVer", "2.1.4", "GUILD", "SameVersion-Realm")
+ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsVer", CUR_VER, "GUILD", "SameVersion-Realm")
 check("a peer on the exact same version triggers neither a print nor a reply",
     #outboxLog == 0 and #printLog == 0)
 
@@ -394,6 +402,79 @@ outboxLog = {}
 ns.frame:Fire("CHAT_MSG_ADDON", "SomeOtherAddonPrefix", "2.0.0", "GUILD", "Other-Realm")
 check("a CHAT_MSG_ADDON on an unrelated prefix is ignored by the version checker",
     #outboxLog == 0)
+
+--------------------------------------------------------------------------
+-- Group D2 (2026-10-11): version survey - recorded versions, the "0.0.0"
+-- probe that makes every copy answer, and StartVersionCheck's gates.
+--------------------------------------------------------------------------
+
+local pv = ns.peerVersions
+check("versions heard are recorded (newer / older / same peers)",
+    pv["Someone"] and pv["Someone"].version == NEWER_VER
+    and pv["Stale"] and pv["Stale"].version == OLDER_VER
+    and pv["SameVersion"] and pv["SameVersion"].version == CUR_VER)
+check("our own echo and a malformed payload are not recorded",
+    pv["TestChar"] == nil and pv["Garbage"] == nil)
+
+outboxLog = {}
+ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsVer", ns.VERSION_PROBE, "GUILD", "Officer-Realm")
+check("a 0.0.0 probe gets a WHISPER reply carrying our last release version",
+    #outboxLog == 1 and outboxLog[1].channel == "WHISPER"
+    and outboxLog[1].target == "Officer-Realm" and outboxLog[1].text == CUR_VER)
+check("the 0.0.0 probe itself is not recorded as anyone's version", pv["Officer"] == nil)
+
+local savedInGuild = inGuild
+inGuild = false
+local okNoGuild, whyNoGuild = ns.StartVersionCheck()
+check("StartVersionCheck refuses outside a guild", okNoGuild == false and whyNoGuild == "guild")
+
+inGuild = true
+outboxLog = {}
+local okCheck = ns.StartVersionCheck()
+check("StartVersionCheck sends the probe on the guild channel",
+    okCheck == true and #outboxLog == 1 and outboxLog[1].prefix == "DHToolsVer"
+    and outboxLog[1].channel == "GUILD" and outboxLog[1].text == ns.VERSION_PROBE)
+check("StartVersionCheck clears earlier results and stamps the check time",
+    next(ns.peerVersions) == nil and ns.versionCheckAt == wallClock)
+
+local okAgain, whyAgain = ns.StartVersionCheck()
+check("a second check inside the cooldown is refused", okAgain == false and whyAgain == "cooldown")
+wallClock = wallClock + 31
+check("a check after the cooldown is allowed", ns.StartVersionCheck() == true)
+
+ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsVer", CUR_VER, "WHISPER", "Replier-Realm")
+check("a whispered reply after a check is recorded", ns.peerVersions["Replier"] ~= nil)
+
+--------------------------------------------------------------------------
+-- Group D3 (2026-10-11): roster details + online cache + private tooltip
+--------------------------------------------------------------------------
+
+local savedRoster = rosterEntries
+rosterEntries = {
+    { name = "Alpha-SkullRock", rank = 2, rankName = "Officer", level = 60, className = "Warrior",
+      classFile = "WARRIOR", zone = "Orgrimmar", note = "main", officerNote = "", online = true },
+    { name = "Bravo-SkullRock", rank = 5, rankName = "Member", level = 42, online = false },
+}
+ns.UpdateRosterRankCache()
+check("roster cache records online state per member",
+    ns.rosterOnline["Alpha"] == true and ns.rosterOnline["Bravo"] == false)
+local dA = ns.GetGuildMemberDetails("Alpha-SkullRock")
+check("GetGuildMemberDetails returns the member's roster fields",
+    dA and dA.name == "Alpha" and dA.rankName == "Officer" and dA.level == 60
+    and dA.zone == "Orgrimmar" and dA.online == true and dA.classFile == "WARRIOR")
+-- Roster re-sorted without a GUILD_ROSTER_UPDATE: cached index is stale.
+rosterEntries[1], rosterEntries[2] = rosterEntries[2], rosterEntries[1]
+local dA2 = ns.GetGuildMemberDetails("Alpha")
+check("GetGuildMemberDetails survives a re-sorted roster (re-scan on index mismatch)",
+    dA2 and dA2.name == "Alpha" and dA2.level == 60)
+check("GetGuildMemberDetails returns nil for a non-member", ns.GetGuildMemberDetails("Nobody") == nil)
+
+check("private tooltip is created and GetTooltip returns it",
+    ns.Tooltip ~= nil and ns.GetTooltip() == ns.Tooltip)
+
+rosterEntries = savedRoster
+ns.UpdateRosterRankCache()
+inGuild = savedInGuild
 
 --------------------------------------------------------------------------
 -- Group E: guild-chat item lookup (LOOKUP_PREFIX = "DHToolsLookupV1")

@@ -381,18 +381,23 @@ local function BuildCheck()
             ns.CreditsInbox_SetChecked(idx, self:GetChecked())
         end
     end)
+    -- DH-Tools' private tooltip (2026-10-11) - not an item tooltip.
     cb:SetScript("OnEnter", function(self)
-        if not GameTooltip then return end
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText("DH-Bavin credit", 1, 1, 1)
+        local tip = (DHTools and DHTools.Tooltip) or GameTooltip
+        if not tip then return end
+        tip:SetOwner(self, "ANCHOR_RIGHT")
+        tip:SetText("DH-Bavin credit", 1, 1, 1)
         if self.locked then
-            GameTooltip:AddLine("COD mail is never credited.", 1, 0.3, 0.3, true)
+            tip:AddLine("COD mail is never credited.", 1, 0.3, 0.3, true)
         else
-            GameTooltip:AddLine("Checked: what you take is credited to the donor's account. The setting carries to the next mail until you close the mailbox.", 0.8, 0.8, 0.8, true)
+            tip:AddLine("Checked: what you take is credited to the donor's account. The setting carries to the next mail until you close the mailbox.", 0.8, 0.8, 0.8, true)
         end
-        GameTooltip:Show()
+        tip:Show()
     end)
-    cb:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+    cb:SetScript("OnLeave", function()
+        local tip = (DHTools and DHTools.Tooltip) or GameTooltip
+        if tip then tip:Hide() end
+    end)
     openCheck = cb
 end
 

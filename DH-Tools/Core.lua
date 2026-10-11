@@ -199,16 +199,111 @@ local function NormalizeRosterName(name)
     return name and name:match("^([^-]+)") or name
 end
 
+-- 2026-10-11 (Loopi): the same loop also keeps online state and each
+-- member's roster index, for the Officer Settings version check (who is
+-- online but didn't answer) and the Roster hover details below.
+ns.rosterOnline = {}
+ns.rosterIndex = {}
+
 function ns.UpdateRosterRankCache()
     if not IsInGuild() then return end
     wipe(ns.rosterRankCache)
+    wipe(ns.rosterOnline)
+    wipe(ns.rosterIndex)
     local numMembers = GetNumGuildMembers and GetNumGuildMembers() or 0
     for i = 1, numMembers do
-        local name, _, rankIndex = GetGuildRosterInfo(i)
+        local name, _, rankIndex, _, _, _, _, _, isOnline = GetGuildRosterInfo(i)
         if name then
-            ns.rosterRankCache[NormalizeRosterName(name)] = rankIndex
+            local short = NormalizeRosterName(name)
+            ns.rosterRankCache[short] = rankIndex
+            ns.rosterOnline[short] = (isOnline == true) or (isOnline == 1)
+            ns.rosterIndex[short] = i
         end
     end
+end
+
+-- Full guild-roster details for one member, or nil if they aren't in the
+-- loaded roster. Reads live from GetGuildRosterInfo at the cached index
+-- (indices shift when the roster re-sorts, so the name is re-checked and
+-- the roster re-scanned on a mismatch).
+function ns.GetGuildMemberDetails(name)
+    if not name or not (IsInGuild and IsInGuild()) then return nil end
+    local short = NormalizeRosterName(name)
+    local function Read(i)
+        local n, rankName, rankIndex, level, className, zone, note, officerNote, isOnline, _, classFile = GetGuildRosterInfo(i)
+        if n and NormalizeRosterName(n) == short then
+            return {
+                name = short, rankName = rankName, rankIndex = rankIndex,
+                level = level, className = className, classFile = classFile,
+                zone = zone, note = note, officerNote = officerNote,
+                online = (isOnline == true) or (isOnline == 1),
+            }
+        end
+    end
+    local i = ns.rosterIndex[short]
+    local d = i and Read(i)
+    if d then return d end
+    local numMembers = GetNumGuildMembers and GetNumGuildMembers() or 0
+    for j = 1, numMembers do
+        d = Read(j)
+        if d then ns.rosterIndex[short] = j; return d end
+    end
+    return nil
+end
+
+-- === Private tooltip (2026-10-11, Loopi) ===
+-- DH-Tools' own non-item hover tooltips (buttons, badges, log rows, roster
+-- names) use this instead of the shared GameTooltip, so other tooltip
+-- addons that decorate GameTooltip leave them alone. ITEM tooltips stay on
+-- GameTooltip on purpose - that is where Bavin Points' OnTooltipSetItem
+-- hook adds its line. Callers use `(DHTools and DHTools.Tooltip) or
+-- GameTooltip` so a failed creation can never break a hover.
+do
+    local ok, tip = pcall(CreateFrame, "GameTooltip", "DHToolsTooltip", UIParent, "GameTooltipTemplate")
+    if ok and type(tip) == "table" then
+        if tip.Hide then tip:Hide() end
+        ns.Tooltip = tip
+    end
+end
+
+function ns.GetTooltip()
+    return ns.Tooltip or GameTooltip
+end
+
+-- Roster hover details (Bavin Rep & Credit Config > Roster). `name` is a
+-- character name; nil/"" shows only `fallback` (e.g. for a Discord name).
+function ns.ShowGuildMemberTooltip(owner, name, fallback)
+    local tip = ns.GetTooltip()
+    tip:SetOwner(owner, "ANCHOR_RIGHT")
+    if not name or name == "" then
+        tip:SetText(fallback or "Not a character", 1, 1, 1)
+        tip:Show()
+        return
+    end
+    local d = ns.GetGuildMemberDetails(name)
+    if not d then
+        tip:SetText(name, 1, 1, 1)
+        tip:AddLine("Not in the guild roster", 0.6, 0.6, 0.6)
+        tip:Show()
+        return
+    end
+    local c = d.classFile and RAID_CLASS_COLORS and RAID_CLASS_COLORS[d.classFile]
+    if c then tip:SetText(d.name, c.r, c.g, c.b) else tip:SetText(d.name, 1, 1, 1) end
+    tip:AddLine(("Level %s %s"):format(tostring(d.level or "?"), d.className or ""), 1, 1, 1)
+    tip:AddLine("Rank: " .. (d.rankName or "?"), 1, 0.82, 0)
+    if d.online then
+        tip:AddLine("Online" .. ((d.zone and d.zone ~= "") and (" - " .. d.zone) or ""), 0.2, 1, 0.2)
+    else
+        tip:AddLine("Offline", 0.6, 0.6, 0.6)
+    end
+    if d.note and d.note ~= "" then
+        tip:AddLine("Note: " .. d.note, 0.8, 0.8, 0.8, true)
+    end
+    local canSeeOfficer = (not CanViewOfficerNote) or CanViewOfficerNote()
+    if canSeeOfficer and d.officerNote and d.officerNote ~= "" then
+        tip:AddLine("Officer note: " .. d.officerNote, 0.8, 0.8, 0.8, true)
+    end
+    tip:Show()
 end
 
 -- === Shared rank gate + role access (2026-09-29, Loopi) ===
@@ -475,6 +570,10 @@ end
 -- Core.lua at all, so a test build always announces whatever the last
 -- REAL release was, never a number nobody can download.
 local LAST_RELEASE_VERSION = "2.2.1"
+-- Exposed read-only for the harness (its fixtures derive from this, so a
+-- release bump can no longer leave them stale) and the Officer Settings
+-- version list.
+ns.LAST_RELEASE_VERSION = LAST_RELEASE_VERSION
 
 local VER_PREFIX = "DHToolsVer"
 -- In-memory only, never persisted - Loopi's call: the "update available"
@@ -521,11 +620,52 @@ local function IsNewerVersion(mine, other)
     return oPatch > myPatch
 end
 
+-- === Version survey (2026-10-11, Loopi) ===
+-- Officer Settings' "Check versions" button. No new message type: it
+-- announces VERSION_PROBE ("0.0.0") on the existing DHToolsVer channel.
+-- Every DH-Tools since v2.0.2 treats that as "a peer on an older version"
+-- and whispers its LAST_RELEASE_VERSION straight back (VersionCheck_OnMessage
+-- below), so old and new clients alike answer. Every real version this
+-- client hears, from a check or from ordinary login announcements, lands in
+-- ns.peerVersions (in memory only, this session). Clients report their last
+-- PUBLISHED version, never a test-build number. Replies arrive in one burst
+-- (no jitter on the old reply path) - fine at this guild's online count.
+local VERSION_PROBE = "0.0.0"
+local VERSION_CHECK_COOLDOWN = 30
+ns.VERSION_PROBE = VERSION_PROBE
+ns.peerVersions = {}   -- shortName -> { version = "x.y.z", at = time() }
+ns.versionCheckAt = nil
+
+function ns.RecordPeerVersion(senderShort, version)
+    if not senderShort or version == VERSION_PROBE then return end
+    if not ParseVersion(version) then return end
+    ns.peerVersions[senderShort] = { version = version, at = time() }
+    if ns.OnPeerVersionsChanged then pcall(ns.OnPeerVersionsChanged) end
+end
+
+-- Returns true, or false + reason ("guild" | "cooldown", secondsLeft).
+function ns.StartVersionCheck()
+    if not (IsInGuild and IsInGuild()) then return false, "guild" end
+    local now = time()
+    if ns.versionCheckAt and now - ns.versionCheckAt < VERSION_CHECK_COOLDOWN then
+        return false, "cooldown", VERSION_CHECK_COOLDOWN - (now - ns.versionCheckAt)
+    end
+    ns.versionCheckAt = now
+    wipe(ns.peerVersions) -- the list now means "answered this check"
+    VersionRegisterPrefix()
+    VersionSend(VERSION_PROBE, "GUILD")
+    if ns.RequestGuildRoster then ns.RequestGuildRoster() end
+    if ns.OnPeerVersionsChanged then pcall(ns.OnPeerVersionsChanged) end
+    return true
+end
+
 -- Registered from the Boot section's CHAT_MSG_ADDON handler below.
 local function VersionCheck_OnMessage(prefix, message, _channel, sender)
     if prefix ~= VER_PREFIX then return end
     local senderShort = sender and sender:match("^([^-]+)") or sender
     if senderShort == UnitName("player") then return end -- ignore our own echo
+
+    ns.RecordPeerVersion(senderShort, message)
 
     if not hasShownUpdateMessage and IsNewerVersion(LAST_RELEASE_VERSION, message) then
         -- The peer's announced version is newer than ours - tell the player.

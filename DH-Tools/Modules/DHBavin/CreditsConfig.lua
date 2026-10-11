@@ -1356,6 +1356,21 @@ local function BuildRosterTab(content)
                     if Refresh then Refresh() end
                 end
             end)
+            -- Hover details from the guild roster (2026-10-11, Loopi):
+            -- rank, level/class, online + zone, notes. Discord rows aren't
+            -- characters, so they only say so.
+            nameBtn:SetScript("OnEnter", function(self)
+                if not (DHTools and DHTools.ShowGuildMemberTooltip) then return end
+                if row.entryKind == "discord" then
+                    DHTools.ShowGuildMemberTooltip(self, nil, "Discord name - not a character")
+                else
+                    DHTools.ShowGuildMemberTooltip(self, row.entryKind == "alt" and row.altName or row.mainName)
+                end
+            end)
+            nameBtn:SetScript("OnLeave", function()
+                local tip = (DHTools and DHTools.Tooltip) or GameTooltip
+                tip:Hide()
+            end)
             row.nameBtn = nameBtn
 
             row:Hide()
@@ -2501,19 +2516,21 @@ local function BuildAuditTab(content)
             row:SetScript("OnEnter", function(self)
                 if not self.logRow then return end
                 local lines = ns.CreditsLog_TooltipLines(self.logRow)
-                GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+                -- DH-Tools' private tooltip (2026-10-11) - not an item tooltip.
+                local tip = (DHTools and DHTools.Tooltip) or GameTooltip
+                tip:SetOwner(self, "ANCHOR_CURSOR")
                 for li, l in ipairs(lines) do
                     if li == 1 then
-                        GameTooltip:SetText(l[1], 1, 0.82, 0)
+                        tip:SetText(l[1], 1, 0.82, 0)
                     elseif l[2] and l[2] ~= "" then
-                        GameTooltip:AddDoubleLine(l[1], l[2], 0.8, 0.8, 0.8, 1, 1, 1)
+                        tip:AddDoubleLine(l[1], l[2], 0.8, 0.8, 0.8, 1, 1, 1)
                     else
-                        GameTooltip:AddLine(l[1], 1, 1, 1)
+                        tip:AddLine(l[1], 1, 1, 1)
                     end
                 end
-                GameTooltip:Show()
+                tip:Show()
             end)
-            row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+            row:SetScript("OnLeave", function() ((DHTools and DHTools.Tooltip) or GameTooltip):Hide() end)
             row:Hide()
             rows[i] = row
         end
