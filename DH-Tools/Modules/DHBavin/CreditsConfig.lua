@@ -1889,6 +1889,69 @@ local function BuildReviewQueueTab(content)
         suggestBox:Show()
     end
 
+    -- ONE-LINE ROWS (2026-10-12, Loopi: "get each entry for the Review
+    -- Queue onto the same row ... tighten up that window"). Each entry was
+    -- two lines (details on top, controls below, 46px per entry); now one
+    -- 22px line: Name | Type | Last donation | Held, with the controls in
+    -- a fixed-width block pinned to the right. Held truncates first at
+    -- narrow widths; hovering the row shows every detail in full. The
+    -- Credits Config window's minimum width went 420 -> 720 for this.
+    local RQ_NAME_W, RQ_TYPE_W, RQ_DATE_W, RQ_ACTIONS_W, RQ_GAP = 100, 80, 64, 336, 6
+    local RQ_ROW_H = 22
+
+    -- Shared column layout for the header line and every row, so the
+    -- header labels always sit exactly over their columns.
+    local function PlaceColumns(parent, nameFont, cellFont)
+        local function Cell(font, width)
+            local fs = parent:CreateFontString(nil, "OVERLAY", font)
+            if width then fs:SetWidth(width) end
+            fs:SetJustifyH("LEFT")
+            fs:SetWordWrap(false)
+            return fs
+        end
+        local name = Cell(nameFont, RQ_NAME_W)
+        name:SetPoint("LEFT", 0, 0)
+        local typ = Cell(cellFont, RQ_TYPE_W)
+        typ:SetPoint("LEFT", name, "RIGHT", RQ_GAP, 0)
+        local date = Cell(cellFont, RQ_DATE_W)
+        date:SetPoint("LEFT", typ, "RIGHT", RQ_GAP, 0)
+        local actions = CreateFrame("Frame", nil, parent)
+        actions:SetPoint("TOPRIGHT", 0, 0)
+        actions:SetPoint("BOTTOMRIGHT", 0, 0)
+        actions:SetWidth(RQ_ACTIONS_W)
+        local held = Cell(cellFont)
+        held:SetPoint("LEFT", date, "RIGHT", RQ_GAP, 0)
+        held:SetPoint("RIGHT", actions, "LEFT", -RQ_GAP, 0)
+        return name, typ, date, held, actions
+    end
+
+    local headerRow = CreateFrame("Frame", nil, content)
+    headerRow:SetHeight(14)
+    headerRow:SetPoint("TOPLEFT", prevPageBtn, "BOTTOMLEFT", -4, -14)
+    headerRow:SetPoint("RIGHT", -16, 0)
+    do
+        local hName, hType, hDate, hHeld, hActions = PlaceColumns(headerRow, "GameFontNormalSmall", "GameFontNormalSmall")
+        hName:SetText("Name")
+        hType:SetText("Type")
+        hDate:SetText("Last donation")
+        hHeld:SetText("Held")
+        local hAct = hActions:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        hAct:SetPoint("LEFT", 0, 0)
+        hAct:SetText("Actions")
+    end
+
+    -- Briefly shows a red message where the Held cell is (hiding it so the
+    -- two never overlap), then restores the row.
+    local function FlashStatus(row, text, seconds)
+        row.status:SetText("|cffff3333" .. tostring(text or "Refused") .. "|r")
+        row.status:Show()
+        row.held:Hide()
+        C_Timer.After(seconds or 2, function()
+            row.status:SetText("")
+            row.held:Show()
+        end)
+    end
+
     -- Row pool still grows on demand (EnsureRowCount), but the caller
     -- below never hands it more than CONFLICTS_ROWS_PER_PAGE records,
     -- so the pool itself never grows past 100 rows regardless of list
@@ -1898,53 +1961,60 @@ local function BuildReviewQueueTab(content)
     local rows = {}
     local function EnsureRowCount(n)
         for i = #rows + 1, n do
-            local prevAnchor = rows[i - 1] or prevPageBtn
+            local prevAnchor = rows[i - 1] or headerRow
             local row = CreateFrame("Frame", nil, content)
-            -- 34 -> 40 (2026-09-25 round 4): room for row.info's larger
-            -- font below (concern #5: "character names row is too
-            -- small, hard to read") without overlapping the next row -
-            -- the row-to-row anchor gap isn't driven by rendered text
-            -- height, only by this declared SetHeight.
-            row:SetHeight(40)
-            if i == 1 then
-                row:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", -2, -24)
-            else
-                row:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 0, -6)
-            end
-            -- BUG FIX (2026-09-25, Chris: "no actual data in any row"): this
-            -- row frame previously only got SetSize(1, 34) - a literal
-            -- 1px-wide frame - with no RIGHT anchor of its own, so
-            -- row.info's own TOPLEFT+RIGHT anchors below (relative to THIS
-            -- row, not content) resolved to a negative-width region and
-            -- rendered nothing. Anchoring row's own RIGHT to content gives
-            -- it real width, same as every other stretched element in this
-            -- file (hint, etc.) - row.info's RIGHT anchor below now has
-            -- something real to stretch against.
+            row:SetHeight(RQ_ROW_H)
+            row:SetPoint("TOPLEFT", prevAnchor, "BOTTOMLEFT", 0, i == 1 and -4 or -2)
+            -- Real width from a RIGHT anchor (the 2026-09-25 "no actual data
+            -- in any row" bug was a 1px-wide row with none).
             row:SetPoint("RIGHT", -16, 0)
 
-            -- GameFontHighlightSmall -> GameFontHighlight (2026-09-25
-            -- round 4, Chris concern #5: "character names row is too
-            -- small (hard to read)").
-            row.info = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-            row.info:SetPoint("TOPLEFT", 0, 0)
-            row.info:SetPoint("RIGHT", 0, 0)
-            row.info:SetJustifyH("LEFT")
+            -- Name stays GameFontHighlight (2026-09-25 round 4, Chris
+            -- concern #5: names too small to read); the other cells are small.
+            row.name, row.typeText, row.dateText, row.held, row.actions =
+                PlaceColumns(row, "GameFontHighlight", "GameFontHighlightSmall")
 
-            row.linkedText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            row.linkedText:SetPoint("TOPLEFT", row.info, "BOTTOMLEFT", 0, -4)
+            -- Full details on hover (the Held cell truncates when narrow).
+            row:EnableMouse(true)
+            row:SetScript("OnEnter", function(self)
+                if not self.rec then return end
+                local tip = (DHTools and DHTools.Tooltip) or GameTooltip
+                tip:SetOwner(self, "ANCHOR_TOPLEFT")
+                tip:SetText(self.rec.name or "?", 1, 1, 1)
+                tip:AddLine("Type: " .. (self.tagText or "?"), 1, 1, 1)
+                tip:AddLine("Last donation: " .. (self.dateValue or "no date"), 0.8, 0.8, 0.8)
+                if self.heldValue and self.heldValue ~= "" then
+                    tip:AddLine("Holding: " .. self.heldValue, 1, 0.82, 0)
+                end
+                tip:Show()
+            end)
+            row:SetScript("OnLeave", function()
+                ((DHTools and DHTools.Tooltip) or GameTooltip):Hide()
+            end)
 
-            row.unlinkBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            local actions = row.actions
+
+            row.status = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            row.status:SetPoint("RIGHT", actions, "LEFT", -RQ_GAP, 0)
+            row.status:SetJustifyH("RIGHT")
+
+            -- Resolved state: "-> Main [Unlink]" or "Own main".
+            row.linkedText = actions:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            row.linkedText:SetPoint("LEFT", 0, 0)
+
+            row.unlinkBtn = CreateFrame("Button", nil, actions, "UIPanelButtonTemplate")
             row.unlinkBtn:SetSize(60, 18)
             row.unlinkBtn:SetPoint("LEFT", row.linkedText, "RIGHT", 8, 0)
             row.unlinkBtn:SetText("Unlink")
 
-            row.linkArrow = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            row.linkArrow:SetPoint("TOPLEFT", row.info, "BOTTOMLEFT", 0, -4)
+            -- Unresolved state: Link to: [edit] [Link] [New Main] (+ [Not them]).
+            row.linkArrow = actions:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            row.linkArrow:SetPoint("LEFT", 0, 0)
             row.linkArrow:SetText("Link to:")
 
-            row.linkEdit = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
-            row.linkEdit:SetSize(120, 18)
-            row.linkEdit:SetPoint("LEFT", row.linkArrow, "RIGHT", 6, -2)
+            row.linkEdit = CreateFrame("EditBox", nil, actions, "InputBoxTemplate")
+            row.linkEdit:SetSize(100, 18)
+            row.linkEdit:SetPoint("LEFT", row.linkArrow, "RIGHT", 8, 0)
             row.linkEdit:SetAutoFocus(false)
             row.linkEdit:SetMaxLetters(24)
             row.linkEdit:SetScript("OnEscapePressed", function(self)
@@ -1961,42 +2031,33 @@ local function BuildReviewQueueTab(content)
                 C_Timer.After(0.15, HideSuggestions)
             end)
 
-            row.linkBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-            row.linkBtn:SetSize(50, 18)
-            row.linkBtn:SetPoint("LEFT", row.linkEdit, "RIGHT", 6, 0)
+            row.linkBtn = CreateFrame("Button", nil, actions, "UIPanelButtonTemplate")
+            row.linkBtn:SetSize(44, 18)
+            row.linkBtn:SetPoint("LEFT", row.linkEdit, "RIGHT", 4, 0)
             row.linkBtn:SetText("Link")
 
-            -- "Set as New Main" (2026-09-25 round 4, Chris concern #6:
-            -- "In addition to 'link' there needs to be a 'set as new
-            -- main' option too"). Only meaningful alongside Link in the
-            -- unlinked state - promotes this name straight to being its
-            -- own main (ns.Credits_SetAsNewMain, CreditsSeed.lua),
-            -- seeded with the real lifetime total it already earned
-            -- (rec.rawGoldAmount, Step 0's own figure for this row).
-            row.setMainBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-            row.setMainBtn:SetSize(80, 18)
-            row.setMainBtn:SetPoint("LEFT", row.linkBtn, "RIGHT", 6, 0)
+            -- "Set as New Main" (2026-09-25 round 4, Chris concern #6):
+            -- promotes this name straight to its own main
+            -- (ns.Credits_SetAsNewMain, CreditsSeed.lua), seeded with the
+            -- real lifetime total it already earned (rec.rawGoldAmount).
+            row.setMainBtn = CreateFrame("Button", nil, actions, "UIPanelButtonTemplate")
+            row.setMainBtn:SetSize(70, 18)
+            row.setMainBtn:SetPoint("LEFT", row.linkBtn, "RIGHT", 4, 0)
             row.setMainBtn:SetText("New Main")
-
-            row.status = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            row.status:SetPoint("LEFT", row.setMainBtn, "RIGHT", 6, 0)
 
             -- Archived-donor rows (issue "archived_donor"): the donation is
             -- held until an officer says whether this is the same person as
             -- the archived (pre-reseed) donor. Confirm = yes, apply their
             -- earlier history; Not them = no, never carry it over. Both
             -- release the held donation.
-            row.confirmBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-            row.confirmBtn:SetSize(70, 18)
-            row.confirmBtn:SetPoint("TOPLEFT", row.info, "BOTTOMLEFT", 0, -4)
+            row.confirmBtn = CreateFrame("Button", nil, actions, "UIPanelButtonTemplate")
+            row.confirmBtn:SetSize(66, 18)
+            row.confirmBtn:SetPoint("LEFT", 0, 0)
             row.confirmBtn:SetText("Confirm")
 
-            row.declineBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-            row.declineBtn:SetSize(70, 18)
+            row.declineBtn = CreateFrame("Button", nil, actions, "UIPanelButtonTemplate")
+            row.declineBtn:SetSize(66, 18)
             row.declineBtn:SetText("Not them")
-
-            row.archStatus = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            row.archStatus:SetPoint("LEFT", row.declineBtn, "RIGHT", 6, 0)
 
             row.confirmBtn:Hide()
             row.declineBtn:Hide()
@@ -2010,7 +2071,7 @@ local function BuildReviewQueueTab(content)
         for i = #rows, 1, -1 do
             if rows[i]:IsShown() then return rows[i] end
         end
-        return prevPageBtn
+        return headerRow
     end
 
     local function FilteredSortedRows()
@@ -2112,10 +2173,16 @@ local function BuildReviewQueueTab(content)
                 local heldText = ""
                 if (rec.issue == "unresolved_donor" or rec.issue == "archived_donor") and ns.CreditsDon_HeldTotals then
                     local heldRep, heldCredits = ns.CreditsDon_HeldTotals(rec.name)
-                    heldText = (" - holding |cffffd100%s rep / %s credits|r"):format(
+                    heldText = ("%s rep / %s cr"):format(
                         ns.CreditsDon_Fmt(heldRep), ns.CreditsDon_Fmt(heldCredits))
                 end
-                row.info:SetText(("%s  (%s, last donation %s)%s"):format(rec.name or "?", tag, dateText, heldText))
+                -- One-line row (2026-10-12): one cell per column; the hover
+                -- tooltip reads rec/tagText/dateValue/heldValue.
+                row.rec, row.tagText, row.dateValue, row.heldValue = rec, tag, dateText, heldText
+                row.name:SetText(rec.name or "?")
+                row.typeText:SetText(tag)
+                row.dateText:SetText(dateText)
+                row.held:SetText(heldText ~= "" and ("|cffffd100" .. heldText .. "|r") or "")
 
                 -- Resolved either as an alt of another account
                 -- (Credits_GetAltMain) or as its own account (a
@@ -2134,7 +2201,6 @@ local function BuildReviewQueueTab(content)
                 -- settles it and releases the donation).
                 row.confirmBtn:Hide()
                 row.declineBtn:Hide()
-                row.archStatus:SetText("")
                 local isArchived = rec.issue == "archived_donor"
                 local archPlaceable = isArchived and ns.CreditsDon_ArchivedPlaceable
                     and ns.CreditsDon_ArchivedPlaceable(rec.name) or false
@@ -2142,8 +2208,7 @@ local function BuildReviewQueueTab(content)
                     if ok then
                         ns.CreditsConfig_Refresh()
                     else
-                        row.archStatus:SetText("|cffff3333" .. tostring(reason or "Refused") .. "|r")
-                        C_Timer.After(3, function() row.archStatus:SetText("") end)
+                        FlashStatus(row, reason or "Refused", 3)
                     end
                 end
                 if isArchived and archPlaceable then
@@ -2203,7 +2268,7 @@ local function BuildReviewQueueTab(content)
                     if canManage then row.setMainBtn:Enable() else row.setMainBtn:Disable() end
                     if isArchived then
                         row.declineBtn:ClearAllPoints()
-                        row.declineBtn:SetPoint("LEFT", row.setMainBtn, "RIGHT", 70, 0)
+                        row.declineBtn:SetPoint("LEFT", row.setMainBtn, "RIGHT", 4, 0)
                         row.declineBtn:Show()
                         if canManage then row.declineBtn:Enable() else row.declineBtn:Disable() end
                         row.declineBtn:SetScript("OnClick", function()
@@ -2219,16 +2284,14 @@ local function BuildReviewQueueTab(content)
                             row.linkEdit:SetText("")
                             ns.CreditsConfig_Refresh()
                         else
-                            row.status:SetText("|cffff3333Refused|r")
-                            C_Timer.After(2, function() row.status:SetText("") end)
+                            FlashStatus(row, "Refused", 2)
                         end
                     end)
                     row.setMainBtn:SetScript("OnClick", function()
                         if ns.Credits_SetAsNewMain(rec.name, rec.rawGoldAmount, rec.latestDonation) then
                             ns.CreditsConfig_Refresh()
                         else
-                            row.status:SetText("|cffff3333Refused|r")
-                            C_Timer.After(2, function() row.status:SetText("") end)
+                            FlashStatus(row, "Refused", 2)
                         end
                     end)
                 end
@@ -2731,11 +2794,13 @@ local function CreateWindow()
 
     -- Resizable (2026-09-25, Chris) - same grip/bounds idiom as
     -- PriorityEditor.lua and DH-Tools\Config.lua's own window.
+    -- Min width 420 -> 720 (2026-10-12, Loopi) so the Review Queue's
+    -- one-line rows (name/type/date + the right-pinned controls) fit.
     frame:SetResizable(true)
     if frame.SetResizeBounds then
-        pcall(frame.SetResizeBounds, frame, 420, 400, 1100, 900)
+        pcall(frame.SetResizeBounds, frame, 720, 400, 1100, 900)
     else
-        pcall(frame.SetMinResize, frame, 420, 400)
+        pcall(frame.SetMinResize, frame, 720, 400)
         pcall(frame.SetMaxResize, frame, 1100, 900)
     end
 

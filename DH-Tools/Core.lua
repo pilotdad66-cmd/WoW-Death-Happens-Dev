@@ -262,6 +262,8 @@ do
     local ok, tip = pcall(CreateFrame, "GameTooltip", "DHToolsTooltip", UIParent, "GameTooltipTemplate")
     if ok and type(tip) == "table" then
         if tip.Hide then tip:Hide() end
+        -- 80% size (2026-10-12, Loopi: "perhaps just a bit too large").
+        if tip.SetScale then tip:SetScale(0.8) end
         ns.Tooltip = tip
     end
 end
