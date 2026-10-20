@@ -2462,7 +2462,7 @@ function DHTools:Config_Open(pageKey)
         frame = CreateFrame("Frame", "DHToolsConfigFrame", UIParent, "BasicFrameTemplateWithInset")
         frame:SetSize(640, 520)
         frame:SetPoint("CENTER")
-        DHTools.InitStandaloneWindow(frame)
+        DHTools.InitStandaloneWindow(frame, nil, "tools_config")
         if frame.TitleText then
             frame.TitleText:SetText("DH-Tools Configuration")
         end

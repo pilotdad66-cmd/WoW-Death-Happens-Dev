@@ -1061,7 +1061,97 @@ end
 -- on top of whatever a frame already exposes). Ported from DH-Air's
 -- Core.lua (DHAir:InitStandaloneWindow) - same rationale applies here.
 -- Every DH-Tools window should call this once, right after creating its frame.
-function ns.InitStandaloneWindow(targetFrame, rightInset)
+--
+-- Window placement memory (2026-10-20, Loopi: "can we have windows remember
+-- their position? Especially the summoning board"). Passing a `key` as the
+-- 3rd argument makes the window reopen where it was last dragged; the
+-- placement lives in the ACCOUNT-WIDE DHToolsAccountDB.windows[key] so every
+-- alt shares one layout. `withSize` (4th argument) also restores width and
+-- height - only meaningful for resizable windows, and the CALLER must call
+-- ns.SaveWindowPlacement(frame, key, true) when its resize grip is released
+-- (this helper only sees drags of the title strip). Saved placement is
+-- validated on restore: a position that would leave the window off-screen
+-- (resolution / UI-scale change) is discarded and the window keeps whatever
+-- anchor its caller gave it. NOTE for the public-release toggle at the top
+-- of the author-admin section: dropping DHToolsAccountDB from the .toc also
+-- drops these saved placements (windows fall back to their defaults).
+local function WindowStore()
+    if type(DHToolsAccountDB) ~= "table" then return nil end
+    if type(DHToolsAccountDB.windows) ~= "table" then DHToolsAccountDB.windows = {} end
+    return DHToolsAccountDB.windows
+end
+
+function ns.SaveWindowPlacement(targetFrame, key, withSize)
+    if not targetFrame or not key or not targetFrame.GetPoint then return end
+    local store = WindowStore()
+    if not store then return end
+    local point, rel, relPoint, x, y = targetFrame:GetPoint(1)
+    -- Only UIParent-relative anchors are portable; after StopMovingOrSizing
+    -- a dragged frame is always UIParent-relative.
+    if not point or (rel and rel ~= UIParent) then return end
+    local rec = { point = point, relPoint = relPoint or point, x = x or 0, y = y or 0 }
+    if withSize then
+        rec.w, rec.h = targetFrame:GetWidth(), targetFrame:GetHeight()
+    end
+    store[key] = rec
+end
+
+function ns.RestoreWindowPlacement(targetFrame, key, withSize)
+    if not targetFrame or not key or not targetFrame.SetPoint then return false end
+    local store = WindowStore()
+    local rec = store and store[key]
+    if type(rec) ~= "table" or type(rec.point) ~= "string"
+        or type(rec.x) ~= "number" or type(rec.y) ~= "number" then
+        return false
+    end
+    -- Remember the caller's own anchor so an invalid save can fall back to it.
+    local oPoint, oRel, oRelPoint, oX, oY = targetFrame:GetPoint(1)
+    local oW, oH = targetFrame:GetWidth(), targetFrame:GetHeight()
+    if withSize and type(rec.w) == "number" and type(rec.h) == "number"
+        and rec.w >= 100 and rec.h >= 100 then
+        -- Clamp to the window's own resize bounds so a saved size from an
+        -- older build can never undercut a minimum raised since (SetSize
+        -- itself does not enforce them).
+        local w, h = rec.w, rec.h
+        if targetFrame.GetResizeBounds then
+            local minW, minH, maxW, maxH = targetFrame:GetResizeBounds()
+            if minW and minW > 0 and w < minW then w = minW end
+            if minH and minH > 0 and h < minH then h = minH end
+            if maxW and maxW > 0 and w > maxW then w = maxW end
+            if maxH and maxH > 0 and h > maxH then h = maxH end
+        end
+        targetFrame:SetSize(w, h)
+    end
+    targetFrame:ClearAllPoints()
+    targetFrame:SetPoint(rec.point, UIParent, rec.relPoint or rec.point, rec.x, rec.y)
+    -- Off-screen sanity check (needs a resolved layout; skipped if the
+    -- client can't report edges yet). 20px of the window must stay visible.
+    local l, r, t, b = targetFrame:GetLeft(), targetFrame:GetRight(), targetFrame:GetTop(), targetFrame:GetBottom()
+    local sw, sh = UIParent:GetWidth(), UIParent:GetHeight()
+    if l and r and t and b and sw and sh
+        and (r < 20 or l > sw - 20 or t < 20 or b > sh - 20) then
+        targetFrame:ClearAllPoints()
+        if oPoint then
+            targetFrame:SetPoint(oPoint, oRel or UIParent, oRelPoint or oPoint, oX or 0, oY or 0)
+        else
+            targetFrame:SetPoint("CENTER")
+        end
+        if withSize and oW and oH then targetFrame:SetSize(oW, oH) end
+        store[key] = nil
+        return false
+    end
+    return true
+end
+
+function ns.ResetWindowPlacements()
+    local store = WindowStore()
+    if not store then return 0 end
+    local n = 0
+    for k in pairs(store) do store[k] = nil; n = n + 1 end
+    return n
+end
+
+function ns.InitStandaloneWindow(targetFrame, rightInset, key, withSize)
     targetFrame:SetToplevel(true)
     -- Standard for every DH window (2026-09-29, Loopi: "they open on top"):
     -- a Raise() on every show so a window opened FROM another one (Credits
@@ -1098,7 +1188,19 @@ function ns.InitStandaloneWindow(targetFrame, rightInset)
     dragRegion:EnableMouse(true)
     dragRegion:RegisterForDrag("LeftButton")
     dragRegion:SetScript("OnDragStart", function() targetFrame:StartMoving() end)
-    dragRegion:SetScript("OnDragStop", function() targetFrame:StopMovingOrSizing() end)
+    dragRegion:SetScript("OnDragStop", function()
+        targetFrame:StopMovingOrSizing()
+        if key then ns.SaveWindowPlacement(targetFrame, key, withSize) end
+    end)
+    if key then
+        ns.RestoreWindowPlacement(targetFrame, key, withSize)
+        -- Callers that anchor/size the frame AFTER this call (or later in the
+        -- same frame) would otherwise overwrite the restore; repeat it once
+        -- next frame. Idempotent - the user cannot have dragged by then.
+        if C_Timer and C_Timer.After then
+            C_Timer.After(0, function() ns.RestoreWindowPlacement(targetFrame, key, withSize) end)
+        end
+    end
     return dragRegion
 end
 
@@ -1351,8 +1453,14 @@ SlashCmdList["DHTOOLS"] = function(msg)
             ns.HasOfficerRole(me) and "yes" or "no",
             ns.IsOfficerLocal() and "yes" or "no",
             ns.CanSetOfficerRankLocal() and "yes" or "no"))
+    elseif cmd == "resetwindows" then
+        -- Forget every saved window position/size (2026-10-20). Open windows
+        -- stay where they are until /reload; closed ones reopen at defaults.
+        local n = ns.ResetWindowPlacements()
+        ns.Print(("Cleared %d saved window position(s). /reload to apply to windows already open."):format(n))
     elseif cmd == "help" then
         ns.Print(("Commands (v%s):"):format(ns.VERSION))
+        ns.Print("  /dht resetwindows  - forget saved window positions and sizes")
         ns.Print("  /dht rank          - show the Officer Settings gate and your access")
         ns.Print("  /dht list          - show modules and their on/off state")
         ns.Print("  /dht on <module>   - enable a module")

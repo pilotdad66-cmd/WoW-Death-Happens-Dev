@@ -1012,7 +1012,7 @@ local function CreateStoreFrame()
     f:SetPoint("CENTER")
     if f.TitleText then f.TitleText:SetText("DH-Store") end
     tinsert(UISpecialFrames, "DHStoreFrame")
-    DHTools.InitStandaloneWindow(f)
+    DHTools.InitStandaloneWindow(f, nil, "store")
     frame = f
 
     -- Resizable like every other DH-Tools window (2026-09-29): bottom-right

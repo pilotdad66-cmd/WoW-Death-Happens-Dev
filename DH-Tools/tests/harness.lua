@@ -779,6 +779,101 @@ end
 -- Summary
 --------------------------------------------------------------------------
 
+--------------------------------------------------------------------------
+-- Window placement memory (2026-10-20) - ns.SaveWindowPlacement /
+-- RestoreWindowPlacement / ResetWindowPlacements and /dht resetwindows
+--------------------------------------------------------------------------
+do
+    print("== Window placement memory ==")
+    local oldUI, oldDB = _G.UIParent, _G.DHToolsAccountDB
+    local UIP = { GetWidth = function() return 1920 end, GetHeight = function() return 1080 end }
+    _G.UIParent = UIP
+    _G.DHToolsAccountDB = {}
+
+    local function mockWin(w, h, bounds)
+        local f = { w = w, h = h, pt = { "CENTER", UIP, "CENTER", 0, 0 } }
+        function f:GetPoint() return table.unpack(self.pt) end
+        function f:ClearAllPoints() self.pt = {} end
+        function f:SetPoint(p, rel, rp, x, y)
+            if rel == nil then self.pt = { p, UIP, p, 0, 0 } else self.pt = { p, rel, rp, x, y } end
+        end
+        function f:SetSize(nw, nh) self.w, self.h = nw, nh end
+        function f:GetWidth() return self.w end
+        function f:GetHeight() return self.h end
+        -- Edges are only resolvable for BOTTOMLEFT anchors in this mock; any
+        -- other anchor returns nil, which makes the off-screen check skip.
+        function f:GetLeft() if self.pt[1] == "BOTTOMLEFT" then return self.pt[4] end end
+        function f:GetBottom() if self.pt[1] == "BOTTOMLEFT" then return self.pt[5] end end
+        function f:GetRight() if self.pt[1] == "BOTTOMLEFT" then return self.pt[4] + self.w end end
+        function f:GetTop() if self.pt[1] == "BOTTOMLEFT" then return self.pt[5] + self.h end end
+        if bounds then function f:GetResizeBounds() return bounds[1], bounds[2], bounds[3], bounds[4] end end
+        return f
+    end
+
+    -- Round trip, with size.
+    local a = mockWin(580, 444)
+    a.pt = { "BOTTOMLEFT", UIP, "BOTTOMLEFT", 300, 200 }
+    ns.SaveWindowPlacement(a, "air_board", true)
+    local rec = DHToolsAccountDB.windows and DHToolsAccountDB.windows.air_board
+    check("placement: save writes DHToolsAccountDB.windows[key]",
+        rec and rec.point == "BOTTOMLEFT" and rec.x == 300 and rec.y == 200 and rec.w == 580 and rec.h == 444)
+    local b = mockWin(300, 300)
+    check("placement: restore returns true", ns.RestoreWindowPlacement(b, "air_board", true) == true)
+    check("placement: restore reapplies anchor", b.pt[1] == "BOTTOMLEFT" and b.pt[4] == 300 and b.pt[5] == 200)
+    check("placement: restore reapplies size when withSize", b.w == 580 and b.h == 444)
+
+    -- Position only leaves size alone.
+    local c = mockWin(300, 300)
+    ns.RestoreWindowPlacement(c, "air_board", false)
+    check("placement: no size restore without withSize", c.w == 300 and c.h == 300 and c.pt[4] == 300)
+
+    -- Size saved only when asked.
+    ns.SaveWindowPlacement(a, "pos_only", false)
+    check("placement: size omitted when withSize false", DHToolsAccountDB.windows.pos_only.w == nil)
+
+    -- Unknown key: untouched, returns false.
+    local d = mockWin(300, 300)
+    check("placement: unknown key returns false", ns.RestoreWindowPlacement(d, "nope", true) == false)
+    check("placement: unknown key leaves default anchor", d.pt[1] == "CENTER")
+
+    -- Off-screen record is discarded and the caller's anchor kept.
+    DHToolsAccountDB.windows.gone = { point = "BOTTOMLEFT", relPoint = "BOTTOMLEFT", x = 5000, y = 100 }
+    local e = mockWin(300, 300)
+    check("placement: off-screen record rejected", ns.RestoreWindowPlacement(e, "gone", false) == false)
+    check("placement: off-screen falls back to caller anchor", e.pt[1] == "CENTER")
+    check("placement: off-screen record is deleted", DHToolsAccountDB.windows.gone == nil)
+
+    -- Saved size is clamped to the window's own resize bounds.
+    DHToolsAccountDB.windows.small = { point = "BOTTOMLEFT", relPoint = "BOTTOMLEFT", x = 50, y = 50, w = 300, h = 200 }
+    local g = mockWin(580, 444, { 580, 354, 1000, 700 })
+    ns.RestoreWindowPlacement(g, "small", true)
+    check("placement: restored size clamped up to resize minimum", g.w == 580 and g.h == 354)
+
+    -- Non-UIParent anchors are not saved.
+    local h = mockWin(300, 300)
+    h.pt = { "TOPLEFT", {}, "BOTTOMLEFT", 5, 5 }
+    ns.SaveWindowPlacement(h, "relative", false)
+    check("placement: anchor relative to another frame is not saved", DHToolsAccountDB.windows.relative == nil)
+
+    -- Reset (helper + slash command).
+    check("placement: ResetWindowPlacements returns the count", ns.ResetWindowPlacements() == 3)
+    check("placement: reset empties the store", next(DHToolsAccountDB.windows) == nil)
+    ns.SaveWindowPlacement(a, "again", false)
+    local printsBefore = #printLog
+    SlashCmdList["DHTOOLS"]("resetwindows")
+    check("placement: /dht resetwindows clears and reports",
+        next(DHToolsAccountDB.windows) == nil and #printLog == printsBefore + 1
+        and printLog[#printLog]:find("Cleared 1 saved", 1, true) ~= nil)
+
+    -- No SavedVariables table at all: nothing throws.
+    _G.DHToolsAccountDB = nil
+    local okSave = pcall(ns.SaveWindowPlacement, a, "x", true)
+    local okRestore, restored = pcall(ns.RestoreWindowPlacement, mockWin(1, 1), "x", true)
+    check("placement: no DHToolsAccountDB is safe", okSave and okRestore and restored == false)
+
+    _G.UIParent, _G.DHToolsAccountDB = oldUI, oldDB
+end
+
 print(("DH-Tools Core.lua: %d passed, %d failed"):format(PASS, FAIL))
 if FAIL > 0 then
     print("Failures:")

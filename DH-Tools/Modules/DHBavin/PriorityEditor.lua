@@ -164,7 +164,7 @@ local function CreateEditorFrame()
     end
     tinsert(UISpecialFrames, "DHBavinPriorityEditorFrame")
 
-    DHTools.InitStandaloneWindow(frame)
+    DHTools.InitStandaloneWindow(frame, nil, "bavin_priority")
 
     frame:SetResizable(true)
     if frame.SetMinResize then frame:SetMinResize(360, 320) end

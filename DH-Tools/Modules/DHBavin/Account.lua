@@ -349,7 +349,7 @@ local function CreateAccountFrame()
     f:SetPoint("CENTER")
     if f.TitleText then f.TitleText:SetText("My Account") end
     tinsert(UISpecialFrames, "DHBavinAccountFrame")
-    DHTools.InitStandaloneWindow(f)
+    DHTools.InitStandaloneWindow(f, nil, "bavin_account")
 
     -- Resizable like every other DH-Tools window: bottom-right grip, same
     -- SetResizeBounds / SetMinResize+SetMaxResize fallback as Config.lua.

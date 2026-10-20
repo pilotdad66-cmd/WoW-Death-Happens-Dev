@@ -255,7 +255,7 @@ local function CreateEditorFrame()
     -- Toplevel raising, opaque background, and title-bar-only dragging -
     -- see Core.lua's InitStandaloneWindow for why (same fix Board.lua and
     -- Config.lua already rely on).
-    DHAir:InitStandaloneWindow(frame)
+    DHAir:InitStandaloneWindow(frame, nil, "air_destinations")
 
     -- Resizable: lets a long destination label be given more horizontal
     -- room instead of relying only on truncation (see CreateRow), and lets

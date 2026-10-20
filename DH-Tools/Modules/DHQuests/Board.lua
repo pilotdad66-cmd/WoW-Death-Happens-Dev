@@ -332,7 +332,7 @@ local function CreateBoardFrame()
     end
     tinsert(UISpecialFrames, "DHQuestsBoardFrame")
 
-    DHTools.InitStandaloneWindow(frame)
+    DHTools.InitStandaloneWindow(frame, nil, "quests_board")
 
     local grip = CreateFrame("Button", nil, frame)
     grip:SetSize(16, 16)

@@ -363,7 +363,10 @@ end
 --
 -- Every DH-Air window should call this ONCE, right after creating its
 -- frame, instead of setting these properties up by hand.
-function DHAir:InitStandaloneWindow(targetFrame, rightInset)
+-- Optional 3rd/4th args (2026-10-20): `key` / `withSize` turn on position
+-- (and size) memory via DHTools.SaveWindowPlacement / RestoreWindowPlacement
+-- (DH-Tools Core.lua, account-wide DHToolsAccountDB.windows[key]).
+function DHAir:InitStandaloneWindow(targetFrame, rightInset, key, withSize)
     targetFrame:SetToplevel(true)
     -- Standard for every DH window (2026-09-29, Loopi: "they open on top"):
     -- a Raise() on every show so a window opened FROM another one lands on
@@ -386,7 +389,20 @@ function DHAir:InitStandaloneWindow(targetFrame, rightInset)
     dragRegion:EnableMouse(true)
     dragRegion:RegisterForDrag("LeftButton")
     dragRegion:SetScript("OnDragStart", function() targetFrame:StartMoving() end)
-    dragRegion:SetScript("OnDragStop", function() targetFrame:StopMovingOrSizing() end)
+    dragRegion:SetScript("OnDragStop", function()
+        targetFrame:StopMovingOrSizing()
+        if key and DHTools and DHTools.SaveWindowPlacement then
+            DHTools.SaveWindowPlacement(targetFrame, key, withSize)
+        end
+    end)
+    if key and DHTools and DHTools.RestoreWindowPlacement then
+        DHTools.RestoreWindowPlacement(targetFrame, key, withSize)
+        -- Repeat once next frame in case the caller anchors/sizes after this
+        -- call (same reasoning as DHTools.InitStandaloneWindow).
+        if C_Timer and C_Timer.After then
+            C_Timer.After(0, function() DHTools.RestoreWindowPlacement(targetFrame, key, withSize) end)
+        end
+    end
     return dragRegion
 end
 

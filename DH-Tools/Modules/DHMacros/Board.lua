@@ -105,7 +105,7 @@ local function BuildFrame()
     frame = CreateFrame("Frame", "DHToolsMacrosBoardFrame", UIParent, "BasicFrameTemplateWithInset")
     frame:SetSize(480, 400)
     frame:SetPoint("CENTER")
-    DHTools.InitStandaloneWindow(frame)
+    DHTools.InitStandaloneWindow(frame, nil, "macros_board")
     if frame.TitleText then frame.TitleText:SetText("DH-Tools: Macros") end
     tinsert(UISpecialFrames, "DHToolsMacrosBoardFrame")
 

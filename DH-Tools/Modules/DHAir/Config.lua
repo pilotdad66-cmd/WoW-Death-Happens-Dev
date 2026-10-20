@@ -937,7 +937,7 @@ function DHAir:Config_Open()
         -- Toplevel raising, opaque background, and title-bar-only dragging -
         -- see Core.lua's InitStandaloneWindow for why (this is also what
         -- fixed the Board window's identical overlap/dragging bugs).
-        DHAir:InitStandaloneWindow(frame)
+        DHAir:InitStandaloneWindow(frame, nil, "air_config")
         if frame.TitleText then
             frame.TitleText:SetText("DH-Air Configuration")
         end

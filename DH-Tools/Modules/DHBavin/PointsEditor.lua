@@ -553,7 +553,7 @@ local function CreateEditorFrame()
     -- Toplevel raising, opaque background, title-bar-only dragging - see
     -- DH-Tools Core.lua's InitStandaloneWindow. Dot-call, not colon: it's
     -- a plain shared function hung off the DHTools table.
-    DHTools.InitStandaloneWindow(frame)
+    DHTools.InitStandaloneWindow(frame, nil, "bavin_points")
 
     frame:SetResizable(true)
     if frame.SetMinResize then frame:SetMinResize(560, 520) end

@@ -2782,7 +2782,7 @@ local function CreateWindow()
     end
     tinsert(UISpecialFrames, "DHBavinCreditsConfigFrame")
 
-    DHTools.InitStandaloneWindow(frame)
+    DHTools.InitStandaloneWindow(frame, nil, "bavin_credits")
 
     -- 2026-10-04 (Loopi: this window "is still set to always on top - it
     -- blocks other windows"): the explicit SetFrameStrata("HIGH") that

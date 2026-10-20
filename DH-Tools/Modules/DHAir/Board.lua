@@ -729,7 +729,9 @@ local function CreateBoardFrame()
 
     -- Toplevel raising, opaque background, and title-bar-only dragging -
     -- see Core.lua's InitStandaloneWindow for why.
-    local dragRegion = DHAir:InitStandaloneWindow(frame)
+    -- Position + size memory (2026-10-20, Loopi): key "air_board", size
+    -- saved by the resize grip's OnMouseUp below.
+    local dragRegion = DHAir:InitStandaloneWindow(frame, nil, "air_board", true)
     -- Keep the UIParent-anchored secure click-catchers tracking the window
     -- (see PositionSecureOverlays above). Drag stop / show / hide are all
     -- hardware-event or out-of-combat contexts; in-combat cases queue.
@@ -769,6 +771,9 @@ local function CreateBoardFrame()
     grip:SetScript("OnMouseDown", function() frame:StartSizing("BOTTOMRIGHT") end)
     grip:SetScript("OnMouseUp", function()
         frame:StopMovingOrSizing()
+        if DHTools and DHTools.SaveWindowPlacement then
+            DHTools.SaveWindowPlacement(frame, "air_board", true)
+        end
         DHAir:Board_Refresh()
         PositionSecureOverlays() -- resize moves abortBtn's corner
     end)
