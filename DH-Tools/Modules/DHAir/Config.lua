@@ -411,7 +411,7 @@ local function CreateChannelRow(parent, baseline, channelKey, channelLabel, rowI
         self:ClearFocus()
     end)
     edit:SetScript("OnTextChanged", function(self, isUserInput)
-        if onFieldChanged then onFieldChanged(channelKey, isUserInput) end
+        if onFieldChanged then onFieldChanged(channelKey, isUserInput, self) end
     end)
 
     check:SetScript("OnClick", function(self)
@@ -475,7 +475,7 @@ local function CreateWrapMessageBox(parent, name, anchorTo, xOfs, yOfs, rows, ge
         self:ClearFocus()
     end)
     edit:SetScript("OnTextChanged", function(self, isUserInput)
-        onFieldChanged(fieldKey, isUserInput)
+        onFieldChanged(fieldKey, isUserInput, self)
     end)
     edit:SetScript("OnCursorChanged", function(self, x, y, w, h)
         scroll:SetVerticalScroll(math.min(scroll:GetVerticalScrollRange(), math.max(0, -y - h)))
@@ -565,9 +565,32 @@ local function CreateMessagesPanel(parent)
             unsavedLabel:SetText(dirty and "|cffffcc00Unsaved changes|r" or "")
         end
     end
-    local function OnFieldChanged(key, isUserInput)
-        textDirty[key] = isUserInput and true or false
+    -- 2026-10-21 (Warlock-reported on v2.2.1: pasting a line, or pressing
+    -- Enter after typing, switched Save Changes off and the edit couldn't
+    -- be saved): dirty used to be `isUserInput` from the LAST OnTextChanged
+    -- call, so any later OnTextChanged with isUserInput false (whatever the
+    -- client fires on paste / Enter-ClearFocus) erased a real unsaved
+    -- edit. Dirty is now derived from the CONTENT: a field is dirty when
+    -- its text differs from `baseline[key]` (the text last set by Refresh
+    -- or last saved), so no event flag can desync it. isUserInput is kept
+    -- in the signature but deliberately unused.
+    local baseline = {} -- key -> text last populated or saved
+    local function OnFieldChanged(key, isUserInput, edit)
+        if edit and baseline[key] ~= nil then
+            textDirty[key] = (edit:GetText() ~= baseline[key])
+        else
+            textDirty[key] = false
+        end
         RefreshSaveState()
+    end
+    -- Programmatic fill (Refresh): set the baseline FIRST so the
+    -- OnTextChanged this SetText fires reads as clean, then re-read it
+    -- from the box in case SetMaxLetters truncated the text.
+    local function Populate(key, edit, text)
+        baseline[key] = text
+        edit:SetText(text)
+        baseline[key] = edit:GetText()
+        textDirty[key] = false
     end
 
     for i, info in ipairs(CHANNELS) do
@@ -652,7 +675,7 @@ local function CreateMessagesPanel(parent)
         self:ClearFocus()
     end)
     giEdit:SetScript("OnTextChanged", function(self, isUserInput)
-        OnFieldChanged("__guildInstructions", isUserInput)
+        OnFieldChanged("__guildInstructions", isUserInput, self)
     end)
     giEdit:SetScript("OnCursorChanged", function(self, x, y, w, h)
         giScroll:SetVerticalScroll(math.min(giScroll:GetVerticalScrollRange(), math.max(0, -y - h)))
@@ -739,6 +762,7 @@ local function CreateMessagesPanel(parent)
         DHAir.db.destSetMessage = DHAir.DEFAULT_DEST_SET_MESSAGE
         DHAir.db.destClearedMessage = DHAir.DEFAULT_DEST_CLEARED_MESSAGE
         textDirty = {}
+        baseline = {}
         panel.Refresh()
     end)
 
@@ -764,6 +788,14 @@ local function CreateMessagesPanel(parent)
         DHAir.db.guildInstructions = giEdit:GetText()
         DHAir.db.destSetMessage = destSetEdit:GetText()
         DHAir.db.destClearedMessage = destClearedEdit:GetText()
+        -- Saved text is the new baseline, so every field reads clean.
+        baseline = {}
+        for _, info in ipairs(CHANNELS) do
+            baseline[info.key] = rows[info.key].edit:GetText()
+        end
+        baseline["__guildInstructions"] = giEdit:GetText()
+        baseline["__destSetMessage"] = destSetEdit:GetText()
+        baseline["__destClearedMessage"] = destClearedEdit:GetText()
         textDirty = {}
         RefreshSaveState()
     end)
@@ -785,17 +817,17 @@ local function CreateMessagesPanel(parent)
             local row = rows[info.key]
             row.check:SetChecked(cfg.enabled)
             if not textDirty[info.key] then
-                row.edit:SetText(cfg.text)
+                Populate(info.key, row.edit, cfg.text)
             end
         end
         if not textDirty["__guildInstructions"] then
-            giEdit:SetText(DHAir.db.guildInstructions or "")
+            Populate("__guildInstructions", giEdit, DHAir.db.guildInstructions or "")
         end
         if not textDirty["__destSetMessage"] then
-            destSetEdit:SetText(DHAir.db.destSetMessage or DHAir.DEFAULT_DEST_SET_MESSAGE)
+            Populate("__destSetMessage", destSetEdit, DHAir.db.destSetMessage or DHAir.DEFAULT_DEST_SET_MESSAGE)
         end
         if not textDirty["__destClearedMessage"] then
-            destClearedEdit:SetText(DHAir.db.destClearedMessage or DHAir.DEFAULT_DEST_CLEARED_MESSAGE)
+            Populate("__destClearedMessage", destClearedEdit, DHAir.db.destClearedMessage or DHAir.DEFAULT_DEST_CLEARED_MESSAGE)
         end
         RefreshSaveState()
     end
