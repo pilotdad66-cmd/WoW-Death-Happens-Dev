@@ -120,11 +120,95 @@ local function MatchesInvitePattern(msg)
     return false
 end
 
+-- 2026-10-21 (Warlock-reported on v2.2.1): people who whisper the code
+-- phrase while ALREADY in another group can't be invited - the game answers
+-- "<name> is already in a group." as a system message. We remember that
+-- (local only, never synced) so the Board can say "in other group" instead
+-- of offering an Invite button that can't work, and we whisper them once
+-- to leave their group. The flag clears when they show up in our group,
+-- when we invite them again, or after INVITE_BLOCK_SECONDS.
+local INVITE_BLOCK_SECONDS = 120
+local IN_GROUP_WHISPER_COOLDOWN = 60
+local blockedUntil = {}      -- normalized name -> GetTime() deadline
+local lastGroupWhisper = {}  -- normalized name -> GetTime() of our last whisper
+
 local function DoInvite(name)
+    blockedUntil[DHAir:NormalizeName(name)] = nil -- a fresh attempt resets the "in other group" mark
     if C_PartyInfo and C_PartyInfo.InviteUnit then
         C_PartyInfo.InviteUnit(name)
     else
         InviteUnit(name)
+    end
+end
+
+-- Board's Invite button (goes through the same flag reset as auto-invite).
+function DHAir:InvitePlayer(name)
+    DoInvite(name)
+end
+
+-- True while `name` is marked as "invite failed: already in another group"
+-- and has not since joined our group / timed out.
+function DHAir:IsInOtherGroup(name)
+    local key = self:NormalizeName(name)
+    local deadline = blockedUntil[key]
+    if not deadline then return false end
+    if GetTime() >= deadline or (self.FindGroupUnitByName and self.FindGroupUnitByName(name)) then
+        blockedUntil[key] = nil
+        return false
+    end
+    return true
+end
+
+-- Turns the game's ERR_ALREADY_IN_GROUP_S format string ("%s is already in
+-- a group.") into a Lua pattern capturing the name.
+local function AlreadyInGroupPattern()
+    local fmt = _G.ERR_ALREADY_IN_GROUP_S or "%s is already in a group."
+    local p = fmt:gsub("%%s", "\1"):gsub("%p", "%%%0"):gsub("\1", "(.+)")
+    return "^" .. p .. "$"
+end
+
+-- Called from Core.lua's CHAT_MSG_SYSTEM handler. Only reacts for someone
+-- who is waiting (not yet summoned) in OUR queue - that is what makes it
+-- an Air Service invite rather than some unrelated /invite.
+function DHAir:HandleSystemMessage(msg)
+    if not self.db or type(msg) ~= "string" then return end
+    local who = msg:match(AlreadyInGroupPattern())
+    if not who then return end
+
+    local key = self:NormalizeName(who)
+    local entry
+    for _, e in ipairs(self.db.queue) do
+        if not e.summoned and self:NormalizeName(e.name) == key then
+            entry = e
+            break
+        end
+    end
+    if not entry then return end
+
+    local now = GetTime()
+    blockedUntil[key] = now + INVITE_BLOCK_SECONDS
+
+    -- Whisper at most once per cooldown, however many invites fail (a
+    -- requester spamming the phrase must not get spammed back).
+    local whispered = false
+    if not (lastGroupWhisper[key] and (now - lastGroupWhisper[key]) < IN_GROUP_WHISPER_COOLDOWN) then
+        lastGroupWhisper[key] = now
+        local template = self.db.inGroupMessage
+        if template == nil then template = self.DEFAULT_IN_GROUP_MESSAGE end
+        if template ~= "" then
+            SendChatMessage(self:BuildMessage(template, key), "WHISPER", nil, entry.name)
+            whispered = true
+        end
+    end
+    self:Print(key .. " is already in another group" .. (whispered and " - I whispered them to leave it." or "."))
+
+    if self.Board_Refresh then self:Board_Refresh() end
+    if C_Timer and C_Timer.After then
+        -- The mark expires on its own; refresh the Board once it has so the
+        -- row goes back to offering Invite.
+        C_Timer.After(INVITE_BLOCK_SECONDS + 1, function()
+            if DHAir.Board_Refresh then DHAir:Board_Refresh() end
+        end)
     end
 end
 

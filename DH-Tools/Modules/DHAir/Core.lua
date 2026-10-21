@@ -51,6 +51,14 @@ local DEFAULT_DEST_CLEARED_MESSAGE = "[Air Service] Your summon destination has 
 DHAir.DEFAULT_DEST_SET_MESSAGE = DEFAULT_DEST_SET_MESSAGE
 DHAir.DEFAULT_DEST_CLEARED_MESSAGE = DEFAULT_DEST_CLEARED_MESSAGE
 
+-- 2026-10-21 (Warlock-reported on v2.2.1): whispered to a queued player
+-- when our invite to them fails because they are already in another group
+-- (see Invite.lua's HandleSystemMessage). The requester almost never has
+-- the addon, so this whisper is the only way they learn why no invite
+-- arrived. Editable on the Messages page; an empty text turns it off.
+DHAir.DEFAULT_IN_GROUP_MESSAGE = "[Air Service] I can't invite you because you're already in a group. "
+    .. "Leave your group and whisper me again - I'll invite you right away."
+
 -- Bounds for db.summonTimeout (the stuck-summon fallback - see
 -- @kb:channel-driven-advance). Exported so Config.lua's slider and the
 -- ADDON_LOADED migration below can't disagree about the legal range.
@@ -123,6 +131,7 @@ local defaults = {
     -- only the summoner whose own client sends the whisper ever needs it.
     destSetMessage = DEFAULT_DEST_SET_MESSAGE,
     destClearedMessage = DEFAULT_DEST_CLEARED_MESSAGE,
+    inGroupMessage = DHAir.DEFAULT_IN_GROUP_MESSAGE, -- see above; local-only, never synced
     -- ordered list of { name, summoned, role, queuedAt, destination, note }
     -- `note` is local-only free text and never crosses the wire (D6).
     -- Summoned entries stay here flagged rather than being removed, and are
@@ -482,6 +491,9 @@ DHAir.frame:RegisterEvent("CHAT_MSG_RAID_LEADER")
 DHAir.frame:RegisterEvent("CHAT_MSG_PARTY")
 DHAir.frame:RegisterEvent("CHAT_MSG_PARTY_LEADER")
 DHAir.frame:RegisterEvent("GROUP_ROSTER_UPDATE")
+-- 2026-10-21: "<name> is already in a group." arrives as a system message
+-- after our invite fails - see Invite.lua's HandleSystemMessage.
+DHAir.frame:RegisterEvent("CHAT_MSG_SYSTEM")
 DHAir.frame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 DHAir.frame:RegisterEvent("UNIT_SPELLCAST_FAILED")
 DHAir.frame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
@@ -507,6 +519,11 @@ function DHAir.OnEvent(event, ...)
         local msg, sender = ...
         if DHAir.HandlePublicChat then
             DHAir:HandlePublicChat(msg, sender)
+        end
+    elseif event == "CHAT_MSG_SYSTEM" then
+        local msg = ...
+        if DHAir.HandleSystemMessage then
+            DHAir:HandleSystemMessage(msg)
         end
     elseif event == "GROUP_ROSTER_UPDATE" then
         if DHAir.TrySummonNext then

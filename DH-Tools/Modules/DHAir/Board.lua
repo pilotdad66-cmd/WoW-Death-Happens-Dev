@@ -127,6 +127,12 @@ local function GetRowAction(entry)
         return "summon", true
     end
     if DHAir:HasPermission("invite") then
+        -- 2026-10-21 (Warlock-reported): our invite already bounced because
+        -- they're in ANOTHER group - an Invite button can't work, say so
+        -- (clears when they join us, we re-invite, or ~2 minutes pass).
+        if DHAir.IsInOtherGroup and DHAir:IsInOtherGroup(entry.name) then
+            return "othergroup", false
+        end
         return "invite", true
     end
     return "notinraid", false
@@ -390,6 +396,9 @@ local function RenderRow(row, entry, index)
                 if DHAir.ManualSummon then DHAir:ManualSummon(entry.name, false) end
                 DHAir:Board_Refresh()
             end)
+        elseif mode == "othergroup" then
+            row.actionText:SetText("in other group")
+            row.actionText:Show()
         elseif mode == "invite" and clickable then
             row.actionBtn:SetText("Invite")
             row.actionBtn:Show()
@@ -397,7 +406,11 @@ local function RenderRow(row, entry, index)
             -- C_PartyInfo.InviteUnit aren't restricted the way
             -- TargetUnit/CastSpellByName are.
             row.actionBtn:SetScript("OnClick", function()
-                if C_PartyInfo and C_PartyInfo.InviteUnit then
+                -- Goes through DHAir:InvitePlayer (Invite.lua) so a retry
+                -- also clears the "in other group" mark.
+                if DHAir.InvitePlayer then
+                    DHAir:InvitePlayer(entry.name)
+                elseif C_PartyInfo and C_PartyInfo.InviteUnit then
                     C_PartyInfo.InviteUnit(entry.name)
                 else
                     InviteUnit(entry.name)

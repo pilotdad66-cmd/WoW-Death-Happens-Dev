@@ -2145,6 +2145,69 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 2026-10-21 (Warlock-reported on v2.2.1): people who are NOT in the
+-- Warlock's group must not block the auto-summon queue, and an invite that
+-- bounces with "<name> is already in a group." is remembered, whispered
+-- once, and cleared again when they join / are re-invited / time out.
+--------------------------------------------------------------------------
+print("== Not-in-group entries don't block auto-summon ==")
+resetState()
+inGroup = true
+groupRoster = { "Bob" }
+QueueAddWithDest("Alice") -- first in the queue, but never joined the group
+QueueAddWithDest("Bob")   -- behind her, and actually in the group
+check("QueueNextAvailable skips the not-in-group head entry",
+    (function() local e = DHAir:QueueNextAvailable(false); return e and e.name == "Bob" end)())
+check("Auto-summon arms the in-group player behind a not-in-group head",
+    DHAir.currentSummon == "Bob" and DHAir.summonState == "ready")
+check("The skipped entry stays queued, not removed or marked summoned",
+    summonedFlag("Alice") == false and #DHAir.db.queue == 2)
+groupRoster = { "Bob", "Alice" } -- Alice finally joins
+check("Once she joins, she is eligible again (queue order kept)",
+    (function() DHAir.currentSummon = nil; DHAir.summonState = "idle"
+        local e = DHAir:QueueNextAvailable(false); return e and e.name == "Alice" end)())
+
+print("== Invite bounced: already in another group ==")
+resetState()
+inGroup, groupRoster = false, {}
+DHAir:QueueAdd("Carol")
+check("Not flagged before any failed invite", DHAir:IsInOtherGroup("Carol") == false)
+DHAir.frame:Fire("CHAT_MSG_SYSTEM", "Someone is already in a group.")
+check("A system message about someone NOT in our queue is ignored",
+    DHAir:IsInOtherGroup("Someone") == false and #chatLog == 0)
+DHAir.frame:Fire("CHAT_MSG_SYSTEM", "Carol is already in a group.")
+check("Queued player is flagged 'in other group'", DHAir:IsInOtherGroup("Carol") == true)
+check("They get exactly one whisper telling them to leave their group",
+    #chatLog == 1 and chatLog[1].channel == "WHISPER" and chatLog[1].target == "Carol"
+    and chatLog[1].msg == DHAir.DEFAULT_IN_GROUP_MESSAGE)
+DHAir.frame:Fire("CHAT_MSG_SYSTEM", "Carol is already in a group.")
+check("A repeat failure inside the cooldown does not whisper again", #chatLog == 1)
+gameTime = gameTime + 61
+DHAir.frame:Fire("CHAT_MSG_SYSTEM", "Carol is already in a group.")
+check("After the cooldown a repeat failure whispers again", #chatLog == 2)
+DHAir:InvitePlayer("Carol")
+check("Re-inviting clears the mark and really invites", DHAir:IsInOtherGroup("Carol") == false
+    and invitedPlayers["Carol"] == 1)
+DHAir.frame:Fire("CHAT_MSG_SYSTEM", "Carol is already in a group.")
+check("Flagged again by the next failure", DHAir:IsInOtherGroup("Carol") == true)
+inGroup, groupRoster = true, { "Carol" }
+check("Joining our group clears the mark", DHAir:IsInOtherGroup("Carol") == false)
+inGroup, groupRoster = false, {}
+DHAir.frame:Fire("CHAT_MSG_SYSTEM", "Carol is already in a group.")
+check("Flagged once more", DHAir:IsInOtherGroup("Carol") == true)
+gameTime = gameTime + 121
+check("The mark expires on its own after a couple of minutes", DHAir:IsInOtherGroup("Carol") == false)
+chatLog = {}
+gameTime = gameTime + 61
+DHAir.db.inGroupMessage = ""
+DHAir.frame:Fire("CHAT_MSG_SYSTEM", "Carol is already in a group.")
+check("An empty message turns the whisper off (still flagged on the Board)",
+    #chatLog == 0 and DHAir:IsInOtherGroup("Carol") == true)
+DHAir.db.inGroupMessage = DHAir.DEFAULT_IN_GROUP_MESSAGE
+check("db.inGroupMessage defaults to the shared constant",
+    DHAir.DEFAULT_IN_GROUP_MESSAGE ~= nil and DHAir.DEFAULT_IN_GROUP_MESSAGE ~= "")
+
+--------------------------------------------------------------------------
 -- Summary
 --------------------------------------------------------------------------
 print("")

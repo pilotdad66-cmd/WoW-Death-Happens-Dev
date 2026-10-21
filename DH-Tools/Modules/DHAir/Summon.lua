@@ -161,7 +161,18 @@ function DHAir:QueueNextAvailable(sharing)
         -- (ManualSummon looks up its target directly, unfiltered by this).
         if not entry.summoned and entry.destination == self.db.warlockDestination
             and entry.role ~= "summoner" and entry.role ~= "clicker"
-            and not (self.db.guildOnly and not self:IsGuildMember(entry.name)) then
+            and not (self.db.guildOnly and not self:IsGuildMember(entry.name))
+            -- 2026-10-21 (Warlock-reported on v2.2.1): only people who are
+            -- actually IN our group/raid are auto-summon candidates. Before
+            -- this, the first queued entry won even when they never joined
+            -- (e.g. they whispered the code phrase while already in some
+            -- other group, so the invite could not land); BeginCast then
+            -- found no unit and gave up, and the next roster update picked
+            -- the same entry again - blocking every valid player behind
+            -- them until the Warlock picked each by hand. Not-in-group
+            -- entries are SKIPPED, not removed: they keep their queue
+            -- position and become eligible the moment they join.
+            and FindGroupUnitByName(entry.name) then
             if not sharing then
                 return entry
             end

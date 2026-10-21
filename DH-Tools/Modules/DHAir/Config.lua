@@ -533,7 +533,7 @@ local function CreateMessagesPanel(parent)
     -- plus this page's margins. Height is generous headroom for every
     -- section below, not a tight fit - unused space just scrolls past.
     local scrollChild = CreateFrame("Frame", nil, scrollFrame)
-    scrollChild:SetSize(360, 800)
+    scrollChild:SetSize(360, 920) -- +120 (2026-10-21) for the Already In A Group box
     scrollFrame:SetScrollChild(scrollChild)
 
     local hint = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
@@ -738,6 +738,17 @@ local function CreateMessagesPanel(parent)
     local destClearedEdit, destClearedBg = CreateWrapMessageBox(scrollChild, "DHAirDestClearedMsg", destClearedLabel, 0, -8, 2,
         function() return DHAir.db.destClearedMessage end, OnFieldChanged, "__destClearedMessage")
 
+    -- 2026-10-21 (Warlock-reported on v2.2.1): whispered when our invite to
+    -- a queued player fails because they're already in another group (see
+    -- Invite.lua's HandleSystemMessage). Empty text = send nothing.
+    local inGroupLabel = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    inGroupLabel:SetPoint("TOP", destClearedBg, "BOTTOM", 0, -14)
+    inGroupLabel:SetPoint("LEFT", hint, "LEFT", 6, 0)
+    inGroupLabel:SetText("Already In A Group (whispered when an invite fails; empty = off)")
+
+    local inGroupEdit, inGroupBg = CreateWrapMessageBox(scrollChild, "DHAirInGroupMsg", inGroupLabel, 0, -8, 3,
+        function() return DHAir.db.inGroupMessage end, OnFieldChanged, "__inGroupMessage")
+
     -- Restore Default Messages (2026-08-16: at the bottom of the scrolling
     -- content, below the Destination Whisper boxes, per Loopi - it's a
     -- reset action, kept visually last and separate from the everyday
@@ -748,7 +759,7 @@ local function CreateMessagesPanel(parent)
     -- routine page-revisit refresh).
     local resetBtn = CreateFrame("Button", nil, scrollChild, "UIPanelButtonTemplate")
     resetBtn:SetSize(180, 22)
-    resetBtn:SetPoint("TOP", destClearedBg, "BOTTOM", 0, -16)
+    resetBtn:SetPoint("TOP", inGroupBg, "BOTTOM", 0, -16)
     resetBtn:SetPoint("LEFT", hint, "LEFT", 0, 0)
     resetBtn:SetText("Restore Default Messages")
     resetBtn:SetScript("OnClick", function()
@@ -761,6 +772,7 @@ local function CreateMessagesPanel(parent)
         DHAir.db.guildInstructions = DHAir.DEFAULT_GUILD_INSTRUCTIONS
         DHAir.db.destSetMessage = DHAir.DEFAULT_DEST_SET_MESSAGE
         DHAir.db.destClearedMessage = DHAir.DEFAULT_DEST_CLEARED_MESSAGE
+        DHAir.db.inGroupMessage = DHAir.DEFAULT_IN_GROUP_MESSAGE
         textDirty = {}
         baseline = {}
         panel.Refresh()
@@ -788,6 +800,7 @@ local function CreateMessagesPanel(parent)
         DHAir.db.guildInstructions = giEdit:GetText()
         DHAir.db.destSetMessage = destSetEdit:GetText()
         DHAir.db.destClearedMessage = destClearedEdit:GetText()
+        DHAir.db.inGroupMessage = inGroupEdit:GetText()
         -- Saved text is the new baseline, so every field reads clean.
         baseline = {}
         for _, info in ipairs(CHANNELS) do
@@ -796,6 +809,7 @@ local function CreateMessagesPanel(parent)
         baseline["__guildInstructions"] = giEdit:GetText()
         baseline["__destSetMessage"] = destSetEdit:GetText()
         baseline["__destClearedMessage"] = destClearedEdit:GetText()
+        baseline["__inGroupMessage"] = inGroupEdit:GetText()
         textDirty = {}
         RefreshSaveState()
     end)
@@ -828,6 +842,11 @@ local function CreateMessagesPanel(parent)
         end
         if not textDirty["__destClearedMessage"] then
             Populate("__destClearedMessage", destClearedEdit, DHAir.db.destClearedMessage or DHAir.DEFAULT_DEST_CLEARED_MESSAGE)
+        end
+        if not textDirty["__inGroupMessage"] then
+            local t = DHAir.db.inGroupMessage
+            if t == nil then t = DHAir.DEFAULT_IN_GROUP_MESSAGE end -- "" is a real value (= off)
+            Populate("__inGroupMessage", inGroupEdit, t)
         end
         RefreshSaveState()
     end
