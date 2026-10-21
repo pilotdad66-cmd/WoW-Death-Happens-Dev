@@ -1,6 +1,6 @@
 # DH-Tools
 
-**Version 2.2.1** | Author: **Loopi** | For: *Death Happens* Hardcore guild
+**Version 2.2.2** | Author: **Loopi** | For: *Death Happens* Hardcore guild
 
 ---
 
@@ -57,6 +57,34 @@ you actually want running, all managed from one place.
 ---
 
 ## Changelog
+
+### 2.2.2
+- **New: DH windows remember where you put them.** Drag a window by its
+  title strip and it opens in the same spot next time, on all your
+  characters. The Summoning Board also remembers its size. If a saved spot
+  ends up off-screen (new resolution or UI scale) the window goes back to
+  its default place. `/dht resetwindows` puts every window back in the
+  center. This is new and has not been exercised in game yet - please
+  report anything odd.
+- **New: Officer Settings "Check versions".** Asks every online DH-Tools
+  user (v2.0.2 and later) to answer with their version, so officers can see
+  who still needs to update. Results last for the current session only.
+- **New: hover details in the Bavin Rep & Credit Config Roster.** Hovering
+  a name shows rank, level and class, online status, zone and notes from
+  the guild roster.
+- **Changed: Review Queue entries are one line each** (Name, Type, Last
+  donation, Held, with the buttons on the right), so many more fit on
+  screen. Hover a row for every detail. The Credits Config window is wider
+  by default. Column widths are a first guess and may be adjusted.
+- **Changed: DH-Tools' own tooltips use a private tooltip** (DH-Air
+  destination cell, Store discount badge, Credit Inbox checkbox, Credit Log
+  rows), scaled to 80%. Item tooltips are unchanged, so Bavin Points still
+  shows on items.
+- **Known issues:** window position memory, the member balance view and
+  the archived-donor carryover have not been exercised in game yet. A
+  report that DH-Air's Confirm/Abort buttons sometimes do nothing for one
+  warlock is still being investigated; /reload and make sure everyone runs
+  the same version.
 
 ### 2.2.1
 - **New (in testing): see your own reputation and credits.** View my Account
