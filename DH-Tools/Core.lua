@@ -793,6 +793,11 @@ local bestBidSeen = {}
 -- BID_WINDOW finalize check.
 local myBids = {}
 
+-- key -> true once ANY bid for it has been heard (ours or anyone's). Unlike
+-- bestBidSeen this is never pruned (same reasoning as lookupClaims), so the
+-- fallback's long wait below can't outlive the evidence it checks.
+local bidHeard = {}
+
 -- 2026-09-13 (Loopi): cache-miss retry for an item NONE of this client's
 -- data has ever cached before - typically an item only a guildmate, not
 -- you, has linked/seen. GetItemInfo's cache-miss behavior is to kick off
@@ -810,6 +815,10 @@ local myBids = {}
 -- for a bogus/never-resolving item ID.
 local pendingLookups = {}
 local RETRY_TIMEOUT = 5.0
+-- How long a Bavin-OFF client waits before even considering the "nobody
+-- online" fallback (2026-10-27): the whole cache-miss retry window plus
+-- one bid window, so a Bavin client's late retry bid has time to land.
+local FALLBACK_WAIT = RETRY_TIMEOUT + BID_WINDOW
 
 -- The item ID is embedded directly in the hyperlink itself
 -- (|Hitem:ITEMID:...|h[Name]|h|r) - no need to wait on GetItemInfo just
@@ -898,8 +907,18 @@ end
 -- collide - not be cryptographically random. Zero-padded so plain
 -- string comparison (`<`) sorts numerically, with the player's own name
 -- appended as an as-good-as-impossible-to-need tie-breaker.
-local function LookupTiebreak()
-    return string.format("%010d:%s", math.random(0, 999999999), (UnitName("player")))
+--
+-- 2026-10-27 (Loopi, "nobody running" false fallback): a one-character
+-- PRIORITY prefix now leads the value - "0" for a real-data answer, "1" for
+-- the "nobody has Bavin enabled" fallback - so any data bid sorts below
+-- (beats) any fallback bid. Before this, a fallback bid won on the same
+-- coin flip as a real answer. Pre-2.2.3 clients still send the old
+-- unprefixed "%010d:Name" form; the comparison stays consistent across
+-- every client (all compare the same strings), those old fallback bids
+-- just don't lose automatically until their senders update.
+local function LookupTiebreak(isFallback)
+    return string.format("%s%010d:%s", isFallback and "1" or "0",
+        math.random(0, 999999999), (UnitName("player")))
 end
 
 -- Records `tiebreak` as the new best-known bid for `key` if it beats
@@ -908,6 +927,7 @@ end
 -- moment we place it, so the comparison at finalize time always has the
 -- complete picture regardless of what order bids actually arrived in.
 local function RecordBid(key, tiebreak)
+    bidHeard[key] = true
     if not bestBidSeen[key] then
         C_Timer.After(BID_FORGET, function()
             bestBidSeen[key] = nil
@@ -938,9 +958,9 @@ end
 -- actually gets to answer. Every path that can produce a reply - real
 -- data, a cache-miss retry that resolved, and the "nobody has Bavin
 -- enabled" fallback - all go through this same function now.
-local function BidToAnswer(key, replyText)
+local function BidToAnswer(key, replyText, isFallback)
     if lookupClaims[key] then return end
-    local tiebreak = LookupTiebreak()
+    local tiebreak = LookupTiebreak(isFallback)
     myBids[key] = { tiebreak = tiebreak, reply = replyText }
     RecordBid(key, tiebreak)
     LookupSend("BID|" .. key .. "|" .. tiebreak)
@@ -1022,11 +1042,19 @@ local function LookupHandleTrigger(key, link, linkIndex)
         return
     end
 
-    -- No data-fetch to wait on here - just the same per-link stagger so
-    -- this client's own multiple fallback replies (if it wins 2+ links)
-    -- don't fire back-to-back before bidding.
-    C_Timer.After(offset, function()
-        BidToAnswer(key, link .. " " .. FALLBACK_TEXT)
+    -- 2026-10-27 (Loopi, "nobody running" reported on v2.2.2 with several
+    -- Bavin-enabled guildmates online): the fallback used to bid at t=0,
+    -- before any Bavin client had even classified (0.1-0.2s defer), and
+    -- decided at t=0.4 - so whenever the item was a cache miss for the
+    -- Bavin clients (their bid only comes via GET_ITEM_INFO_RECEIVED,
+    -- often well after 0.4s) the fallback heard no rival and claimed.
+    -- Now it waits out the whole cache-miss retry window and only bids if
+    -- NOBODY has bid for this key at all - "nobody online" is then posted
+    -- only when it's actually true. The per-link stagger is kept on top so
+    -- 2+ fallback wins still don't fire back-to-back.
+    C_Timer.After(offset + FALLBACK_WAIT, function()
+        if lookupClaims[key] or bidHeard[key] then return end
+        BidToAnswer(key, link .. " " .. FALLBACK_TEXT, true)
     end)
 end
 

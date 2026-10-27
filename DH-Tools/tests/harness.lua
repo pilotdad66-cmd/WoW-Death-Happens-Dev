@@ -545,9 +545,43 @@ ns.SetModuleEnabled("bavin", false)
 
 ns.frame:Fire("CHAT_MSG_GUILD", "?" .. ITEM_LINK, "FallbackAsker-SkullRock")
 advanceTime(1)
+check("with Bavin disabled, the fallback does NOT bid early (waits out the retry window)",
+    #outboxLog == 0 and #chatLog == 0)
+advanceTime(5)
+check("with Bavin disabled, the fallback bid carries the low-priority '1' prefix",
+    #outboxLog == 1 and outboxLog[1].text:match("^BID|.+|1%d+:") ~= nil)
 advanceTime(1)
 check("with Bavin disabled, the fallback text is bid and eventually posted",
     #chatLog == 1 and chatLog[1].text:find(FALLBACK_TEXT, 1, true) ~= nil)
+
+-- E3b (2026-10-27): the fallback stays silent if any bid is heard during its
+-- wait - the "Bavin client answered after a cache-miss retry" case.
+-- Same DJB2 key construction as Core.lua's LookupTrigger_OnChatMsgGuild.
+local function LookupKey(senderShort, linkIndex, message)
+    local h = 5381
+    for i = 1, #message do h = (h * 33 + message:byte(i)) % 4294967296 end
+    return senderShort .. ":" .. linkIndex .. ":" .. h
+end
+resetLookupState()
+ns.frame:Fire("CHAT_MSG_GUILD", "?" .. ITEM_LINK, "QuietAsker-SkullRock")
+advanceTime(1)
+ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsLookupV1",
+    "BID|" .. LookupKey("QuietAsker", 1, "?" .. ITEM_LINK) .. "|00123:Rival", "GUILD", "Rival-Realm")
+advanceTime(7)
+check("with Bavin disabled, hearing any rival bid during the wait suppresses the fallback",
+    #outboxLog == 0 and #chatLog == 0)
+
+-- E3c: a real-data bid beats our fallback bid even when its random part is
+-- higher - the priority prefix, not the coin flip, decides.
+resetLookupState()
+ns.frame:Fire("CHAT_MSG_GUILD", "?" .. ITEM_LINK, "PrioAsker-SkullRock")
+advanceTime(6) -- fallback has now bid
+local prioKey = LookupKey("PrioAsker", 1, "?" .. ITEM_LINK)
+ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsLookupV1",
+    "BID|" .. prioKey .. "|09999999999:DataClient", "GUILD", "DataClient-Realm")
+advanceTime(1)
+check("a real-data bid beats the fallback bid regardless of the random part",
+    #outboxLog == 1 and #chatLog == 0)
 
 ns.SetModuleEnabled("bavin", true)
 
