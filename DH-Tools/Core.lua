@@ -571,7 +571,7 @@ end
 -- Version line and the changelog) - build-test-zip.ps1 never touches
 -- Core.lua at all, so a test build always announces whatever the last
 -- REAL release was, never a number nobody can download.
-local LAST_RELEASE_VERSION = "2.2.2"
+local LAST_RELEASE_VERSION = "2.2.3"
 -- Exposed read-only for the harness (its fixtures derive from this, so a
 -- release bump can no longer leave them stale) and the Officer Settings
 -- version list.

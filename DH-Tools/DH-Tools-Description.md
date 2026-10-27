@@ -1,6 +1,6 @@
 # DH-Tools
 
-**Version 2.2.2** | Author: **Loopi** | For: *Death Happens* Hardcore guild
+**Version 2.2.3** | Author: **Loopi** | For: *Death Happens* Hardcore guild
 
 ---
 
@@ -57,6 +57,26 @@ you actually want running, all managed from one place.
 ---
 
 ## Changelog
+
+### 2.2.3
+- **Fixed: false "Nobody online has the Bavin Points module enabled"
+  replies.** A `?` + item link lookup could get that answer even with
+  Bavin Points users online, mostly for items they hadn't seen yet. A
+  real answer now always wins, and the "nobody online" message only
+  appears (after about 5 seconds) when no one answered at all. Players
+  still on an older version can keep causing it until they update.
+- **Updated: Bavin Points item values** from Bavin's 2026-10-25 sheet - 36
+  new items and a few value changes (Simple Bands, Gypsy Cloak, Bard's
+  Cloak and Pattern: Tough Scorpid Gloves are now 0 points). Stack sizes
+  are now included for stackable items.
+- **DH-Air: auto-summon skips queued players who aren't in your group.**
+  A failed invite ("already in a group") is flagged, whispered once, and
+  shown as "in other group" on the Summoning Board. The whisper text is
+  editable on the Messages page.
+- **DH-Air: fixed the Messages page Save button** switching itself off
+  after a paste or pressing Enter.
+- None of the above has been confirmed in game yet - please report
+  anything odd.
 
 ### 2.2.2
 - **New: DH windows remember where you put them.** Drag a window by its
