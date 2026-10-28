@@ -100,3 +100,4 @@ Modules\DHMacros\MacroLibrary.lua
 Modules\DHMacros\Board.lua
 Modules\DHStore\Core.lua
 Modules\DHStore\Sync.lua
+Modules\DHTweaks\Core.lua

@@ -164,7 +164,7 @@ local function CreateToolsPanel(parent)
     -- DHTools.moduleOrder itself (registration/activation order, .toc
     -- load order), so module activation and dependency checks are
     -- unaffected.
-    local TOOLS_ROW_ORDER = { "mobmarker", "quests", "bavin", "store", "danger", "macros", "air" }
+    local TOOLS_ROW_ORDER = { "mobmarker", "quests", "bavin", "store", "danger", "macros", "tweaks", "air" }
     local rowOrder, seenInRowOrder = {}, {}
     for _, key in ipairs(TOOLS_ROW_ORDER) do
         if DHTools.modules[key] then
