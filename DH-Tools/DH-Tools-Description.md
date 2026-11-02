@@ -1,6 +1,6 @@
 # DH-Tools
 
-**Version 2.2.3** | Author: **Loopi** | For: *Death Happens* Hardcore guild
+**Version 2.2.4** | Author: **Loopi** | For: *Death Happens* Hardcore guild
 
 ---
 
@@ -39,6 +39,10 @@ one individually from a single config window.
   book (general or character-specific) from a Class → Spec picker, or
   copy the text yourself to paste in manually. Confirms before
   overwriting an existing macro. `/dhm` opens the picker.
+- **DH-Tweaks** - small quality-of-life changes to the default UI, on by
+  default. First tweak: a **Guild Invite** entry on the right-click menu
+  for player names in chat and on player, target, party and raid frames,
+  shown only to ranks allowed to invite (Veteran and above).
 - **DH-Air Submenu** — quick access to DH-Air's Board and Config
   windows, its destination picker (grouped by Flight Points/continent and
   Dungeon Stones, plus an officer-gated Destination Config shortcut), and
@@ -57,6 +61,34 @@ you actually want running, all managed from one place.
 ---
 
 ## Changelog
+
+### 2.2.4
+- **New: DH-Tweaks module, on by default.** Its first tweak adds a
+  "Guild Invite" entry to the right-click menu on player names in chat
+  and on player, target, party and raid frames. It only appears for ranks
+  that can invite (Veteran and above in Death Happens). You can turn the
+  module off on the Tools page. Confirmed working in game.
+- **Fixed: `?` lookups answered "no data" by players on French, Spanish
+  or German game clients.** That wrong reply could win the answer and
+  stop everyone else from replying. Only English-language clients answer
+  lookups now - an English client answers any item link correctly, in any
+  language it was posted from. Players on other languages can still ask.
+- **Fixed: asking the same `?` question again got no reply from anyone.**
+  The identical message, asked again after about 20 seconds, is now
+  answered fresh.
+- **Changed: the newest DH-Tools version answers lookups first.** When
+  several players could answer the same question, the one running the
+  most recent build now wins, so a fixed version is not out-voted by an
+  older one.
+- **New: Bavin Points tooltips on French, Spanish and German game
+  clients.** Items are now matched by item ID (and random suffix such as
+  "of the Owl") instead of the English name. Hovering an action-bar item
+  that has a random suffix, and crediting donation mail, still need an
+  English client.
+- Players still on 2.2.3 or older keep posting the old wrong replies
+  until they update.
+- The lookup fixes and the foreign-language tooltips have not been
+  confirmed in game yet - please report anything odd.
 
 ### 2.2.3
 - **Fixed: false "Nobody online has the Bavin Points module enabled"
