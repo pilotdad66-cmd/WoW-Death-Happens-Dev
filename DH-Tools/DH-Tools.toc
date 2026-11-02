@@ -23,6 +23,7 @@ Libs\LibUIDropDownMenu\LibUIDropDownMenu.lua
 Widgets\ScrollList.lua
 
 Core.lua
+BuildStamp.lua
 Config.lua
 Minimap.lua
 Modules\MobMarker.lua
@@ -67,6 +68,7 @@ Modules\DHBavin\CreditsLog.lua
 Modules\DHBavin\CreditsConfig.lua
 Modules\DHBavin\Account.lua
 Modules\DHBavin\ItemPoints.lua
+Modules\DHBavin\ItemSuffixText.lua
 Modules\DHBavin\PointsEditor.lua
 Modules\DHBavin\PriorityEditor.lua
 Modules\DHBavin\Tooltip.lua

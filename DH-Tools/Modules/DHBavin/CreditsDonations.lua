@@ -119,10 +119,14 @@ function ns.CreditsDon_Value(donation)
         line.count = line.count + (tonumber(it.count) or 1)
     end
     for _, line in ipairs(order) do
-        local info = ns.GetItemPoints and ns.GetItemPoints(line.name)
+        -- itemID rides along (2026-11-02): lets a non-English client resolve the
+        -- English-keyed entry. A mail attachment has no suffix field, so a
+        -- random-suffix item still falls through to unpriced there - credit
+        -- mail from an English client.
+        local info = ns.GetItemPoints and ns.GetItemPoints(line.name, line.itemID)
         if info and info.points ~= nil then
             line.rep = Round4((tonumber(info.points) or 0) * line.count)
-            local base = ns.ITEM_POINTS and ns.ITEM_POINTS[line.name]
+            local base = ns.ITEM_POINTS and ns.ITEM_POINTS[info.canonicalName or line.name]
             line.category = (base and base.category) or "Uncategorized"
         else
             line.rep = 0

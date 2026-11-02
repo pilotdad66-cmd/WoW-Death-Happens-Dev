@@ -169,7 +169,7 @@ _G.DHTools = {
 --------------------------------------------------------------------------
 
 local ADDON_ROOT = "C:\\AIProjects-NOSYNC\\WoW\\src\\DH-Tools\\Modules\\DHBavin\\"
-local FILES = { "Core.lua", "Sync.lua", "ItemPoints.lua", "ToonDonations.lua", "ArchivedDonors.lua", "Credits.lua", "CreditsSeed.lua", "CreditsSync.lua", "CreditsMember.lua", "CreditsDonations.lua", "CreditsInbox.lua", "CreditsLog.lua" }
+local FILES = { "Core.lua", "Sync.lua", "ItemPoints.lua", "ItemSuffixText.lua", "ToonDonations.lua", "ArchivedDonors.lua", "Credits.lua", "CreditsSeed.lua", "CreditsSync.lua", "CreditsMember.lua", "CreditsDonations.lua", "CreditsInbox.lua", "CreditsLog.lua" }
 
 for _, filename in ipairs(FILES) do
     local chunk, err = loadfile(ADDON_ROOT .. filename)
@@ -4228,6 +4228,95 @@ do
     local ok3, msg3 = ns.CreditsMember_Refresh()
     check("With no officer online, Refresh says so and does not start the cooldown",
         ok3 == false and msg3:find("No officer", 1, true) ~= nil)
+end
+
+--------------------------------------------------------------------------
+-- Locale-neutral item names (2026-11-02): a French/Spanish/German client sees
+-- a localized item name, but ItemPoints.lua is keyed by the English one, so
+-- ns.GetItemPoints(name, link) must find the entry through the link. Uses the
+-- REAL shipped ItemPoints.lua + ItemSuffixText.lua, not fixtures.
+--------------------------------------------------------------------------
+print("== Locale-neutral item names ==")
+do
+    -- Earlier sections swap ns.ITEM_POINTS for fixtures; reload the shipped data.
+    local priorPoints = ns.ITEM_POINTS
+    loadfile(ADDON_ROOT .. "ItemPoints.lua")()
+    loadfile(ADDON_ROOT .. "ItemSuffixText.lua")()
+    ns.ResetItemIdIndex()
+    local realPoints, realSuffix = ns.ITEM_POINTS, ns.ITEM_SUFFIX_TEXT
+    local function suffixIdFor(text)
+        local best
+        for id, t in pairs(realSuffix) do
+            if t == text and (best == nil or id < best) then best = id end
+        end
+        return best
+    end
+    local function link(itemId, suffix, shown)
+        return ("|cffffffff|Hitem:%d:0:0:0:0:0:%d:0|h[%s]|h|r"):format(itemId, suffix or 0, shown or "Nom francais")
+    end
+    local savedLocale = _G.GetLocale
+    local fiery, intel = suffixIdFor("of Fiery Wrath"), suffixIdFor("of Intellect")
+    check("The suffix table knows 'of Fiery Wrath' and 'of Intellect'", fiery ~= nil and intel ~= nil)
+
+    -- English client: the plain name lookup, exactly as before (ref ignored).
+    _G.GetLocale = function() return "enUS" end
+    check("English client: a localized-looking name still misses (no behaviour change)",
+        ns.GetItemPoints("Bandes d'abjurateur", link(9937, fiery)) == nil)
+    check("English client: the English name hits",
+        ns.GetItemPoints("47 Pound Grouper", link(13877)).points == 0)
+
+    _G.GetLocale = function() return "frFR" end
+    local r = ns.GetItemPoints("Bandes d'abjurateur", link(9937, fiery))
+    check("French client: a random-suffix item resolves through itemID + suffix to the right member",
+        r ~= nil and r.canonicalName == "Abjurer's Bands of Fiery Wrath" and r.points == 23.9)
+    local r2 = ns.GetItemPoints("Bandes d'abjurateur", link(9937, intel))
+    check("French client: a different suffix on the same itemID picks the other member",
+        r2 ~= nil and r2.canonicalName == "Abjurer's Bands of Intellect" and r2.points == 39.8)
+    local owl = ns.GetItemPoints("Bandes d'abjurateur", link(9937, suffixIdFor("of the Owl")))
+    local eagle = ns.GetItemPoints("Bandes d'abjurateur", link(9937, suffixIdFor("of the Eagle")))
+    check("French client: 'of the Owl' and 'of the Eagle' on the same itemID pick their own entries",
+        owl and owl.canonicalName == "Abjurer's Bands of the Owl" and owl.points == 50.4
+        and eagle and eagle.canonicalName == "Abjurer's Bands of the Eagle" and eagle.points == 45.1)
+    check("French client: a suffix we have no entry for ('of the Whale') is NOT guessed",
+        ns.GetItemPoints("Bandes d'abjurateur", link(9937, suffixIdFor("of the Whale"))) == nil)
+    check("French client: an unknown suffix id is not guessed either",
+        ns.GetItemPoints("Bandes d'abjurateur", link(9937, 99999999)) == nil)
+    local r3 = ns.GetItemPoints("Mero de 47 libras", link(13877))
+    check("Spanish-style: a plain single-entry item resolves by itemID alone",
+        r3 ~= nil and r3.canonicalName == "47 Pound Grouper")
+    check("A bare itemID (the action-bar path) resolves a plain item",
+        ns.GetItemPoints("Mero", 13877) ~= nil and ns.GetItemPoints("Mero", 13877).canonicalName == "47 Pound Grouper")
+    check("A bare itemID can't tell suffix variants apart, so it finds nothing",
+        ns.GetItemPoints("Bandes", 9937) == nil)
+    check("Unknown itemID finds nothing", ns.GetItemPoints("Inconnu", link(2)) == nil)
+    check("No ref: the name-only call still works unchanged", ns.GetItemPoints("47 Pound Grouper").points == 0)
+
+    -- A live override for the English key is honoured on the localized path.
+    ns.db.itemPointsOverrides = ns.db.itemPointsOverrides or {}
+    ns.db.itemPointsOverrides["47 Pound Grouper"] = { points = 77, editedAt = 1 }
+    check("French client: an override on the English key wins",
+        ns.GetItemPoints("Mero", link(13877)).points == 77 and ns.GetItemPoints("Mero", link(13877)).isOverride == true)
+    ns.db.itemPointsOverrides["47 Pound Grouper"] = nil
+
+    -- Ambiguous family with no suffix on the link: only the name every other extends.
+    ns.ITEM_POINTS = {
+        ["Cadet's Bow"] = { points = 1, itemId = 7001 },
+        ["Cadet's Bow of Agility"] = { points = 2, itemId = 7001 },
+        ["Odd One"] = { points = 3, itemId = 7002 },
+        ["Another"] = { points = 4, itemId = 7002 },
+    }
+    ns.ResetItemIdIndex()
+    check("No suffix on the link: the base name that all others extend is chosen",
+        ns.CanonicalItemName(link(7001)) == "Cadet's Bow")
+    check("No suffix and unrelated candidates: not sure, so nil", ns.CanonicalItemName(link(7002)) == nil)
+    ns.ITEM_POINTS = realPoints
+    ns.ResetItemIdIndex()
+
+    check("Garbage refs are nil, never an error",
+        ns.CanonicalItemName(nil) == nil and ns.CanonicalItemName("not a link") == nil and ns.CanonicalItemName({}) == nil)
+    _G.GetLocale = savedLocale
+    ns.ITEM_POINTS = priorPoints
+    ns.ResetItemIdIndex()
 end
 
 --------------------------------------------------------------------------

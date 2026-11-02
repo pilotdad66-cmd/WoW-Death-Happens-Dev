@@ -518,7 +518,7 @@ end
 -- back to the baseline's when an older override (made before these fields
 -- existed) doesn't carry them. Also returned: goldValue, category,
 -- stackSize, phrase, auto (the raw stored flags, nil when not an override).
-function ns.GetItemPoints(name)
+local function LookupItemPoints(name)
     if not name then return nil end
     local overrides = ns.db and ns.db.itemPointsOverrides
     local o = overrides and overrides[name]
@@ -541,6 +541,106 @@ function ns.GetItemPoints(name)
                  goldValue = base.goldValue, category = base.category, stackSize = base.stackSize }
     end
     return nil
+end
+
+-- === Locale-neutral item names (2026-11-02, Loopi) ===
+-- ItemPoints.lua (and every override, and the sync that carries them) is keyed
+-- by the ENGLISH item name, but GetItemInfo returns the name in the CLIENT's
+-- language, so on a French/Spanish/German client every name lookup missed.
+-- ns.CanonicalItemName(ref) rebuilds the English key from what the game does
+-- give us in a language-neutral form - the item LINK (or a bare itemID):
+--   * the itemID selects the family of ItemPoints entries that share it, and
+--   * for a random-suffix item the link's suffix field (see ItemSuffixText.lua)
+--     selects the member whose English name ends in that suffix's text.
+-- Returns nil when it can't be sure (unknown itemID, an unknown suffix, or
+-- several candidates with no suffix to tell them apart) - never a guess, so a
+-- caller falls back to the name it already had. A suffix item reached by a
+-- bare itemID (the action-bar path) can't be told apart and returns nil.
+-- ns.GetItemPoints only uses this on NON-English clients; English clients
+-- keep the exact lookup they always had.
+local function ClientIsEnglish()
+    local locale = GetLocale and GetLocale()
+    return locale == nil or locale == "enUS" or locale == "enGB"
+end
+
+-- item link or itemID -> itemID, suffixField (0 when the link has none).
+-- Link fields after "item:" are itemID:enchant:gem1:gem2:gem3:gem4:suffix:...
+local function ParseItemRef(ref)
+    if type(ref) == "number" then return ref, 0 end
+    if type(ref) ~= "string" then return nil end
+    local body = ref:match("item:([%-%d:]*)")
+    if not body then return nil end
+    local fields = {}
+    for f in (body .. ":"):gmatch("([^:]*):") do fields[#fields + 1] = f end
+    local id = tonumber(fields[1])
+    if not id then return nil end
+    return id, tonumber(fields[7]) or 0
+end
+
+local idIndex -- itemID -> { English names sharing it }, built on first use
+local function BuildIdIndex()
+    idIndex = {}
+    for name, e in pairs(ns.ITEM_POINTS or {}) do
+        local id = e.itemId
+        if id then
+            local list = idIndex[id]
+            if list then list[#list + 1] = name else idIndex[id] = { name } end
+        end
+    end
+end
+-- Tests that swap ns.ITEM_POINTS need the index rebuilt.
+function ns.ResetItemIdIndex() idIndex = nil end
+
+function ns.CanonicalItemName(ref)
+    local id, suffix = ParseItemRef(ref)
+    if not id then return nil end
+    if not idIndex then BuildIdIndex() end
+    local list = idIndex[id]
+    if not list then return nil end
+    if suffix ~= 0 then
+        local text = ns.ITEM_SUFFIX_TEXT and ns.ITEM_SUFFIX_TEXT[suffix]
+        if not text then return nil end
+        local tail = " " .. text
+        local found
+        for i = 1, #list do
+            local n = list[i]
+            if #n > #tail and n:sub(-#tail) == tail then
+                if found and found ~= n then return nil end -- two different matches: not sure
+                found = n
+            end
+        end
+        return found
+    end
+    if #list == 1 then return list[1] end
+    -- Several names share the ID but the link has no suffix: only the one that
+    -- every other name extends ("Cadet's Bow" / "Cadet's Bow of Agility") fits.
+    local shortest = list[1]
+    for i = 2, #list do
+        if #list[i] < #shortest then shortest = list[i] end
+    end
+    for i = 1, #list do
+        local n = list[i]
+        if n ~= shortest and n:sub(1, #shortest + 1) ~= shortest .. " " then return nil end
+    end
+    return shortest
+end
+
+-- `ref` (optional) is the item link or itemID the name came from. On a
+-- non-English client it is resolved to the English key first (the result then
+-- carries canonicalName); everything else, and every English client, is the
+-- plain name lookup. Callers with only a name keep working unchanged.
+function ns.GetItemPoints(name, ref)
+    if ref and not ClientIsEnglish() then
+        local english = ns.CanonicalItemName(ref)
+        if english then
+            local r = LookupItemPoints(english)
+            if r then
+                r.canonicalName = english
+                return r
+            end
+        end
+    end
+    return LookupItemPoints(name)
 end
 
 -- Everything the Points Editor needs to show and rebuild one item, merged from

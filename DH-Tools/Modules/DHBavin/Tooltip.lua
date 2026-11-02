@@ -117,8 +117,10 @@ end
 
 -- Shared by both resolution paths once a name is known. Returns true
 -- (always - by this point the item IS resolved, priced or not).
-local function AddPointsLine(tooltip, name)
-    local entry = ns.GetItemPoints(name)
+local function AddPointsLine(tooltip, name, ref)
+    -- ref = the item link (or itemID) the name came from: lets a non-English
+    -- client find the English-keyed entry (ns.CanonicalItemName, 2026-11-02).
+    local entry = ns.GetItemPoints(name, ref)
     if entry then
         local r, g, b = PointsColor(entry.points)
         tooltip:AddLine("Bavin Points: " .. FormatPoints(entry.points) .. " " ..
@@ -142,9 +144,9 @@ end
 local function TryAddLine(tooltip)
     if added[tooltip] then return true end
     if not ns.GetItemPoints then return true end -- Core.lua failed to load; nothing to retry for
-    local name = tooltip:GetItem()
+    local name, link = tooltip:GetItem()
     if not name then return false end
-    return AddPointsLine(tooltip, name)
+    return AddPointsLine(tooltip, name, link)
 end
 
 -- Tooltips currently waiting on item info that hasn't arrived yet, keyed
@@ -203,7 +205,7 @@ local function OnSetAction(tooltip, slot)
     end
     local name = GetItemInfo(id)
     if name then
-        AddPointsLine(tooltip, name)
+        AddPointsLine(tooltip, name, id)
         addedSlot[tooltip] = slot
     else
         pendingItem[tooltip] = { id = id, slot = slot } -- cache miss - retry once GET_ITEM_INFO_RECEIVED fires
@@ -237,7 +239,7 @@ infoWatcher:SetScript("OnEvent", function()
         else
             local name = GetItemInfo(info.id)
             if name then
-                AddPointsLine(tooltip, name)
+                AddPointsLine(tooltip, name, info.id)
                 addedSlot[tooltip] = info.slot
                 pendingItem[tooltip] = nil
             end

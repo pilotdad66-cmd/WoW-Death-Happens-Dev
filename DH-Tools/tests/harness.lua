@@ -623,6 +623,134 @@ advanceTime(1)
 check("the retried classification's reply is posted once BID_WINDOW elapses",
     #chatLog == 1 and chatLog[1].text == "Resolved on retry")
 
+-- E6-E9 (2026-11-02): English-only answers, newest-build-wins bids, repeats.
+do
+    local savedVersion, savedStamp = ns.VERSION, ns.BUILD_STAMP
+    local function lookupKey(asker) return LookupKey(asker, 1, "?" .. ITEM_LINK) end
+    local function ask(asker) ns.frame:Fire("CHAT_MSG_GUILD", "?" .. ITEM_LINK, asker .. "-SkullRock") end
+    local function rank(version, minutes) return string.format("%09d%08d", 999999999 - version, 99999999 - minutes) end
+    local function rival(key, tiebreak)
+        ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsLookupV1", "BID|" .. key .. "|" .. tiebreak, "GUILD", "Rival-Realm")
+    end
+
+    -- E6: locale gate.
+    resetLookupState()
+    classifyResult = "gate reply"
+    ns.SetModuleEnabled("bavin", true)
+    _G.GetLocale = function() return "frFR" end
+    ask("GateAsker1")
+    advanceTime(8)
+    check("a French client with Bavin on never bids or answers a lookup", #outboxLog == 0 and #chatLog == 0)
+    _G.GetLocale = function() return "esES" end
+    ask("GateAsker1b")
+    advanceTime(8)
+    check("a Spanish client is gated too", #outboxLog == 0 and #chatLog == 0)
+    _G.GetLocale = function() return "deDE" end
+    ask("GateAsker1c")
+    advanceTime(8)
+    check("a German client is gated too", #outboxLog == 0 and #chatLog == 0)
+    _G.GetLocale = function() return "enGB" end
+    ask("GateAsker2")
+    advanceTime(1)
+    check("enGB counts as English and bids", #outboxLog == 1 and outboxLog[1].text:match("^BID|") ~= nil)
+    resetLookupState()
+    _G.GetLocale = function() return "frFR" end
+    ns.SetModuleEnabled("bavin", false)
+    ask("GateAsker3")
+    advanceTime(6)
+    advanceTime(1)
+    check("a gated client with Bavin OFF can still post the (English) fallback",
+        #chatLog == 1 and chatLog[1].text:find(FALLBACK_TEXT, 1, true) ~= nil)
+    ns.SetModuleEnabled("bavin", true)
+    _G.GetLocale = nil
+
+    -- E7: newest build wins. Lowest tiebreak string wins, so a newer
+    -- version/stamp must sort LOWER regardless of the random part.
+    local function scenario(asker, version, stamp)
+        resetLookupState()
+        classifyResult = "ours " .. asker
+        ns.VERSION, ns.BUILD_STAMP = version, stamp
+        ask(asker)
+        advanceTime(1) -- classify -> our BID out
+        return lookupKey(asker)
+    end
+    local k = scenario("VerA", "2.2.3", 0)
+    local sentDigits = outboxLog[1].text:match("^BID|.+|!(%d+):")
+    check("a data bid is '!' + 9 version + 8 build-minute + 9 random digits, then ':' + name",
+        sentDigits ~= nil and #sentDigits == 26
+        and sentDigits:sub(1, 17) == rank(2002003, 0))
+    rival(k, "!" .. rank(2003000, 0) .. "999999999:Rival") -- 2.3.0, worst random
+    advanceTime(1)
+    check("a rival on a NEWER version wins even with the worst random part", #chatLog == 0)
+
+    scenario("VerB", "2.2.3", 0)
+    rival(lookupKey("VerB"), "!" .. rank(2002002, 0) .. "000000000:Rival") -- 2.2.2, best random
+    advanceTime(1)
+    check("a rival on an OLDER version loses even with the best random part",
+        #chatLog == 1 and chatLog[1].text == "ours VerB")
+
+    scenario("VerC", "2.2.3", 500000 * 60)
+    rival(lookupKey("VerC"), "!" .. rank(2002003, 400000) .. "000000000:Rival")
+    advanceTime(1)
+    check("same version: a rival with an OLDER build stamp loses", #chatLog == 1)
+
+    scenario("VerD", "2.2.3", 500000 * 60)
+    rival(lookupKey("VerD"), "!" .. rank(2002003, 600000) .. "999999999:Rival")
+    advanceTime(1)
+    check("same version: a rival with a NEWER build stamp wins", #chatLog == 0)
+
+    scenario("VerE", "2.2.3", 0)
+    rival(lookupKey("VerE"), "000000000000:OldClient") -- a 2.2.3-or-older client's real-data bid
+    advanceTime(1)
+    check("a 2.2.3 client's real-data bid ('0...') loses to ours ('!...')", #chatLog == 1)
+
+    scenario("VerF", "2.2.3", 0)
+    rival(lookupKey("VerF"), "1" .. rank(9999999, 99999999) .. "000000000:Fb") -- newest-possible FALLBACK
+    advanceTime(1)
+    check("real data beats even the newest build's fallback bid", #chatLog == 1)
+
+    scenario("VerG", "unknown", 0)
+    rival(lookupKey("VerG"), "!" .. rank(2002002, 0) .. "999999999:Rival")
+    advanceTime(1)
+    check("an unparseable version ranks oldest", #chatLog == 0)
+
+    scenario("VerH", "2.2.3", 0)
+    advanceTime(1)
+    check("with no rival the sole bidder still wins", #chatLog == 1)
+
+    -- E8: the same question asked again.
+    resetLookupState()
+    classifyResult = "First answer"
+    ns.VERSION, ns.BUILD_STAMP = savedVersion, savedStamp
+    ask("RepeatAsker")
+    advanceTime(1); advanceTime(1)
+    check("repeat: first ask is answered", #chatLog == 1 and chatLog[1].text == "First answer")
+    local bidsBefore = #outboxLog
+    ask("RepeatAsker")
+    advanceTime(1); advanceTime(1)
+    check("repeat: the identical message again inside the window is ignored",
+        #chatLog == 1 and #outboxLog == bidsBefore)
+    advanceTime(25)
+    classifyResult = "Second answer"
+    ask("RepeatAsker")
+    advanceTime(1); advanceTime(1)
+    check("repeat: the identical message asked after the window is answered again",
+        #chatLog == 2 and chatLog[2].text == "Second answer")
+
+    -- E9: a CLAIM for the NEW round that reaches us before our own chat event
+    -- must keep the key live (no double answer).
+    advanceTime(25)
+    local outBefore = #outboxLog
+    ns.frame:Fire("CHAT_MSG_ADDON", "DHToolsLookupV1", "CLAIM|" .. lookupKey("RepeatAsker"), "GUILD", "Fast-Realm")
+    ask("RepeatAsker")
+    advanceTime(1); advanceTime(1)
+    check("a fresh CLAIM heard just before our chat event suppresses a second answer",
+        #chatLog == 2 and #outboxLog == outBefore)
+
+    ns.VERSION, ns.BUILD_STAMP = savedVersion, savedStamp
+    _G.GetLocale = nil
+end
+
 --------------------------------------------------------------------------
 -- Group F: shared Officer Settings gate (2026-09-29, Loopi) - the rank
 -- number is account-wide + guild-synced, officer ROLES grant access

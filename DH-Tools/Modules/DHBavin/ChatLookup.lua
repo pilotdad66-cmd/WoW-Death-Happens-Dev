@@ -83,7 +83,11 @@ function ns.TryClassifyLookup(link)
     -- cache miss on OTHER clients, for items THEY had never cached
     -- before - not a GetItemPoints error - see Core.lua's pending-retry
     -- section; this pcall stays in as ordinary defensive coding.
-    local ok, entry = pcall(ns.GetItemPoints, itemName)
+    -- 2026-11-02: the link rides along so a non-English client could still find
+    -- the English-keyed entry (ns.CanonicalItemName). In practice only English
+    -- clients answer lookups now (Core.lua's locale gate); this keeps the
+    -- function correct if that gate is ever relaxed.
+    local ok, entry = pcall(ns.GetItemPoints, itemName, link)
     if not ok then
         ns.Print("|cffff3333[lookup debug] GetItemPoints errored:|r " .. tostring(entry))
         return nil

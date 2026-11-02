@@ -773,6 +773,77 @@ local CHAT_MAX_LEN = 255 -- guild chat's own hard cap
 
 local FALLBACK_TEXT = "Nobody online has the Bavin Points module enabled. Please install DH-Tools and enable the Bavin Points module."
 
+-- === 2026-11-02 (Loopi): English-only answers, newest-build-wins bids, repeat questions ===
+-- Three fixes to the lookup protocol, all client-local - the wire format
+-- ("BID|key|tiebreak", "CLAIM|key") and LOOKUP_PREFIX are unchanged.
+--
+-- 1. LOCALE GATE. A client whose game language isn't English never answers
+--    a lookup with data (see LookupHandleTrigger): GetItemInfo(link) returns
+--    the item name in the CLIENT's language, ItemPoints.lua is keyed by the
+--    English name, so a French/Spanish/German client replied "has no data
+--    for <foreign name>", claimed the key, and silenced everyone else. An
+--    English client answers any asker's link correctly (the item ID in the
+--    link is language-neutral). The "nobody online" fallback is already
+--    English text and stays open to every locale.
+-- 2. NEWEST BUILD WINS. The bid's tiebreak sorts (lowest wins) by:
+--    class (real data before fallback) -> NEWER running .toc Version ->
+--    NEWER build stamp -> random. Nothing is hardcoded: the version is read
+--    from this running copy's own .toc (ns.VERSION) and the stamp from
+--    BuildStamp.lua, which build-test-zip.ps1 / build-release-zip.ps1
+--    overwrite in the staged copy with the build time (test zips keep the
+--    last release's .toc Version on purpose, so the stamp is what orders
+--    two test builds, or a test build against its own release). A source
+--    tree run directly has stamp 0, i.e. loses to any stamped build of the
+--    same version. The data class char "!" sorts below the "0" that 2.2.3
+--    clients use, so any updated client beats any 2.2.3-or-older client.
+-- 3. REPEAT QUESTIONS. The key is sender:index:hash(text), so the identical
+--    message asked again is the same key; claims were remembered forever, so
+--    a bad (or good-but-scrolled-away) first answer left the question dead
+--    until relog. A claim/bid older than REPEAT_RESET seconds is now treated
+--    as a finished round and the key starts fresh on the next ask.
+local REPEAT_RESET = 20
+
+local ENGLISH_LOCALES = { enUS = true, enGB = true }
+-- A missing GetLocale (the headless harnesses) counts as English.
+local function IsEnglishClient()
+    local locale = GetLocale and GetLocale()
+    return locale == nil or ENGLISH_LOCALES[locale] == true
+end
+ns.IsEnglishClient = IsEnglishClient
+
+local TIEBREAK_CLASS_DATA = "!"     -- sorts below the "0" 2.2.3 clients send for real data
+local TIEBREAK_CLASS_FALLBACK = "1" -- unchanged from 2.2.3
+
+-- "X.Y.Z" -> one comparable number (each segment capped at 999). Anything
+-- unparseable (the harness has no .toc; "unknown") is 0, the oldest.
+local function VersionNumber(str)
+    local a, b, c = ParseVersion(str)
+    if not a then return 0 end
+    return math.min(a, 999) * 1000000 + math.min(b, 999) * 1000 + math.min(c, 999)
+end
+
+-- Fixed-width, INVERTED (newer build -> smaller digits) so the lowest
+-- tiebreak string wins. Stamp is whole minutes since the epoch (8 digits
+-- is ~190 years); minutes keep every number well under 2^31, which WoW's
+-- string.format("%d") needs.
+local function BuildRankDigits()
+    local version = VersionNumber(ns.VERSION)
+    local minutes = math.floor((tonumber(ns.BUILD_STAMP) or 0) / 60)
+    if minutes < 0 then minutes = 0 elseif minutes > 99999999 then minutes = 99999999 end
+    return string.format("%09d%08d", 999999999 - version, 99999999 - minutes)
+end
+
+-- Byte-wise "a sorts before b" so every client orders the same strings the
+-- same way regardless of any locale-aware string comparison.
+local function TiebreakLess(a, b)
+    local n = math.min(#a, #b)
+    for i = 1, n do
+        local x, y = a:byte(i), b:byte(i)
+        if x ~= y then return x < y end
+    end
+    return #a < #b
+end
+
 -- key -> true once a CLAIM for it has been heard (including our own, the
 -- instant we broadcast it) - in-memory only, cleared by relog/reload same
 -- as everything else in this file. Not pruned; a session's worth of keys
@@ -916,9 +987,15 @@ end
 -- unprefixed "%010d:Name" form; the comparison stays consistent across
 -- every client (all compare the same strings), those old fallback bids
 -- just don't lose automatically until their senders update.
+--
+-- 2026-11-02 (Loopi): now "<class><9-digit inverted version><8-digit inverted
+-- build minutes><9-digit random>:<name>" - see the NEWEST BUILD WINS note
+-- above. Class "!" (real data) sorts below every 2.2.3 "0" bid, "1" (fallback)
+-- is unchanged, so data still beats fallback on every client old or new.
 local function LookupTiebreak(isFallback)
-    return string.format("%s%010d:%s", isFallback and "1" or "0",
-        math.random(0, 999999999), (UnitName("player")))
+    return string.format("%s%s%09d:%s",
+        isFallback and TIEBREAK_CLASS_FALLBACK or TIEBREAK_CLASS_DATA,
+        BuildRankDigits(), math.random(0, 999999999), (UnitName("player")))
 end
 
 -- Records `tiebreak` as the new best-known bid for `key` if it beats
@@ -927,13 +1004,13 @@ end
 -- moment we place it, so the comparison at finalize time always has the
 -- complete picture regardless of what order bids actually arrived in.
 local function RecordBid(key, tiebreak)
-    bidHeard[key] = true
+    bidHeard[key] = GetTime() -- a timestamp (truthy) so a repeat of the question can tell a finished round from a live one
     if not bestBidSeen[key] then
         C_Timer.After(BID_FORGET, function()
             bestBidSeen[key] = nil
         end)
     end
-    if not bestBidSeen[key] or tiebreak < bestBidSeen[key] then
+    if not bestBidSeen[key] or TiebreakLess(tiebreak, bestBidSeen[key]) then
         bestBidSeen[key] = tiebreak
     end
 end
@@ -943,7 +1020,7 @@ local function LookupOnMessage(prefix, message, _channel, _sender)
     local msgType, rest = message:match("^(%u+)|(.*)$")
     if not msgType or not rest then return end
     if msgType == "CLAIM" and rest ~= "" then
-        lookupClaims[rest] = true
+        lookupClaims[rest] = GetTime()
         myBids[rest] = nil
     elseif msgType == "BID" then
         local key, tiebreak = rest:match("^(.+)|([^|]+)$")
@@ -969,7 +1046,7 @@ local function BidToAnswer(key, replyText, isFallback)
         myBids[key] = nil
         if not mine or lookupClaims[key] then return end
         if bestBidSeen[key] ~= mine.tiebreak then return end -- someone else's bid was lower
-        lookupClaims[key] = true
+        lookupClaims[key] = GetTime()
         LookupSend("CLAIM|" .. key)
         SendChatMessage(TruncateReply(mine.reply), "GUILD")
     end)
@@ -1032,12 +1109,36 @@ local function ScheduleAnswerAttempt(key, deferMin, deferMax, link)
     end)
 end
 
+-- 2026-11-02 (Loopi): REPEAT QUESTIONS (see the note above FALLBACK_TEXT).
+-- If the last claim/bid activity we saw for this key is older than
+-- REPEAT_RESET, that round is over: forget it so the same message asked
+-- again is a new question. Judged by the newest activity timestamp, so a
+-- CLAIM/BID for THIS round that reached us before our own chat event keeps
+-- the key live (no double answer). Inside the window a repeat is ignored,
+-- which is the old anti-spam behavior.
+local function ResetFinishedLookupRound(key)
+    local last = 0
+    if type(lookupClaims[key]) == "number" then last = lookupClaims[key] end
+    if type(bidHeard[key]) == "number" and bidHeard[key] > last then last = bidHeard[key] end
+    if last > 0 and GetTime() - last > REPEAT_RESET then
+        lookupClaims[key] = nil
+        bidHeard[key] = nil
+        bestBidSeen[key] = nil
+        myBids[key] = nil
+    end
+end
+
 local function LookupHandleTrigger(key, link, linkIndex)
+    ResetFinishedLookupRound(key)
     if lookupClaims[key] then return end
     local offset = (linkIndex - 1) * LINK_STAGGER
     local bavinEnabled = ns.IsModuleEnabled("bavin")
 
     if bavinEnabled and ns.Bavin and ns.Bavin.TryClassifyLookup then
+        -- 2026-11-02 (Loopi): LOCALE GATE (see the note above FALLBACK_TEXT).
+        -- A non-English client stays out of the data path entirely - no bid,
+        -- no reply, and no fallback either (it does have Bavin on).
+        if not IsEnglishClient() then return end
         ScheduleAnswerAttempt(key, CLASSIFY_DEFER_MIN + offset, CLASSIFY_DEFER_MAX + offset, link)
         return
     end
