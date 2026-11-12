@@ -3,7 +3,7 @@
 # addon, not just DHBavin - cheap and catches cross-module breakage too),
 # then this module's own headless harness. Mirrors DH-Quests'
 # tests\run-tests.ps1 convention exactly.
-# Usage: powershell -ExecutionPolicy Bypass -File Modules\DHBavin\tests\run-tests.ps1
+# Usage: powershell -NoProfile -File Modules\DHBavin\tests\run-tests.ps1
 # (run from src\DH-Tools\)
 
 $ErrorActionPreference = 'Continue'

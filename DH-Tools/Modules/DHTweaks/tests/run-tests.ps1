@@ -1,7 +1,7 @@
 # DH-Tweaks local test runner: syntax check of the module's files, then
 # its mocked-API harness. The full DH-Tools suite is
 # src\DH-Tools\tests\run-tests.ps1 (it also syntax-checks these files).
-# Usage: powershell -ExecutionPolicy Bypass -File src\DH-Tools\Modules\DHTweaks\tests\run-tests.ps1
+# Usage: powershell -NoProfile -File src\DH-Tools\Modules\DHTweaks\tests\run-tests.ps1
 
 $ErrorActionPreference = 'Continue'
 $luaBin = 'C:\Users\pilot\AppData\Local\Programs\Lua\bin'

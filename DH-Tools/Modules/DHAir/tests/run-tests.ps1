@@ -1,6 +1,6 @@
 # DH-Air local test runner.
 # Runs luac5.4 -p across every .lua file, then both headless harnesses.
-# Usage: powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1
+# Usage: powershell -NoProfile -File tests\run-tests.ps1
 
 $ErrorActionPreference = 'Continue'
 $luaBin = 'C:\Users\pilot\AppData\Local\Programs\Lua\bin'

@@ -2,7 +2,7 @@
 # Runs luac5.4 -p across every .lua file under src\DH-Tools\ (the whole
 # addon, not just DHQuests - cheap and catches cross-module breakage too),
 # then this module's own headless harness.
-# Usage: powershell -ExecutionPolicy Bypass -File Modules\DHQuests\tests\run-tests.ps1
+# Usage: powershell -NoProfile -File Modules\DHQuests\tests\run-tests.ps1
 # (run from src\DH-Tools\, mirroring DH-Air's tests\run-tests.ps1 convention)
 
 $ErrorActionPreference = 'Continue'
