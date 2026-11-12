@@ -4323,6 +4323,51 @@ end
 -- Summary
 --------------------------------------------------------------------------
 print("")
+--------------------------------------------------------------------------
+-- 2026-11-04: priority want-list switched OFF (ns.PRIORITY_LIST_ENABLED)
+--------------------------------------------------------------------------
+print("== Priority list retired (ns.PRIORITY_LIST_ENABLED = false) ==")
+do
+    local function slash(msg)
+        printLog = {}
+        SlashCmdList["DHBAVIN"](msg)
+        return table.concat(printLog, "\n")
+    end
+
+    check("flag defaults to false", ns.PRIORITY_LIST_ENABLED == false)
+
+    ns.priorityList["Gorilla Fang"] = { name = "Gorilla Fang", itemId = 1, addedBy = "x", addedAt = 1 }
+
+    for _, cmd in ipairs({ "priority", "items", "additem item:1234", "removeitem Gorilla Fang" }) do
+        check("/dhb " .. cmd .. " reports the list is retired",
+            slash(cmd):find("retired", 1, true) ~= nil)
+    end
+    check("/dhb removeitem did NOT remove the entry", ns.priorityList["Gorilla Fang"] ~= nil)
+    check("/dhb additem did NOT add an entry", ns.priorityList["Item 1234"] == nil)
+
+    check("/dhb status has no priority-list line", slash(""):find("Priority list", 1, true) == nil)
+    check("/dhb help hides the priority commands",
+        slash("help"):find("/dhb priority", 1, true) == nil
+        and slash("help"):find("/dhb additem", 1, true) == nil
+        and slash("help"):find("/dhb items", 1, true) == nil)
+    check("/dhb help still lists /dhb points and /dhb credits",
+        slash("help"):find("/dhb points", 1, true) ~= nil
+        and slash("help"):find("/dhb credits", 1, true) ~= nil)
+    check("/dhb points is NOT reported as retired",
+        slash("points"):find("retired", 1, true) == nil)
+
+    -- Flag back on restores the old behaviour (revivable, per the Core.lua note).
+    ns.PRIORITY_LIST_ENABLED = true
+    check("flag on: /dhb status shows the priority-list line", slash(""):find("Priority list", 1, true) ~= nil)
+    check("flag on: /dhb items lists the entry", slash("items"):find("Gorilla Fang", 1, true) ~= nil)
+    check("flag on: /dhb help lists /dhb priority", slash("help"):find("/dhb priority", 1, true) ~= nil)
+    ns.PRIORITY_LIST_ENABLED = false
+
+    -- Data layer is untouched by the flag: the list table still exists.
+    check("ns.priorityList still exists as a table (Sync.lua iterates it)", type(ns.priorityList) == "table")
+    ns.priorityList["Gorilla Fang"] = nil
+end
+
 print(("RESULTS: %d passed, %d failed"):format(PASS, FAIL))
 if FAIL > 0 then
     print("Failures:")

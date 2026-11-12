@@ -116,6 +116,7 @@ local function GetOrCreateOverlay(itemButton)
 end
 
 local function UpdateContainerFrame(frame)
+    if not ns.PRIORITY_LIST_ENABLED then return end -- feature off, see Core.lua
     if not frame or not frame.GetID then return end
     if not DHTools.IsModuleEnabled("bavin") then return end
     if not ns.db or not ns.db.recipient then return end -- inert until a recipient is set, per Design doc
@@ -389,6 +390,12 @@ end
 -- the first so bag highlighting (the lower-risk half of M5) keeps
 -- working in isolation even if this half has a problem.
 local function UpdateMailAttachOverlays(frame)
+    if not ns.PRIORITY_LIST_ENABLED then
+        -- Feature off (see Core.lua): make sure no attach icon is ever
+        -- left showing, e.g. if the flag is flipped mid-session.
+        for _, btn in pairs(attachOverlays) do btn:Hide() end
+        return
+    end
     if not frame or not frame.GetID then return end
     if not mailIsOpen then
         -- Hide any stale buttons from the last time mail was open -
@@ -426,6 +433,7 @@ local mailFrame = CreateFrame("Frame")
 mailFrame:RegisterEvent("MAIL_SHOW")
 mailFrame:RegisterEvent("MAIL_CLOSED")
 mailFrame:SetScript("OnEvent", function(_, event)
+    if not ns.PRIORITY_LIST_ENABLED then return end -- feature off, see Core.lua
     if not DHTools.IsModuleEnabled("bavin") then return end
     if event == "MAIL_SHOW" then
         mailIsOpen = true

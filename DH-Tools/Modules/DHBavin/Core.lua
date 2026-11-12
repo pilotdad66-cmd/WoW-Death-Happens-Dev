@@ -26,6 +26,19 @@ local DHTools = DHTools
 DHTools.Bavin = DHTools.Bavin or {}
 local ns = DHTools.Bavin
 
+-- 2026-11-04 (Loopi): the priority want-list's user-facing features are
+-- switched OFF (deprecated 2026-09-14, but BagMail.lua kept drawing a mail
+-- icon over stack counts on listed items). This one flag gates: BagMail.lua
+-- (bag highlight, attach-icon, mailbox hooks), /dhb priority|items|additem|
+-- removeitem, and the priority line in /dhb. Code, ns.priorityList, the
+-- Sync.lua wire format and CanEditList are all left intact (CanEditList
+-- still gates the Points editor; SYNCDATA carries the list positionally).
+-- Flip to true to bring the whole feature back. `== nil` so a test harness
+-- can pre-set it before this file loads.
+if ns.PRIORITY_LIST_ENABLED == nil then
+    ns.PRIORITY_LIST_ENABLED = false
+end
+
 function ns.Print(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99Bavin Points:|r " .. msg)
 end
@@ -898,15 +911,19 @@ end)
 --------------------------------------------------------------------------
 local function ShowHelp()
     ns.Print("Commands:")
-    ns.Print("  /dhb                  - show the current Donation Recipient, Distribution Officers and item count")
+    ns.Print("  /dhb                  - show the current Donation Recipient and Distribution Officers" .. (ns.PRIORITY_LIST_ENABLED and " and item count" or ""))
     ns.Print("  /dhb config           - open the Bavin Points settings page")
     ns.Print("  /dhb account          - open the View my Account window (your characters, reputation and Store Credits)")
-    ns.Print("  /dhb items            - list the priority list's current items")
+    if ns.PRIORITY_LIST_ENABLED then
+        ns.Print("  /dhb items            - list the priority list's current items")
+    end
     ns.Print("  /dhb points           - open the Bavin Points editor (Donation Recipient/Distribution Officers only; everyone else sees it read-only)")
     ns.Print("  /dhb credits          - Credit & Reputation System status/config (TEST PHASE - see /dhb credits with no args for the sub-command list)")
-    ns.Print("  /dhb priority         - open the Priority List editor: type an item name, list narrows as you type, click to add/remove (Donation Recipient/Distribution Officers only)")
-    ns.Print("  /dhb additem <link>   - fallback: shift-click an item after typing this to add it by name (Donation Recipient/Distribution Officers only) - for the rare item not in the Bavin Points list, which /dhb priority searches")
-    ns.Print("  /dhb removeitem <name> - remove an item from the priority list by exact name (Donation Recipient/Distribution Officers only)")
+    if ns.PRIORITY_LIST_ENABLED then
+        ns.Print("  /dhb priority         - open the Priority List editor: type an item name, list narrows as you type, click to add/remove (Donation Recipient/Distribution Officers only)")
+        ns.Print("  /dhb additem <link>   - fallback: shift-click an item after typing this to add it by name (Donation Recipient/Distribution Officers only) - for the rare item not in the Bavin Points list, which /dhb priority searches")
+        ns.Print("  /dhb removeitem <name> - remove an item from the priority list by exact name (Donation Recipient/Distribution Officers only)")
+    end
     ns.Print("  /dhb on               - enable the Bavin Points module")
     ns.Print("  /dhb off              - disable the Bavin Points module")
     ns.Print("  /dhb help             - show this list")
@@ -924,6 +941,7 @@ local function ShowStatus()
     else
         ns.Print("Distribution Officers: " .. table.concat(ns.db.editors, ", "))
     end
+    if not ns.PRIORITY_LIST_ENABLED then return end -- priority list retired, see top of file
     local itemCount = 0
     if ns.priorityList then
         for _ in pairs(ns.priorityList) do itemCount = itemCount + 1 end
@@ -961,6 +979,14 @@ SlashCmdList["DHBAVIN"] = function(msg)
     msg = msg or ""
     local cmd, rest = msg:match("^(%S*)%s*(.-)$")
     cmd = (cmd or ""):lower()
+
+    -- Priority want-list retired (flag at top of file): its four commands
+    -- just say so instead of doing anything.
+    if not ns.PRIORITY_LIST_ENABLED
+        and (cmd == "items" or cmd == "priority" or cmd == "additem" or cmd == "removeitem") then
+        ns.Print("The priority list has been retired. /dhb points opens the Bavin Points editor.")
+        return
+    end
 
     if cmd == "" then
         ShowStatus()
