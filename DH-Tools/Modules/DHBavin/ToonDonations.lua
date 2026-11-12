@@ -1,8 +1,8 @@
 -- DH-Tools: Modules\DHBavin\ToonDonations.lua
 -- GENERATED FILE - DO NOT HAND-EDIT.
 -- Source: claude\DH-Bavin\intake\generated\toon-donations.csv (intake\_step0-reconcile.ps1)
--- Regenerate: powershell -ExecutionPolicy Bypass -File claude\DH-Bavin\import-toon-donations.ps1
--- Generated: 2026-10-06 16:17
+-- Regenerate: powershell -NoProfile -File claude\DH-Bavin\import-toon-donations.ps1
+-- Generated: 2026-11-12 14:21
 --
 -- Per-character donation facts as of Step 0's last run, keyed by the
 -- lowercased character name: { latestDonation, rawGoldAmount }. Only names

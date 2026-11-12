@@ -1,8 +1,8 @@
 -- DH-Tools: Modules\DHBavin\ArchivedDonors.lua
 -- GENERATED FILE - DO NOT HAND-EDIT.
 -- Source: claude\DH-Bavin\intake\generated\archived-donors-history.csv (intake\_step0-reconcile.ps1)
--- Regenerate: powershell -ExecutionPolicy Bypass -File claude\DH-Bavin\import-archived-donors.ps1
--- Generated: 2026-10-07 18:55
+-- Regenerate: powershell -NoProfile -File claude\DH-Bavin\import-archived-donors.ps1
+-- Generated: 2026-11-12 14:21
 --
 -- Old donation history of archived donors (never counted toward any main),
 -- keyed by the lowercased character name: { latestDonation, rawGold, points }.

@@ -1,8 +1,8 @@
 -- DH-Tools: Modules\DHBavin\SeedData.lua
 -- GENERATED FILE - DO NOT HAND-EDIT.
 -- Source: claude\DH-Bavin\intake\generated\seed-dataset.csv (intake\_step0-reconcile.ps1)
--- Regenerate: powershell -ExecutionPolicy Bypass -File claude\DH-Bavin\import-seed-data.ps1
--- Generated: 2026-10-06 16:17
+-- Regenerate: powershell -NoProfile -File claude\DH-Bavin\import-seed-data.ps1
+-- Generated: 2026-11-12 14:21
 --
 -- mainName -> { lifetimePoints, latestDonation }, as of Step 0's
 -- reconciliation date - NOT necessarily the live totals at actual

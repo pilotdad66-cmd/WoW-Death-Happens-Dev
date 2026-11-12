@@ -1,8 +1,8 @@
 -- DH-Tools: Modules\DHBavin\ReviewQueue.lua
 -- GENERATED FILE - DO NOT HAND-EDIT.
 -- Source: claude\DH-Bavin\intake\generated\review-queue.csv (intake\_step0-reconcile.ps1)
--- Regenerate: powershell -ExecutionPolicy Bypass -File claude\DH-Bavin\import-review-queue.ps1
--- Generated: 2026-10-06 16:17
+-- Regenerate: powershell -NoProfile -File claude\DH-Bavin\import-review-queue.ps1
+-- Generated: 2026-11-12 14:21
 --
 -- Static reference data for CreditsConfig.lua's Conflicts tab - names
 -- Step 0 could not map to a main (issue='no_identity_mapping') or

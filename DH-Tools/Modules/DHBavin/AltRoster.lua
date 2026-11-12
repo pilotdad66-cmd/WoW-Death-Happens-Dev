@@ -1,8 +1,8 @@
 -- DH-Tools: Modules\DHBavin\AltRoster.lua
 -- GENERATED FILE - DO NOT HAND-EDIT.
 -- Source: claude\DH-Bavin\intake\generated\alt-roster.csv (intake\_step0-reconcile.ps1)
--- Regenerate: powershell -ExecutionPolicy Bypass -File claude\DH-Bavin\import-alt-roster.ps1
--- Generated: 2026-10-06 16:17
+-- Regenerate: powershell -NoProfile -File claude\DH-Bavin\import-alt-roster.ps1
+-- Generated: 2026-11-12 14:21
 --
 -- mainName -> { alt names... }, as of Step 0's reconciliation date.
 -- Bare names only, no per-alt numbers (Chris, 2026-09-25). A main

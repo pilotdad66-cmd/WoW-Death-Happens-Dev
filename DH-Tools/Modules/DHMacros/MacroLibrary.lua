@@ -1,8 +1,8 @@
 -- DH-Tools: Modules\DHMacros\MacroLibrary.lua
 -- GENERATED FILE - DO NOT HAND-EDIT.
 -- Source: claude\DH-Macros\curation\DH-Macros-Library.csv
--- Regenerate: powershell -ExecutionPolicy Bypass -File claude\DH-Macros\import-macros.ps1
--- Generated: 2026-10-09 09:37
+-- Regenerate: powershell -NoProfile -File claude\DH-Macros\import-macros.ps1
+-- Generated: 2026-11-12 14:21
 --
 -- Macro catalog for the Macros module's Board (Class -> Spec -> Macro
 -- cascading picker). Edit the CSV, not this file - see that file's
@@ -74,6 +74,9 @@ ns.Library = {
                 { name = "Frost Trap in Combat", macroName = "FstTrap", icon = "INV_Misc_QuestionMark",
                   body = "#showtooltip Frost Trap\n/stopattack\n/petstay [combat, @pettarget, harm]\n/petpassive [combat, @pettarget, harm]\n/cast [combat] Feign Death\n/cast Frost Trap\n/petfollow [nocombat]\n/petdefensive [nocombat]\n/script UIErrorsFrame:Clear()",
                   desc = "Macro to lay down a frost trap while in combat. First click (in combat): pet goes Stay+Passive and you Feign Death. Second click (once you're actually out of combat): the trap is laid and your pet returns to Follow+Defensive." },
+                { name = "Mark and Attack", macroName = "MarkAtk", icon = "INV_Misc_QuestionMark",
+                  body = "#showtooltip Hunter's Mark\n/cast Hunter's Mark\n/petattack\n/cast !Auto Shot",
+                  desc = "Macro to open a pull: casts Hunter's Mark on your target, sends your pet to attack it, and starts Auto Shot. The ! keeps Auto Shot from toggling off if you press the macro again." },
             },
         },
     },

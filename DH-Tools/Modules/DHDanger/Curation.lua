@@ -1,8 +1,8 @@
 -- DH-Danger :: Curation.lua
 -- GENERATED FILE - DO NOT HAND-EDIT.
 -- Source: claude\DH-Danger\curation\DH-Danger-Curation.csv
--- Regenerate: powershell -ExecutionPolicy Bypass -File claude\DH-Danger\import-curation.ps1
--- Generated: 2026-10-06 18:07
+-- Regenerate: powershell -NoProfile -File claude\DH-Danger\import-curation.ps1
+-- Generated: 2026-11-12 14:21
 --
 -- HUMAN JUDGEMENT ONLY. Facts live in DangerData.lua, which is
 -- regenerated from the import files and the in-game dump. Keeping
@@ -17,7 +17,7 @@
 local _, ns = ...
 
 ns.Curation = ns.Curation or {}
-ns.Curation.generated = "2026-10-06 18:07"
+ns.Curation.generated = "2026-11-12 14:21"
 
 -- [npcID or name] = { name, zone|zones, level, type, creatureType, surprise,
 --             severity, yells, stealth, roams, soloable, include, why }
